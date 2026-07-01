@@ -13,12 +13,48 @@ return new class extends Migration
     {
         Schema::create('users', function (Blueprint $table) {
             $table->id();
-            $table->string('name');
+
+            // Public Identifier
+            $table->uuid('uuid')->unique();
+
+            // Role
+            $table->foreignId('role_id')
+                ->constrained('roles')
+                ->cascadeOnUpdate()
+                ->restrictOnDelete();
+
+            // Personal Information
+            $table->string('first_name', 100);
+            $table->string('middle_name', 100)->nullable();
+            $table->string('last_name', 100);
+            $table->string('suffix', 20)->nullable();
+
+            // Authentication
             $table->string('email')->unique();
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
+
+            // Contact Information
+            $table->string('phone_number', 20)->nullable();
+
+            // Profile
+            $table->string('avatar')->nullable();
+
+            // Account Status
+            $table->enum('account_status', [
+                'Pending',
+                'Active',
+                'Inactive',
+                'Suspended'
+            ])->default('Pending');
+
+            // Security
+            $table->timestamp('last_login_at')->nullable();
             $table->rememberToken();
+
+            // Laravel
             $table->timestamps();
+            $table->softDeletes();
         });
 
         Schema::create('password_reset_tokens', function (Blueprint $table) {
