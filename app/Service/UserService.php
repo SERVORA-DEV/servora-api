@@ -35,6 +35,13 @@ class UserService
             return response()->json(['message' => 'Invalid password'], 401);
         }
 
+        if (! $user->hasVerifiedEmail()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Please verify your email before logging in.'
+            ], 403);
+        }
+
         $token = $user->createToken($user->email)->plainTextToken;
 
         return response()->json([
