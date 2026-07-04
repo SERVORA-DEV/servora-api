@@ -10,4 +10,9 @@ class UserRepository
     {
         return User::where($field, $value)->first();
     }
+
+    public function create(array $payload)
+    {
+        return User::create($payload);
+    }
 }

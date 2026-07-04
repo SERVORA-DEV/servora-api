@@ -3,16 +3,20 @@
 namespace App\Service;
 
 use App\Http\Resources\UserResource;
+use App\Models\Role;
 use App\Repository\UserRepository;
+use App\Service\RoleService;
 use Illuminate\Support\Facades\Hash;
 
 class UserService
 {
     private UserRepository $userRepository;
+    private RoleService $roleService;
 
-    public function __construct(UserRepository $userRepository)
+    public function __construct(UserRepository $userRepository, RoleService $roleService)
     {
         $this->userRepository = $userRepository;
+        $this->roleService = $roleService;
     }
 
     public function loginUser(object $payload)
@@ -46,5 +50,21 @@ class UserService
         }
 
         return response()->json(['message' => 'Logged out successfully'], 200);
+    }
+
+    public function registerBusinessUser(array $payload){
+
+        $role = $this->roleService->getRoleByField('name', 'business_owner');
+
+        $payload['role_id'] = $role->id;
+
+        $user = $this->userRepository->create($payload);
+
+        $user->sendEmailVerificationNotification();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Registration successful. Please check your email to verify your account.',
+        ], 201);
     }
 }
