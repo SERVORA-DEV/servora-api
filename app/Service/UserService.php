@@ -7,6 +7,7 @@ use App\Models\Role;
 use App\Repository\UserRepository;
 use App\Service\RoleService;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Http\JsonResponse;
 
 class UserService
 {
@@ -19,26 +20,39 @@ class UserService
         $this->roleService = $roleService;
     }
 
-    public function loginUser(object $payload)
+    public function loginAdminUser(object $payload)
     {
-        if (empty($payload->email) || empty($payload->password)) {
-            return response()->json(['message' => 'Email and password are required'], 400);
+        $user = $this->authenticate($payload);
+
+        if ($user instanceof JsonResponse) {
+            return $user;
         }
 
-        $user = $this->userRepository->findByField('email', $payload->email);
-
-        if (! $user) {
-            return response()->json(['message' => 'User not found'], 401);
-        }
-
-        if (! Hash::check($payload->password, $user->password)) {
-            return response()->json(['message' => 'Invalid password'], 401);
-        }
-
-        if (! $user->hasVerifiedEmail()) {
+        if ($this->roleService->getRoleByField('id', $user->role_id)->name !== 'system_administrator') {
             return response()->json([
-                'success' => false,
-                'message' => 'Please verify your email before logging in.'
+                'message' => 'Unauthorized.'
+            ], 403);
+        }  
+
+        $token = $user->createToken($user->email)->plainTextToken;
+
+        return response()->json([
+            'user' => new UserResource($user),
+            'token' => $token,
+        ], 200);
+    }
+
+    public function loginOwnerUser(object $payload)
+    {
+        $user = $this->authenticate($payload);
+
+        if ($user instanceof JsonResponse) {
+            return $user;
+        }
+
+        if (! in_array($this->roleService->getRoleByField('id', $user->role_id)->name, ['business_owner', 'manager'])) {
+            return response()->json([
+                'message' => 'Unauthorized.'
             ], 403);
         }
 
@@ -48,6 +62,37 @@ class UserService
             'user' => new UserResource($user),
             'token' => $token,
         ], 200);
+    }
+
+    public function authenticate(object $payload)
+    {
+        if (empty($payload->email) || empty($payload->password)) {
+            return response()->json([
+                'message' => 'Email and password are required'
+            ], 400);
+        }
+
+        $user = $this->userRepository->findByField('email', $payload->email);
+
+        if (! $user) {
+            return response()->json([
+                'message' => 'User not found'
+            ], 401);
+        }
+
+        if (! Hash::check($payload->password, $user->password)) {
+            return response()->json([
+                'message' => 'Invalid password'
+            ], 401);
+        }
+
+        if (! $user->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'Please verify your email before logging in.'
+            ], 403);
+        }
+
+        return $user;
     }
 
     public function logoutUser(object $user)

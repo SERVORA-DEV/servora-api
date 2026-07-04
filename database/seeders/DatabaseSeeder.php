@@ -37,7 +37,7 @@ class DatabaseSeeder extends Seeder
             'email' => 'admin@servora.com',
             'email_verified_at' => now(),
 
-            'password' => Hash::make('password'),
+            'password' => Hash::make('servoraPassword'),
 
             'phone_number' => null,
             'avatar' => null,

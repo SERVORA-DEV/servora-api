@@ -6,7 +6,7 @@ use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 
-Route::post('/login', [AuthController::class, 'login']);
+Route::post('/system/administrator/login', [AuthController::class, 'adminLogin']);
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/logout', [AuthController::class, 'logout']);
