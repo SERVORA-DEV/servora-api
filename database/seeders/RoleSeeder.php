@@ -41,7 +41,10 @@ class RoleSeeder extends Seeder
                 ['name' => $role['name']],
                 [
                     'uuid' => Str::uuid(),
+                    'spa_business_id' => null,
+                    'created_by' => null,
                     'description' => $role['description'],
+                    'is_protected' => true,
                 ]
             );
         }
