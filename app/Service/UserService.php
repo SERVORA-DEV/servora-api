@@ -20,51 +20,14 @@ class UserService
         $this->roleService = $roleService;
     }
 
-    public function loginAdminUser(object $payload)
+    public function getUser(string $uuid)
     {
-        $user = $this->authenticate($payload);
-
-        if ($user instanceof JsonResponse) {
-            return $user;
-        }
-
-        if ($this->roleService->getRoleByField('id', $user->role_id)->name !== 'system_administrator') {
-            return response()->json([
-                'message' => 'Unauthorized.'
-            ], 403);
-        }  
-
-        $token = $user->createToken($user->email)->plainTextToken;
-
-        return response()->json([
-            'user' => new UserResource($user),
-            'token' => $token,
-        ], 200);
+        $user = $this->userRepository->findByField('uuid', $uuid);
+        $user['role'] = $this->roleService->getRoleByField('id', $user->role_id)->name;
+        return new UserResource($user);
     }
 
-    public function loginOwnerUser(object $payload)
-    {
-        $user = $this->authenticate($payload);
-
-        if ($user instanceof JsonResponse) {
-            return $user;
-        }
-
-        if (! in_array($this->roleService->getRoleByField('id', $user->role_id)->name, ['business_owner', 'manager'])) {
-            return response()->json([
-                'message' => 'Unauthorized.'
-            ], 403);
-        }
-
-        $token = $user->createToken($user->email)->plainTextToken;
-
-        return response()->json([
-            'user' => new UserResource($user),
-            'token' => $token,
-        ], 200);
-    }
-
-    public function authenticate(object $payload)
+    public function login(object $payload)
     {
         if (empty($payload->email) || empty($payload->password)) {
             return response()->json([
@@ -92,7 +55,13 @@ class UserService
             ], 403);
         }
 
-        return $user;
+        $user['role'] = $this->roleService->getRoleByField('id', $user->role_id)->name;
+        $token = $user->createToken($user->email)->plainTextToken;
+
+        return response()->json([
+            'user' => new UserResource($user),
+            'token' => $token,
+        ], 200);
     }
 
     public function logoutUser(object $user)

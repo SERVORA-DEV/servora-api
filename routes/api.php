@@ -6,11 +6,11 @@ use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 
-Route::post('/system/administrator/login', [AuthController::class, 'adminLogin']);
+Route::post('/auth/login', [AuthController::class, 'login']);
 
 Route::middleware('auth:sanctum')->group(function () {
-    Route::delete('/logout', [AuthController::class, 'logout']);
-
+    Route::get('/auth/me', [AuthController::class, 'getUser']);
+    Route::delete('/auth/logout', [AuthController::class, 'logout']);
 });
 
 Route::post('/business/administrator/register', [RegisterController::class, 'register']);

@@ -15,14 +15,14 @@ class AuthController extends Controller
         $this->userService = $userService;
     }
 
-    public function adminLogin(Request $request)
+    public function getUser(Request $request)
     {
-        return $this->userService->loginAdminUser($request);
+        return $this->userService->getUser($request->user()->uuid);
     }
 
-    public function ownerLogin(Request $request)
+    public function login(Request $request)
     {
-        return $this->userService->loginOwnerUser($request);
+        return $this->userService->login($request);
     }
 
     public function logout(Request $request)
