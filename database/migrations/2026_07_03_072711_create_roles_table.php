@@ -14,22 +14,24 @@ return new class extends Migration
         Schema::create('roles', function (Blueprint $table) {
             $table->id();
 
-            // Public Identifier
             $table->uuid('uuid')->unique();
 
-            // Role Information
-            $table->string('name', 50)->unique();
+            $table->unsignedBigInteger('spa_business_id')->nullable();
+
+            $table->unsignedBigInteger('created_by')->nullable();
+
+            $table->string('name', 100);
             $table->text('description')->nullable();
 
-            // Laravel
+            $table->boolean('is_protected')->default(false);
+
             $table->timestamps();
             $table->softDeletes();
+
+            $table->unique(['spa_business_id', 'name']);
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('roles');
