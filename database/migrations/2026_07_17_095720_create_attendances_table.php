@@ -13,7 +13,34 @@ return new class extends Migration
     {
         Schema::create('attendances', function (Blueprint $table) {
             $table->id();
+            $table->uuid('uuid')->unique();
+
+            $table->foreignId('staff_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            $table->date('attendance_date');
+
+            $table->timestamp('check_in_at')->nullable();
+            $table->timestamp('check_out_at')->nullable();
+
+            $table->enum('status', [
+                'Present',
+                'Late',
+                'Absent',
+                'Half Day',
+                'On Leave',
+                'Holiday',
+            ])->default('Present');
+
+            $table->text('remarks')->nullable();
+
             $table->timestamps();
+
+            $table->unique([
+                'staff_id',
+                'attendance_date',
+            ]);
         });
     }
 

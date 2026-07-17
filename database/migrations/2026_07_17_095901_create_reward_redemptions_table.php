@@ -13,7 +13,38 @@ return new class extends Migration
     {
         Schema::create('reward_redemptions', function (Blueprint $table) {
             $table->id();
+            $table->uuid('uuid')->unique();
+
+            $table->foreignId('client_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            $table->foreignId('reward_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            $table->unsignedInteger('points_used');
+
+            $table->enum('status', [
+                'Pending',
+                'Redeemed',
+                'Cancelled',
+            ])->default('Pending');
+
+            $table->timestamp('redeemed_at')->nullable();
+
+            $table->foreignId('redeemed_by')
+                ->nullable()
+                ->constrained('users')
+                ->nullOnDelete();
+
+            $table->text('remarks')->nullable();
+
             $table->timestamps();
+
+            $table->index('client_id');
+            $table->index('reward_id');
+            $table->index('status');
         });
     }
 

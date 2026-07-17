@@ -13,7 +13,47 @@ return new class extends Migration
     {
         Schema::create('billings', function (Blueprint $table) {
             $table->id();
+            $table->uuid('uuid')->unique();
+
+            $table->foreignId('subscription_id')
+                ->nullable()
+                ->constrained()
+                ->nullOnDelete();
+
+            $table->foreignId('appointment_id')
+                ->nullable()
+                ->constrained()
+                ->nullOnDelete();
+
+            $table->enum('billing_type', [
+                'Subscription',
+                'Appointment',
+            ]);
+
+            $table->string('billing_number', 50)->unique();
+
+            $table->decimal('amount', 10, 2);
+
+            $table->enum('status', [
+                'Pending',
+                'Paid',
+                'Overdue',
+                'Cancelled',
+                'Refunded',
+            ])->default('Pending');
+
+            $table->timestamp('issued_at');
+            $table->timestamp('due_at')->nullable();
+            $table->timestamp('paid_at')->nullable();
+
+            $table->text('remarks')->nullable();
+
             $table->timestamps();
+            $table->softDeletes();
+
+            $table->index('subscription_id');
+            $table->index('appointment_id');
+            $table->index('status');
         });
     }
 

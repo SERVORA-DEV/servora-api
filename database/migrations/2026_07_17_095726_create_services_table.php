@@ -13,7 +13,30 @@ return new class extends Migration
     {
         Schema::create('services', function (Blueprint $table) {
             $table->id();
+            $table->uuid('uuid')->unique();
+
+            $table->foreignId('spa_business_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            $table->foreignId('created_by')
+                ->nullable()
+                ->constrained('users')
+                ->nullOnDelete();
+
+            $table->string('name', 150);
+            $table->text('description')->nullable();
+
+            $table->boolean('is_default')->default(false);
+            $table->boolean('is_active')->default(true);
+
             $table->timestamps();
+            $table->softDeletes();
+
+            $table->unique([
+                'spa_business_id',
+                'name',
+            ]);
         });
     }
 

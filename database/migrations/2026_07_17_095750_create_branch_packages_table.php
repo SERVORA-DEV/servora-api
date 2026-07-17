@@ -13,7 +13,29 @@ return new class extends Migration
     {
         Schema::create('branch_packages', function (Blueprint $table) {
             $table->id();
+            $table->uuid('uuid')->unique();
+
+            $table->foreignId('spa_branch_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            $table->foreignId('package_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            $table->decimal('custom_price', 10, 2)
+                ->nullable();
+
+            $table->boolean('is_available')
+                ->default(true);
+
             $table->timestamps();
+            $table->softDeletes();
+
+            $table->unique([
+                'spa_branch_id',
+                'package_id',
+            ]);
         });
     }
 

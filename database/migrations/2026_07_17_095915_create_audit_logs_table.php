@@ -13,7 +13,57 @@ return new class extends Migration
     {
         Schema::create('audit_logs', function (Blueprint $table) {
             $table->id();
-            $table->timestamps();
+            $table->uuid('uuid')->unique();
+
+            $table->foreignId('user_id')
+                ->nullable()
+                ->constrained()
+                ->nullOnDelete();
+
+            $table->string('table_name', 100);
+
+            $table->unsignedBigInteger('record_id')->nullable();
+
+            $table->enum('action', [
+                'Create',
+                'Update',
+                'Delete',
+                'Login',
+                'Logout',
+                'Register',
+                'Verify Email',
+                'Reset Password',
+                'Change Password',
+                'Approve',
+                'Reject',
+                'Suspend',
+                'Restore',
+                'Assign',
+                'Unassign',
+                'Check In',
+                'Check Out',
+                'Complete',
+                'Cancel',
+                'Refund',
+                'Redeem',
+                'Export',
+                'Activate',
+                'Deactivate',
+            ]);
+
+            $table->json('old_values')->nullable();
+            $table->json('new_values')->nullable();
+
+            $table->string('ip_address', 45)->nullable();
+            $table->text('user_agent')->nullable();
+
+            $table->timestamp('created_at')->useCurrent();
+
+            $table->index('user_id');
+            $table->index('table_name');
+            $table->index('record_id');
+            $table->index('action');
+            $table->index('created_at');
         });
     }
 

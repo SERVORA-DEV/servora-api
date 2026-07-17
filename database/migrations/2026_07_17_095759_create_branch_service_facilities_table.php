@@ -13,7 +13,22 @@ return new class extends Migration
     {
         Schema::create('branch_service_facilities', function (Blueprint $table) {
             $table->id();
-            $table->timestamps();
+            $table->uuid('uuid')->unique();
+
+            $table->foreignId('branch_service_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            $table->foreignId('facility_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            $table->timestamp('created_at')->useCurrent();
+
+            $table->unique([
+                'branch_service_id',
+                'facility_id',
+            ]);
         });
     }
 

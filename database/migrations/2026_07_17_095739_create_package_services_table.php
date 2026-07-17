@@ -13,7 +13,26 @@ return new class extends Migration
     {
         Schema::create('package_services', function (Blueprint $table) {
             $table->id();
+            $table->uuid('uuid')->unique();
+
+            $table->foreignId('package_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            $table->foreignId('service_variant_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            $table->unsignedInteger('quantity')->default(1);
+
+            $table->unsignedInteger('sort_order')->default(1);
+
             $table->timestamps();
+
+            $table->unique([
+                'package_id',
+                'service_variant_id',
+            ]);
         });
     }
 

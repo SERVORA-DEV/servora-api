@@ -13,7 +13,28 @@ return new class extends Migration
     {
         Schema::create('spa_businesses', function (Blueprint $table) {
             $table->id();
+            $table->uuid('uuid')->unique();
+
+            $table->foreignId('owner_id')
+                ->constrained('users')
+                ->cascadeOnDelete();
+
+            $table->string('business_name', 150);
+
+            $table->string('business_email')->unique();
+            $table->string('business_phone', 20);
+
+            $table->string('business_logo')->nullable();
+
+            $table->text('business_description')->nullable();
+
+            $table->enum('operating_status', [
+                'Active',
+                'Inactive',
+            ])->default('Active');
+
             $table->timestamps();
+            $table->softDeletes();
         });
     }
 

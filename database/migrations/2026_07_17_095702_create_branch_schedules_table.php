@@ -13,6 +13,30 @@ return new class extends Migration
     {
         Schema::create('branch_schedules', function (Blueprint $table) {
             $table->id();
+            $table->uuid('uuid')->unique();
+
+            $table->foreignId('spa_branch_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            $table->enum('day_of_week', [
+                'Monday',
+                'Tuesday',
+                'Wednesday',
+                'Thursday',
+                'Friday',
+                'Saturday',
+                'Sunday',
+            ]);
+
+            $table->time('opening_time')->nullable();
+            $table->time('closing_time')->nullable();
+
+            $table->time('break_start')->nullable();
+            $table->time('break_end')->nullable();
+
+            $table->boolean('is_closed')->default(false);
+
             $table->timestamps();
         });
     }
