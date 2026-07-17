@@ -23,21 +23,22 @@ class User extends Authenticatable implements MustVerifyEmail
     protected $fillable = [
         'uuid',
         'role',
+        //'username',
 
         'first_name',
         'middle_name',
         'last_name',
         'suffix',
         'gender',
+        'birth_date',
 
         'email',
         'password',
 
         'phone_number',
-        'avatar',
+        'profile_photo',
 
         'account_status',
-        'last_login_at',
     ];
 
     protected $hidden = [

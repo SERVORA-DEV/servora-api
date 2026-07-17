@@ -15,4 +15,4 @@ class UserRepository
     {
         return User::create($payload);
     }
-}
+}   

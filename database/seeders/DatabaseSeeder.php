@@ -2,7 +2,6 @@
 
 namespace Database\Seeders;
 
-use App\Models\Role;
 use App\Models\User;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
@@ -18,16 +17,12 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // Run role seeder first
-        $this->call([
-            RoleSeeder::class,
-        ]);
-
         User::create([
             'uuid' => Str::uuid(),
 
-            // Better than hardcoding 1
-            'role_id' => Role::where('name', 'system_administrator')->value('id'),
+            'role' => 'system_administrator',
+
+            'username' => 'admin',
 
             'first_name' => 'System',
             'middle_name' => null,
@@ -40,11 +35,9 @@ class DatabaseSeeder extends Seeder
             'password' => Hash::make('servoraPassword'),
 
             'phone_number' => null,
-            'avatar' => null,
+            'profile_photo' => null,
 
             'account_status' => 'Active',
-
-            'last_login_at' => null,
 
             'remember_token' => Str::random(10),
         ]);

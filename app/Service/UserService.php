@@ -71,7 +71,7 @@ class UserService
 
     public function registerBusinessUser(array $payload){
 
-        $payload['role_id'] = 'business_owner';
+        $payload['role'] = 'business_owner';
 
         $user = $this->userRepository->create($payload);
 
