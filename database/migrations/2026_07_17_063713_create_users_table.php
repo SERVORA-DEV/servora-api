@@ -14,33 +14,38 @@ return new class extends Migration
         Schema::create('users', function (Blueprint $table) {
             $table->id();
 
-            // Public Identifier
             $table->uuid('uuid')->unique();
 
-            // Role
-            $table->foreignId('role_id')
-                ->constrained('roles')
-                ->cascadeOnUpdate()
-                ->restrictOnDelete();
+            $table->enum('role', [
+                'system_administrator',
+                'business_owner',
+                'staff',
+                'client'
+            ]);
 
-            // Personal Information
-            $table->string('first_name', 100)->nullable();
+            $table->string('username', 50)->unique();
+
+            $table->string('first_name', 100);
             $table->string('middle_name', 100)->nullable();
-            $table->string('last_name', 100)->nullable();
+            $table->string('last_name', 100);
             $table->string('suffix', 20)->nullable();
 
-            // Authentication
+            $table->enum('gender', [
+                'Male',
+                'Female'
+            ])->nullable();
+
+            $table->date('birth_date')->nullable();
+
+            $table->string('phone_number', 20)->nullable()->unique();
             $table->string('email')->unique();
-            $table->timestamp('email_verified_at')->nullable();
+
             $table->string('password');
 
-            // Contact Information
-            $table->string('phone_number', 20)->nullable();
+            $table->string('profile_photo')->nullable();
 
-            // Profile
-            $table->string('avatar')->nullable();
+            $table->timestamp('email_verified_at')->nullable();
 
-            // Account Status
             $table->enum('account_status', [
                 'Pending',
                 'Active',
@@ -48,13 +53,13 @@ return new class extends Migration
                 'Suspended'
             ])->default('Pending');
 
-            // Security
-            $table->timestamp('last_login_at')->nullable();
             $table->rememberToken();
 
-            // Laravel
             $table->timestamps();
             $table->softDeletes();
+
+            $table->index('role');
+            $table->index('account_status');
         });
     }
 

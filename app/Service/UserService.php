@@ -12,18 +12,15 @@ use Illuminate\Http\JsonResponse;
 class UserService
 {
     private UserRepository $userRepository;
-    private RoleService $roleService;
 
-    public function __construct(UserRepository $userRepository, RoleService $roleService)
+    public function __construct(UserRepository $userRepository)
     {
         $this->userRepository = $userRepository;
-        $this->roleService = $roleService;
     }
 
     public function getUser(string $uuid)
     {
         $user = $this->userRepository->findByField('uuid', $uuid);
-        $user['role'] = $this->roleService->getRoleByField('id', $user->role_id)->name;
         return new UserResource($user);
     }
 
@@ -55,7 +52,6 @@ class UserService
             ], 403);
         }
 
-        $user['role'] = $this->roleService->getRoleByField('id', $user->role_id)->name;
         $token = $user->createToken($user->email)->plainTextToken;
 
         return response()->json([
@@ -75,9 +71,7 @@ class UserService
 
     public function registerBusinessUser(array $payload){
 
-        $role = $this->roleService->getRoleByField('name', 'business_owner');
-
-        $payload['role_id'] = $role->id;
+        $payload['role_id'] = 'business_owner';
 
         $user = $this->userRepository->create($payload);
 
