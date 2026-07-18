@@ -35,4 +35,9 @@ return [
         ],
     ],
 
+    'xendit' => [
+        'secret_key' => env('XENDIT_SECRET_KEY'),
+        'base_url' => env('XENDIT_BASE_URL')
+    ],
+
 ];
