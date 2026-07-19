@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers\System;
 
-use App\Service\Admin\AdminUsersService;
+use App\Service\System\AdminUsersService;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;

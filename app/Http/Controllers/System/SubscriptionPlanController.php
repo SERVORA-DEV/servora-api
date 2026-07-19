@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\System;
 
 use Illuminate\Http\Request;
-use App\Service\Admin\SubscriptionPlanService;
+use App\Service\System\SubscriptionPlanService;
 use App\Http\Requests\SubscriptionPlanRequest;
 use App\Http\Controllers\Controller;
 

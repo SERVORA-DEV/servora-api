@@ -23,20 +23,25 @@ class User extends Authenticatable implements MustVerifyEmail
     protected $fillable = [
         'uuid',
         'role',
-        //'username',
+
+        'username',
 
         'first_name',
         'middle_name',
         'last_name',
         'suffix',
+
         'gender',
         'birth_date',
 
+        'phone_number',
         'email',
+
         'password',
 
-        'phone_number',
         'profile_photo',
+
+        'email_verified_at',
 
         'account_status',
     ];
@@ -52,5 +57,10 @@ class User extends Authenticatable implements MustVerifyEmail
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
         ];
+    }
+
+    public function permission()
+    {
+        return $this->hasOne(UserPermission::class);
     }
 }
