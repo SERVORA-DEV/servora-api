@@ -1,8 +1,8 @@
 <?php
 
-namespace App\Service;
+namespace App\Service\Admin;
 
-use App\Repository\SubscriptionPlanRepository;
+use App\Repository\Admin\SubscriptionPlanRepository;
 use App\Http\Resources\SubscriptionPlanResource;
 
 class SubscriptionPlanService

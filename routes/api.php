@@ -1,17 +1,36 @@
 <?php
 
+
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Auth\EmailVerificationController;
-use App\Http\Controllers\SubscriptionPlanController;
+use App\Http\Controllers\System\SubscriptionPlanController;
+use App\Http\Controllers\System\AdminUsersController;
 
 Route::post('/auth/login', [AuthController::class, 'login']);
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/auth/me', [AuthController::class, 'getUser']);
     Route::delete('/auth/logout', [AuthController::class, 'logout']);
+
+    Route::prefix('system')
+        ->middleware('role:system_administrator')
+        ->group(function () {
+            Route::apiResources([
+                'subscription-plans' => SubscriptionPlanController::class,
+                'admin/user-management' => AdminUsersController::class
+            ]);
+        });
+
+    Route::prefix('business')
+        ->middleware('role:business_owner')
+        ->group(function () {
+            // Route::apiResources([
+            //     'user-management', SubscriptionPlanController::class
+            // ]);
+        });
 });
 
 // display available subscription plan

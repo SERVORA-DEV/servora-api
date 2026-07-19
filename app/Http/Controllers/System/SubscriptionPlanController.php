@@ -1,10 +1,11 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\System;
 
-use App\Service\SubscriptionPlanService;
 use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
+use App\Service\Admin\SubscriptionPlanService;
+use App\Http\Requests\SubscriptionPlanRequest;
+use App\Http\Controllers\Controller;
 
 class SubscriptionPlanController extends Controller
 {
@@ -18,14 +19,11 @@ class SubscriptionPlanController extends Controller
     public function index(Request $request)
     {
         return $this->subscriptionPlanService->listSubscriptionPlan($request->input('per_page', 15));
-    }
+    }   
 
-    public function displayActivePlans(Request $request)
-    {
-        return $this->subscriptionPlanService->listOfActiveSubscriptionPlan($request->input('per_page', 15));
-    }
 
-    public function store(Request $request)
+    //Create a Subscription Plan
+    public function store(SubscriptionPlanRequest $request)
     {
         return $this->subscriptionPlanService->createSubscriptionPlan($request->all());
     }
@@ -35,7 +33,7 @@ class SubscriptionPlanController extends Controller
         return $this->subscriptionPlanService->getSubscriptionPlan($uuid);
     }
 
-    public function update(Request $request, string $uuid)
+    public function update(SubscriptionPlanRequest $request, string $uuid)
     {
         return $this->subscriptionPlanService->updateSubscriptionPlan($uuid, $request->all());
     }
@@ -49,5 +47,14 @@ class SubscriptionPlanController extends Controller
     public function restore(string $uuid)
     {
         return $this->subscriptionPlanService->restoreSubscriptionPlan($uuid);
+    }
+
+
+
+
+    //Display Active Subscription Plans
+    public function displayActivePlans(Request $request)
+    {
+        return $this->subscriptionPlanService->listOfActiveSubscriptionPlan($request->input('per_page', 15));
     }
 }

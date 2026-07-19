@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Repository;
+namespace App\Repository\Admin;
 
 use App\Models\SubscriptionPlan;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
