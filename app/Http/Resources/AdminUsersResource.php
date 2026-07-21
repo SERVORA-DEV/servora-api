@@ -17,7 +17,10 @@ class AdminUsersResource extends JsonResource
          return [
             ...parent::toArray($request),
 
-            'permission' => $this->whenLoaded('permission'),
+            'permission' => $this
+            ->permission !== null ?
+            $this->permission->only(config('permission.' . $this->role)) : 
+            null
         ];
     }
 }

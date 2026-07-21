@@ -22,10 +22,16 @@ class AdminUsersService
 
     public function createAdminUsers(array $payload)
     {
+
         $payload['role'] = 'system_administrator';
+
         $user = $this->adminUsersRepository->createUser($payload);
+
         $payload['user_id'] = $user->id;
         $this->adminUsersRepository->createPermission($payload);
+
+        $user->markEmailAsVerified();
+
         return $user->load('permission');
     }
 

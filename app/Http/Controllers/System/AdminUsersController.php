@@ -36,14 +36,14 @@ class AdminUsersController extends Controller
         return $this->adminUsersService->updateAdminUsers($uuid, $request->all());
     }
 
-    public function destroy(string $uuid)
-    {
-        $this->adminUsersService->deleteAdminUsers($uuid);
-        return response()->json(['message' => 'Deleted successfully'], 200);
-    }
+    // public function destroy(string $uuid)
+    // {
+    //     $this->adminUsersService->deleteAdminUsers($uuid);
+    //     return response()->json(['message' => 'Deleted successfully'], 200);
+    // }
     
-    public function restore(string $uuid)
-    {
-        return $this->adminUsersService->restoreAdminUsers($uuid);
-    }
+    // public function restore(string $uuid)
+    // {
+    //     return $this->adminUsersService->restoreAdminUsers($uuid);
+    // }
 }
