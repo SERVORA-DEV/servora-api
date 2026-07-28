@@ -42,7 +42,7 @@ return new class extends Migration
 
             $table->string('password');
 
-            $table->string('profile_photo')->nullable();
+            $table->longText('profile_photo')->nullable();
 
             $table->timestamp('email_verified_at')->nullable();
 

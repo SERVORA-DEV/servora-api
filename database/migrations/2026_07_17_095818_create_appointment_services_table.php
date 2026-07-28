@@ -13,7 +13,6 @@ return new class extends Migration
     {
         Schema::create('appointment_services', function (Blueprint $table) {
             $table->id();
-            $table->uuid('uuid')->unique();
 
             $table->foreignId('appointment_id')
                 ->constrained()

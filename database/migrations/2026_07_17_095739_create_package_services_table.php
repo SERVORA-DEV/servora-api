@@ -13,7 +13,6 @@ return new class extends Migration
     {
         Schema::create('package_services', function (Blueprint $table) {
             $table->id();
-            $table->uuid('uuid')->unique();
 
             $table->foreignId('package_id')
                 ->constrained()

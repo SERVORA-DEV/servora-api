@@ -13,7 +13,6 @@ return new class extends Migration
     {
         Schema::create('branch_packages', function (Blueprint $table) {
             $table->id();
-            $table->uuid('uuid')->unique();
 
             $table->foreignId('spa_branch_id')
                 ->constrained()

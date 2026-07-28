@@ -13,7 +13,6 @@ return new class extends Migration
     {
         Schema::create('branch_service_facilities', function (Blueprint $table) {
             $table->id();
-            $table->uuid('uuid')->unique();
 
             $table->foreignId('branch_service_id')
                 ->constrained()

@@ -10,7 +10,6 @@ return new class extends Migration
     {
         Schema::create('therapist_assignments', function (Blueprint $table) {
             $table->id();
-            $table->uuid('uuid')->unique();
 
             $table->foreignId('appointment_service_id')
                 ->constrained()
