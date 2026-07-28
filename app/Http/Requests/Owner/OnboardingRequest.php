@@ -29,7 +29,7 @@ class OnboardingRequest extends FormRequest
             'phone_number' => [
                 'required',
                 'string',
-                'max:20',
+                'regex:/^\+[1-9]\d{6,14}$/',
                 Rule::unique('users', 'phone_number')->ignore($userId),
             ],
 
@@ -38,7 +38,7 @@ class OnboardingRequest extends FormRequest
             // Business detail
             'business_name' => 'required|string|max:150',
             'business_email' => 'required|email|unique:spa_businesses,business_email',
-            'business_phone' => 'required|string|max:20',
+            'business_phone' => ['required', 'string', 'regex:/^\+[1-9]\d{6,14}$/'],
 
             'business_logo' => 'nullable|string',
             'business_description' => 'nullable|string',
