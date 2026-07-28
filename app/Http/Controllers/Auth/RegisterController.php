@@ -18,6 +18,6 @@ class RegisterController extends Controller
 
     public function register(RegisterRequest $request)
     {
-        $user = $this->userService->registerBusinessUser($request->all());
+        return $this->userService->registerBusinessUser($request->all());
     }
 }

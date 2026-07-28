@@ -44,6 +44,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'email_verified_at',
 
         'account_status',
+        'onboarding_completed_at',
     ];
 
     protected $hidden = [
@@ -55,6 +56,7 @@ class User extends Authenticatable implements MustVerifyEmail
     {
         return [
             'email_verified_at' => 'datetime',
+            'onboarding_completed_at' => 'datetime',
             'password' => 'hashed',
         ];
     }
@@ -62,5 +64,10 @@ class User extends Authenticatable implements MustVerifyEmail
     public function permission()
     {
         return $this->hasOne(UserPermission::class);
+    }
+
+    public function business()
+    {
+        return $this->hasOne(SpaBusiness::class, 'owner_id');
     }
 }

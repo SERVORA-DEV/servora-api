@@ -8,6 +8,7 @@ use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\System\SubscriptionPlanController;
 use App\Http\Controllers\System\AdminUsersController;
+use App\Http\Controllers\Owner\OnboardingController;
 
 Route::post('/auth/login', [AuthController::class, 'login']);
 
@@ -27,6 +28,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('business')
         ->middleware('role:business_owner')
         ->group(function () {
+            Route::post('/owner/onboarding', [OnboardingController::class, 'store']);
+
             // Route::apiResources([
             //     'user-management', SubscriptionPlanController::class
             // ]);

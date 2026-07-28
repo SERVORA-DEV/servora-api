@@ -15,4 +15,10 @@ class UserRepository
     {
         return User::create($payload);
     }
-}   
+
+    public function update(User $user, array $payload)
+    {
+        $user->update($payload);
+        return $user;
+    }
+}
