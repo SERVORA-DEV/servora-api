@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Service\SubscriptionService;
+use App\Http\Requests\SubscriptionRequest;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -20,9 +21,9 @@ class SubscriptionController extends Controller
         return $this->subscriptionService->getCurrentSubscription($request->user());
     }
 
-    public function store(Request $request)
+    public function store(SubscriptionRequest $request)
     {
-        return $this->subscriptionService->createSubscription($request->all());
+        return $this->subscriptionService->createSubscription($request->user(), $request->validated());
     }
 
     public function show(string $uuid)

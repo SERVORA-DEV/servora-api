@@ -10,6 +10,7 @@ use App\Http\Controllers\System\SubscriptionPlanController;
 use App\Http\Controllers\System\AdminUsersController;
 use App\Http\Controllers\Owner\OnboardingController;
 use App\Http\Controllers\SubscriptionController;
+use App\Http\Controllers\XenditWebhookController;
 
 Route::post('/auth/login', [AuthController::class, 'login']);
 Route::post('/auth/forget-password', [AuthController::class, 'forgetPassword']);
@@ -53,3 +54,7 @@ Route::get(
     '/email/verify/{id}/{hash}',
     [EmailVerificationController::class, 'verify']
 )->middleware('signed')->name('verification.verify');
+
+// xendit webhook (server-to-server, no auth — verified via x-callback-token)
+
+Route::post('/webhooks/xendit', [XenditWebhookController::class, 'handle']);
