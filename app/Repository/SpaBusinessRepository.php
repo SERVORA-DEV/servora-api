@@ -10,4 +10,9 @@ class SpaBusinessRepository
     {
         return SpaBusiness::create($payload);
     }
+
+    public function findByOwnerId(int $ownerId)
+    {
+        return SpaBusiness::where('owner_id', $ownerId)->first();
+    }
 }

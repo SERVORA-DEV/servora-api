@@ -9,6 +9,7 @@ use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\System\SubscriptionPlanController;
 use App\Http\Controllers\System\AdminUsersController;
 use App\Http\Controllers\Owner\OnboardingController;
+use App\Http\Controllers\SubscriptionController;
 
 Route::post('/auth/login', [AuthController::class, 'login']);
 Route::post('/auth/forget-password', [AuthController::class, 'forgetPassword']);
@@ -33,9 +34,9 @@ Route::middleware('auth:sanctum')->group(function () {
         ->group(function () {
             Route::post('/owner/onboarding', [OnboardingController::class, 'store']);
 
-            // Route::apiResources([
-            //     'user-management', SubscriptionPlanController::class
-            // ]);
+            Route::apiResources([
+                'subscription' => SubscriptionController::class
+            ]);
         });
 });
 

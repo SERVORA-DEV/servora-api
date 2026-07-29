@@ -57,4 +57,9 @@ class SpaBusiness extends Model
     {
         return $this->hasMany(SpaBranch::class, 'spa_business_id');
     }
+
+    public function subscriptions()
+    {
+        return $this->hasMany(Subscription::class, 'spa_business_id');
+    }
 }
