@@ -2,7 +2,6 @@
 
 namespace Database\Factories;
 
-use App\Models\Role;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -19,8 +18,12 @@ class UserFactory extends Factory
         return [
             'uuid' => Str::uuid(),
 
-            // Make sure a Role record exists before using the factory
-            //'role_id' => Role::factory(),
+            'role' => fake()->randomElement([
+                'system_administrator',
+                'business_owner',
+                'staff',
+                'client',
+            ]),
 
             'first_name' => fake()->firstName(),
             'middle_name' => fake()->optional()->firstName(),
@@ -32,8 +35,8 @@ class UserFactory extends Factory
 
             'password' => static::$password ??= Hash::make('password'),
 
-            'phone_number' => fake()->phoneNumber(),
-            'avatar' => null,
+            'phone_number' => fake()->unique()->phoneNumber(),
+            'profile_photo' => null,
 
             'account_status' => 'Active',
             'last_login_at' => now(),

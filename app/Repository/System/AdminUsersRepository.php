@@ -59,32 +59,7 @@ class AdminUsersRepository
             'account_status',
         ]);
 
-        $permissionData = Arr::only($payload, [
-            'dashboard_view',
-            'admin_manage',
-            'permission_manage',
-            'subscription_plan_manage',
-            'subscription_manage',
-            'spa_business_manage',
-            'spa_branch_manage',
-            'staff_manage',
-            'attendance_manage',
-            'service_manage',
-            'package_manage',
-            'facility_manage',
-            'client_manage',
-            'appointment_manage',
-            'queue_manage',
-            'billing_manage',
-            'payment_manage',
-            'commission_manage',
-            'loyalty_manage',
-            'review_manage',
-            'report_view',
-            'report_export',
-            'notification_manage',
-            'audit_log_view',
-        ]);
+        $permissionData = Arr::only($payload, config('permission.system_administrator'));
 
         $model->update($userData);
         $model->permission()->update($permissionData);

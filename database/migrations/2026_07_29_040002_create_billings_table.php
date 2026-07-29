@@ -15,20 +15,18 @@ return new class extends Migration
             $table->id();
             $table->uuid('uuid')->unique();
 
-            $table->foreignId('subscription_id')
-                ->nullable()
-                ->constrained()
-                ->nullOnDelete();
+            $table->unsignedBigInteger('subscription_id')->nullable();
+            $table->unsignedBigInteger('appointment_id')->nullable();
 
-            $table->foreignId('appointment_id')
-                ->nullable()
-                ->constrained()
-                ->nullOnDelete();
+            // Denormalized from subscription->spa_business or appointment->spa_branch->spa_business.
+            // Saves a multi-table join on every revenue/report query.
+            $table->unsignedBigInteger('spa_business_id')->nullable();
+            $table->unsignedBigInteger('spa_branch_id')->nullable();
 
             $table->enum('billing_type', [
                 'Subscription',
                 'Appointment',
-            ]);
+            ])->nullable();
 
             $table->string('billing_number', 50)->unique();
 
@@ -42,7 +40,7 @@ return new class extends Migration
                 'Refunded',
             ])->default('Pending');
 
-            $table->timestamp('issued_at');
+            $table->timestamp('issued_at')->useCurrent();
             $table->timestamp('due_at')->nullable();
             $table->timestamp('paid_at')->nullable();
 
@@ -53,7 +51,8 @@ return new class extends Migration
 
             $table->index('subscription_id');
             $table->index('appointment_id');
-            $table->index('status');
+            $table->index(['spa_business_id', 'status']);
+            $table->index(['spa_branch_id', 'status']);
         });
     }
 

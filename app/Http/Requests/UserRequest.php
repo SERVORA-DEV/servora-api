@@ -2,10 +2,14 @@
 
 namespace App\Http\Requests;
 
-use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
+// Validates POST/PATCH /system/admin/user-management. This endpoint only
+// ever creates/updates system_administrator accounts (AdminUsersService
+// forces the role), so field requiredness and the permission whitelist
+// below are scoped to that role only — mirrors the shape/strictness of
+// Owner\OnboardingRequest (same phone regex, same before:today birth_date).
 class UserRequest extends FormRequest
 {
     public function authorize(): bool
@@ -15,54 +19,48 @@ class UserRequest extends FormRequest
 
     public function rules(): array
     {
-        $user = $this->route('user');
+        $isCreate = $this->isMethod('post');
+
+        // Route wildcard name isn't 'user' (apiResource('admin/user-management', ...)
+        // generates its own parameter name) — grab whatever the single route
+        // parameter is instead of relying on that name, so ignore() actually works.
+        $userUuid = collect($this->route()?->parameters() ?? [])->first();
+
+        $permissionRules = collect(config('permission.system_administrator'))
+            ->mapWithKeys(fn (string $field) => [$field => 'sometimes|boolean'])
+            ->all();
 
         return [
-            // User
-            'role' => [
-                'required',
-                Rule::in([
-                    'system_administrator',
-                    'business_owner',
-                    'staff',
-                    'client'
-                ]),
-            ],
-
             'username' => [
-                'nullable',
+                $isCreate ? 'required' : 'sometimes',
                 'string',
                 'max:50',
-                Rule::unique('users', 'username')->ignore($user),
+                Rule::unique('users', 'username')->ignore($userUuid, 'uuid'),
             ],
 
-            'first_name' => 'nullable|string|max:100',
+            'first_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100'],
             'middle_name' => 'nullable|string|max:100',
-            'last_name' => 'nullable|string|max:100',
+            'last_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100'],
             'suffix' => 'nullable|string|max:20',
 
-            'gender' => [
-                'nullable',
-                Rule::in(['Male', 'Female']),
-            ],
-
-            'birth_date' => 'nullable|date',
+            'gender' => [$isCreate ? 'required' : 'sometimes', Rule::in(['Male', 'Female'])],
+            'birth_date' => [$isCreate ? 'required' : 'sometimes', 'date', 'before:today'],
 
             'phone_number' => [
-                'nullable',
+                $isCreate ? 'required' : 'sometimes',
                 'string',
-                'max:20',
-                Rule::unique('users', 'phone_number')->ignore($user),
+                'regex:/^\+[1-9]\d{6,14}$/',
+                Rule::unique('users', 'phone_number')->ignore($userUuid, 'uuid'),
             ],
 
             'email' => [
-                'required',
+                $isCreate ? 'required' : 'sometimes',
                 'email',
-                Rule::unique('users', 'email')->ignore($user),
+                Rule::unique('users', 'email')->ignore($userUuid, 'uuid'),
             ],
 
             'password' => [
-                $this->isMethod('post') ? 'required' : 'nullable',
+                $isCreate ? 'required' : 'nullable',
                 'string',
                 'min:8',
             ],
@@ -71,51 +69,10 @@ class UserRequest extends FormRequest
 
             'account_status' => [
                 'sometimes',
-                Rule::in([
-                    'Pending',
-                    'Active',
-                    'Inactive',
-                    'Suspended',
-                ]),
+                Rule::in(['Pending', 'Active', 'Inactive', 'Suspended']),
             ],
 
-            // Permissions
-            'dashboard_view' => 'sometimes|boolean',
-
-            'admin_manage' => 'sometimes|boolean',
-            'permission_manage' => 'sometimes|boolean',
-
-            'subscription_plan_manage' => 'sometimes|boolean',
-            'subscription_manage' => 'sometimes|boolean',
-
-            'spa_business_manage' => 'sometimes|boolean',
-            'spa_branch_manage' => 'sometimes|boolean',
-
-            'staff_manage' => 'sometimes|boolean',
-            'attendance_manage' => 'sometimes|boolean',
-
-            'service_manage' => 'sometimes|boolean',
-            'package_manage' => 'sometimes|boolean',
-            'facility_manage' => 'sometimes|boolean',
-
-            'client_manage' => 'sometimes|boolean',
-
-            'appointment_manage' => 'sometimes|boolean',
-            'queue_manage' => 'sometimes|boolean',
-
-            'billing_manage' => 'sometimes|boolean',
-            'payment_manage' => 'sometimes|boolean',
-            'commission_manage' => 'sometimes|boolean',
-
-            'loyalty_manage' => 'sometimes|boolean',
-            'review_manage' => 'sometimes|boolean',
-
-            'report_view' => 'sometimes|boolean',
-            'report_export' => 'sometimes|boolean',
-
-            'notification_manage' => 'sometimes|boolean',
-
-            'audit_log_view' => 'sometimes|boolean',
+            ...$permissionRules,
         ];
     }
 }

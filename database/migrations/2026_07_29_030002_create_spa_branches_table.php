@@ -16,24 +16,25 @@ return new class extends Migration
             $table->uuid('uuid')->unique();
 
             $table->foreignId('spa_business_id')
-                ->constrained()
+                ->constrained('spa_businesses')
                 ->cascadeOnDelete();
 
-            $table->string('branch_name', 150);
+            $table->string('branch_name', 150)->nullable();
 
-            $table->string('email')->unique();
-            $table->string('phone_number', 20);
+            $table->string('email')->nullable();
+            $table->string('phone_number', 20)->nullable();
 
-            $table->text('address');
+            $table->text('address')->nullable();
 
-            $table->string('city', 100);
-            $table->string('province', 100);
-            $table->string('postal_code', 10);
+            $table->string('city', 100)->nullable();
+            $table->string('province', 100)->nullable();
+            $table->string('postal_code', 10)->nullable();
 
-            $table->decimal('latitude', 10, 8);
-            $table->decimal('longitude', 11, 8);
+            $table->decimal('latitude', 10, 8)->nullable();
+            $table->decimal('longitude', 11, 8)->nullable();
 
             $table->string('cover_photo')->nullable();
+
             $table->text('description')->nullable();
 
             $table->enum('verification_status', [
@@ -41,25 +42,29 @@ return new class extends Migration
                 'Verified',
                 'Rejected',
                 'Suspended',
-            ])->default('Pending');
+            ])->nullable();
 
             $table->enum('operating_status', [
                 'Active',
                 'Inactive',
                 'Temporarily Closed',
-            ])->default('Active');
+            ])->nullable();
 
-            $table->foreignId('verified_by')
-                ->nullable()
-                ->constrained('users')
-                ->nullOnDelete();
+            $table->text('closure_note')->nullable();
+            $table->date('reopens_at')->nullable();
 
+            $table->unsignedBigInteger('verified_by')->nullable();
             $table->timestamp('verified_at')->nullable();
 
             $table->text('rejection_reason')->nullable();
+            $table->text('suspension_reason')->nullable();
 
             $table->timestamps();
             $table->softDeletes();
+
+            $table->unique(['spa_business_id', 'branch_name']);
+            $table->index(['city', 'province']);
+            $table->index(['latitude', 'longitude']);
         });
     }
 

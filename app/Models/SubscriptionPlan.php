@@ -5,13 +5,9 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Override;
-use PhpParser\Node\Expr\Cast;
 
 class SubscriptionPlan extends Model
 {
-
-    /** @use HasFactory<SubscriptionPlanFactory> */
     use HasUuids, SoftDeletes;
 
     public function uniqueIds()
@@ -56,5 +52,10 @@ class SubscriptionPlan extends Model
 
             'is_active' => 'boolean',
         ];
+    }
+
+    public function subscriptions()
+    {
+        return $this->hasMany(Subscription::class, 'subscription_plan_id');
     }
 }

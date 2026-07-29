@@ -42,6 +42,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'profile_photo',
 
         'email_verified_at',
+        'phone_verified_at',
 
         'account_status',
         'onboarding_completed_at',
@@ -50,13 +51,19 @@ class User extends Authenticatable implements MustVerifyEmail
     protected $hidden = [
         'password',
         'remember_token',
+        'two_factor_secret',
+        'two_factor_recovery_codes',
     ];
 
     protected function casts(): array
     {
         return [
             'email_verified_at' => 'datetime',
+            'phone_verified_at' => 'datetime',
             'onboarding_completed_at' => 'datetime',
+            'two_factor_confirmed_at' => 'datetime',
+            'locked_until' => 'datetime',
+            'last_login_at' => 'datetime',
             'password' => 'hashed',
         ];
     }

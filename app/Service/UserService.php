@@ -3,9 +3,8 @@
 namespace App\Service;
 
 use App\Http\Resources\UserResource;
-use App\Models\Role;
 use App\Repository\UserRepository;
-use App\Service\RoleService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\JsonResponse;
 
@@ -73,7 +72,17 @@ class UserService
 
         $payload['role'] = 'business_owner';
 
-        $user = $this->userRepository->create($payload);
+        $user = DB::transaction(function () use ($payload) {
+            $user = $this->userRepository->create($payload);
+
+            // Owners get full authority over their own business by default —
+            // grant every permission scoped to business_owner (config/permission.php).
+            $permissionPayload = array_fill_keys(config('permission.business_owner'), true);
+            $permissionPayload['user_id'] = $user->id;
+            $this->userRepository->createPermission($permissionPayload);
+
+            return $user;
+        });
 
         $user->sendEmailVerificationNotification();
 

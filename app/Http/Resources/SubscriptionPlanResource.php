@@ -14,6 +14,14 @@ class SubscriptionPlanResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
-        return parent::toArray($request);
+        return [
+            ...parent::toArray($request),
+
+            // True when this plan has at least one subscription attached.
+            // The admin UI should use this to warn that editing will create
+            // a new version (and archive this one) instead of a plain
+            // in-place edit — see SubscriptionPlanService::updateSubscriptionPlan().
+            'has_subscribers' => ($this->subscriptions_count ?? 0) > 0,
+        ];
     }
 }

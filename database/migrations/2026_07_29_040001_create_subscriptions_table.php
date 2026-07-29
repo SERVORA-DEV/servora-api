@@ -15,26 +15,20 @@ return new class extends Migration
             $table->id();
             $table->uuid('uuid')->unique();
 
-            $table->foreignId('spa_business_id')
-                ->constrained()
-                ->cascadeOnDelete();
+            $table->unsignedBigInteger('spa_business_id')->nullable();
 
             $table->foreignId('subscription_plan_id')
-                ->constrained()
-                ->restrictOnDelete();
+                ->constrained('subscription_plans');
 
             $table->enum('billing_cycle', [
                 'Monthly',
                 'Yearly',
-            ]);
+            ])->nullable();
 
-            $table->decimal('plan_price', 10, 2);
+            $table->timestamp('starts_at')->nullable();
+            $table->timestamp('expires_at')->nullable();
 
-            $table->dateTime('starts_at');
-            $table->dateTime('expires_at');
-
-            $table->boolean('auto_renew')
-                ->default(false);
+            $table->boolean('auto_renew')->default(false);
 
             $table->enum('status', [
                 'Pending',
@@ -43,11 +37,13 @@ return new class extends Migration
                 'Cancelled',
             ])->default('Pending');
 
+            $table->timestamp('cancelled_at')->nullable();
+            $table->text('cancellation_reason')->nullable();
+
             $table->timestamps();
             $table->softDeletes();
 
-            $table->index('spa_business_id');
-            $table->index('status');
+            $table->index(['spa_business_id', 'status']);
         });
     }
 

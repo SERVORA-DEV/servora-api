@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\User;
+use App\Models\UserPermission;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
@@ -17,7 +18,7 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        User::create([
+        $admin = User::create([
             'uuid' => Str::uuid(),
 
             'role' => 'system_administrator',
@@ -41,5 +42,12 @@ class DatabaseSeeder extends Seeder
 
             'remember_token' => Str::random(10),
         ]);
+
+        UserPermission::create(
+            array_merge(
+                ['user_id' => $admin->id],
+                array_fill_keys(config('permission.system_administrator'), true)
+            )
+        );  
     }
 }

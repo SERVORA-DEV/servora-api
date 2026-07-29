@@ -3,7 +3,6 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Str;
 use App\Models\SubscriptionPlan;
 
 class SubscriptionPlanSeeder extends Seeder
@@ -13,10 +12,8 @@ class SubscriptionPlanSeeder extends Seeder
      */
     public function run(): void
     {
-        SubscriptionPlan::insert([
+        $plans = [
             [
-                'uuid' => Str::uuid(),
-
                 'category' => 'Basic',
                 'name' => 'Basic',
                 'description' => 'Perfect for small spa businesses getting started.',
@@ -37,14 +34,9 @@ class SubscriptionPlanSeeder extends Seeder
                 'mobile_app_access' => false,
 
                 'is_active' => true,
-
-                'created_at' => now(),
-                'updated_at' => now(),
             ],
 
             [
-                'uuid' => Str::uuid(),
-
                 'category' => 'Premium',
                 'name' => 'Premium',
                 'description' => 'Ideal for growing spa businesses with multiple staff.',
@@ -65,14 +57,9 @@ class SubscriptionPlanSeeder extends Seeder
                 'mobile_app_access' => true,
 
                 'is_active' => true,
-
-                'created_at' => now(),
-                'updated_at' => now(),
             ],
 
             [
-                'uuid' => Str::uuid(),
-
                 'category' => 'Enterprise',
                 'name' => 'Enterprise',
                 'description' => 'Best for large spa chains with unlimited expansion.',
@@ -93,10 +80,20 @@ class SubscriptionPlanSeeder extends Seeder
                 'mobile_app_access' => true,
 
                 'is_active' => true,
-
-                'created_at' => now(),
-                'updated_at' => now(),
             ],
-        ]);
+        ];
+
+        foreach ($plans as $plan) {
+            // Match on the *active* plan for this category, not just the
+            // category alone — a category can have archived historical
+            // versions sitting alongside its current active plan (see
+            // SubscriptionPlanService::updateSubscriptionPlan()), so
+            // matching on category only could silently reactivate or
+            // overwrite the wrong row.
+            SubscriptionPlan::updateOrCreate(
+                ['category' => $plan['category'], 'is_active' => true],
+                $plan
+            );
+        }
     }
 }

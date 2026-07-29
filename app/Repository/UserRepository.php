@@ -3,6 +3,7 @@
 namespace App\Repository;
 
 use App\Models\User;
+use App\Models\UserPermission;
 
 class UserRepository
 {
@@ -20,5 +21,10 @@ class UserRepository
     {
         $user->update($payload);
         return $user;
+    }
+
+    public function createPermission(array $payload)
+    {
+        return UserPermission::create($payload);
     }
 }

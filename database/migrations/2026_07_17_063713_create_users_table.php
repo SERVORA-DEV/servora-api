@@ -32,12 +32,15 @@ return new class extends Migration
 
             $table->enum('gender', [
                 'Male',
-                'Female'
+                'Female',
+                'Prefer not to say'
             ])->nullable();
 
             $table->date('birth_date')->nullable();
 
             $table->string('phone_number', 20)->nullable()->unique();
+            $table->timestamp('phone_verified_at')->nullable();
+
             $table->string('email')->unique();
 
             $table->string('password');
@@ -53,13 +56,24 @@ return new class extends Migration
                 'Suspended'
             ])->default('Pending');
 
+            $table->timestamp('onboarding_completed_at')->nullable();
+
+            $table->text('two_factor_secret')->nullable();
+            $table->text('two_factor_recovery_codes')->nullable();
+            $table->timestamp('two_factor_confirmed_at')->nullable();
+
+            $table->unsignedInteger('failed_login_attempts')->default(0);
+            $table->timestamp('locked_until')->nullable();
+
+            $table->timestamp('last_login_at')->nullable();
+            $table->string('last_login_ip', 45)->nullable();
+
             $table->rememberToken();
 
             $table->timestamps();
             $table->softDeletes();
 
-            $table->index('role');
-            $table->index('account_status');
+            $table->index(['role', 'account_status']);
         });
     }
 

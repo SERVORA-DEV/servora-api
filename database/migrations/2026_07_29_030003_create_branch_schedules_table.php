@@ -16,7 +16,7 @@ return new class extends Migration
             $table->uuid('uuid')->unique();
 
             $table->foreignId('spa_branch_id')
-                ->constrained()
+                ->constrained('spa_branches')
                 ->cascadeOnDelete();
 
             $table->enum('day_of_week', [
@@ -38,6 +38,8 @@ return new class extends Migration
             $table->boolean('is_closed')->default(false);
 
             $table->timestamps();
+
+            $table->unique(['spa_branch_id', 'day_of_week']);
         });
     }
 

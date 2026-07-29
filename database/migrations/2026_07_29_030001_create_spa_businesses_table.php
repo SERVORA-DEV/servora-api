@@ -15,23 +15,34 @@ return new class extends Migration
             $table->id();
             $table->uuid('uuid')->unique();
 
-            $table->foreignId('owner_id')
-                ->constrained('users')
-                ->cascadeOnDelete();
+            $table->unsignedBigInteger('owner_id')->nullable();
 
-            $table->string('business_name', 150);
+            $table->string('business_name', 150)->nullable();
 
-            $table->string('business_email')->unique();
-            $table->string('business_phone', 20);
+            $table->string('business_email')->unique()->nullable();
+            $table->string('business_phone', 20)->nullable();
 
             $table->string('business_logo')->nullable();
 
             $table->text('business_description')->nullable();
 
+            $table->enum('verification_status', [
+                'Pending',
+                'Verified',
+                'Rejected',
+                'Suspended',
+            ])->nullable();
+
             $table->enum('operating_status', [
                 'Active',
                 'Inactive',
-            ])->default('Active');
+            ])->nullable();
+
+            $table->unsignedBigInteger('verified_by')->nullable();
+            $table->timestamp('verified_at')->nullable();
+
+            $table->text('rejection_reason')->nullable();
+            $table->text('suspension_reason')->nullable();
 
             $table->timestamps();
             $table->softDeletes();

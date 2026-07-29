@@ -4,12 +4,13 @@ namespace App\Service\System;
 
 use App\Repository\System\AdminUsersRepository;
 use App\Http\Resources\AdminUsersResource;
+use Illuminate\Support\Arr;
 
 class AdminUsersService
 {
     private AdminUsersRepository $adminUsersRepository;
 
-    public function __construct(AdminUsersRepository $adminUsersRepository) 
+    public function __construct(AdminUsersRepository $adminUsersRepository)
     {
         $this->adminUsersRepository = $adminUsersRepository;
     }
@@ -27,17 +28,20 @@ class AdminUsersService
 
         $user = $this->adminUsersRepository->createUser($payload);
 
-        $payload['user_id'] = $user->id;
-        $this->adminUsersRepository->createPermission($payload);
+        $permissionPayload = Arr::only($payload, config('permission.system_administrator'));
+        $permissionPayload['user_id'] = $user->id;
+
+        $this->adminUsersRepository->createPermission($permissionPayload);
 
         $user->markEmailAsVerified();
 
-        return $user->load('permission');
+        return new AdminUsersResource($user->load('permission'));
     }
 
     public function updateAdminUsers(string $uuid, array $payload)
     {
-        return $this->adminUsersRepository->update($uuid, $payload);
+        $model = $this->adminUsersRepository->update($uuid, $payload);
+        return new AdminUsersResource($model);
     }
 
     // public function deleteAdminUsers(string $uuid)

@@ -23,7 +23,7 @@ class OnboardingRequest extends FormRequest
             'last_name' => 'required|string|max:100',
             'suffix' => 'nullable|string|max:20',
 
-            'gender' => ['required', Rule::in(['Male', 'Female'])],
+            'gender' => ['required', Rule::in(['Male', 'Female', 'Prefer not to say'])],
             'birth_date' => 'required|date|before:today',
 
             'phone_number' => [

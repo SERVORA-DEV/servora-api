@@ -21,8 +21,22 @@ class SpaBusiness extends Model
         'business_logo',
         'business_description',
 
+        'verification_status',
         'operating_status',
+
+        'verified_by',
+        'verified_at',
+
+        'rejection_reason',
+        'suspension_reason',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'verified_at' => 'datetime',
+        ];
+    }
 
     public function uniqueIds()
     {
@@ -32,5 +46,15 @@ class SpaBusiness extends Model
     public function owner()
     {
         return $this->belongsTo(User::class, 'owner_id');
+    }
+
+    public function verifier()
+    {
+        return $this->belongsTo(User::class, 'verified_by');
+    }
+
+    public function branches()
+    {
+        return $this->hasMany(SpaBranch::class, 'spa_business_id');
     }
 }

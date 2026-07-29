@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\System;
 
+use App\Http\Requests\UserRequest;
 use App\Service\System\AdminUsersService;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
@@ -21,9 +22,9 @@ class AdminUsersController extends Controller
         return $this->adminUsersService->listAdminUsers($request->input('per_page', 15));
     }
 
-    public function store(Request $request)
+    public function store(UserRequest $request)
     {
-        return $this->adminUsersService->createAdminUsers($request->all());
+        return $this->adminUsersService->createAdminUsers($request->validated());
     }
 
     public function show(string $uuid)
@@ -31,9 +32,9 @@ class AdminUsersController extends Controller
         return $this->adminUsersService->getAdminUsers($uuid);
     }
 
-    public function update(Request $request, string $uuid)
+    public function update(UserRequest $request, string $uuid)
     {
-        return $this->adminUsersService->updateAdminUsers($uuid, $request->all());
+        return $this->adminUsersService->updateAdminUsers($uuid, $request->validated());
     }
 
     // public function destroy(string $uuid)
