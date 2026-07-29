@@ -11,6 +11,9 @@ use App\Http\Controllers\System\AdminUsersController;
 use App\Http\Controllers\Owner\OnboardingController;
 
 Route::post('/auth/login', [AuthController::class, 'login']);
+Route::post('/auth/forget-password', [AuthController::class, 'forgetPassword']);
+Route::post('/auth/forget-password/verify-otp', [AuthController::class, 'verifyForgetPasswordOtp']);
+Route::post('/auth/reset-password', [AuthController::class, 'resetPassword']);
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/auth/me', [AuthController::class, 'getUser']);
