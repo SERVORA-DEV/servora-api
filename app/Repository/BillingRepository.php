@@ -32,4 +32,20 @@ class BillingRepository
             ->limit($limit)
             ->get();
     }
+
+    // Platform-wide subscription billing history for the system admin
+    // "Transaction" page. Payments are eager-loaded newest-first so
+    // TransactionResource can grab payments->first() as the latest attempt
+    // (a billing can have more than one, e.g. a retry after a failed charge).
+    public function paginateSubscriptionTransactions(int $perPage = 100)
+    {
+        return Billing::with([
+            'subscription.plan',
+            'subscription.business.owner',
+            'payments' => fn ($query) => $query->latest('paid_at'),
+        ])
+            ->where('billing_type', 'Subscription')
+            ->orderByDesc('issued_at')
+            ->paginate($perPage);
+    }
 }

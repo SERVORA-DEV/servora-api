@@ -8,6 +8,7 @@ use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\System\SubscriptionPlanController;
 use App\Http\Controllers\System\AdminUsersController;
+use App\Http\Controllers\System\TransactionController;
 use App\Http\Controllers\Owner\OnboardingController;
 use App\Http\Controllers\SubscriptionController;
 use App\Http\Controllers\XenditWebhookController;
@@ -38,6 +39,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 'subscription-plans' => SubscriptionPlanController::class,
                 'admin/user-management' => AdminUsersController::class
             ]);
+
+            Route::get('transactions', [TransactionController::class, 'index']);
         });
 
     
