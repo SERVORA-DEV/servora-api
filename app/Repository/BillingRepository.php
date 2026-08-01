@@ -20,4 +20,16 @@ class BillingRepository
 
         return $number;
     }
+
+    // Billing history for the business owner's subscription page — newest
+    // first, regardless of subscription status, so past invoices stay
+    // visible even after a plan expires or is cancelled.
+    public function findForBusiness(int $spaBusinessId, int $limit = 25)
+    {
+        return Billing::with('subscription.plan')
+            ->where('spa_business_id', $spaBusinessId)
+            ->orderByDesc('issued_at')
+            ->limit($limit)
+            ->get();
+    }
 }

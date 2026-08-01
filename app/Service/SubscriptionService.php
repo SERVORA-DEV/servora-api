@@ -9,6 +9,7 @@ use App\Repository\BillingRepository;
 use App\Repository\PaymentRepository;
 use App\Repository\System\SubscriptionPlanRepository;
 use App\Http\Resources\SubscriptionResource;
+use App\Http\Resources\BillingResource;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -64,8 +65,17 @@ class SubscriptionService
             return response()->json([
                 'has_subscription' => false,
                 'message' => 'No spa business found for this account.',
+                'billings' => [],
             ], 200);
         }
+
+        // Billing history is independent of the current subscription's
+        // status — past invoices should stay visible even once a plan has
+        // expired or been cancelled, so this is fetched regardless of
+        // whether $subscription below is found.
+        $billings = BillingResource::collection(
+            $this->billingRepository->findForBusiness($business->id)
+        );
 
         $subscription = $this->subscriptionRepository->findLatestForBusiness($business->id);
 
@@ -73,20 +83,25 @@ class SubscriptionService
             return response()->json([
                 'has_subscription' => false,
                 'message' => 'No subscription found for this business yet.',
+                'billings' => $billings,
             ], 200);
         }
 
         return response()->json([
             'has_subscription' => true,
             'subscription' => new SubscriptionResource($subscription),
+            'billings' => $billings,
         ], 200);
     }
 
-    // Does NOT create the subscription — it starts a Xendit payment request
-    // for the chosen plan and hands back the checkout link. The subscription,
-    // billing, and payment rows only get created once activateSubscriptionFromPayment()
-    // is called from the Xendit webhook, so we never record a subscription
-    // that was never actually paid for.
+    // Does NOT create the subscription — it creates a Xendit invoice for
+    // the chosen plan and hands back the hosted checkout link. We don't ask
+    // which channel (GCash/Maya/card/etc.) the customer wants up front;
+    // Xendit's own invoice page lists every enabled channel and the
+    // customer picks there. The subscription, billing, and payment rows
+    // only get created once activateSubscriptionFromPayment() is called
+    // from the Xendit webhook, so we never record a subscription that was
+    // never actually paid for.
     public function createSubscription(User $user, array $payload)
     {
         $business = $this->businessRepository->findByOwnerId($user->id);
@@ -119,29 +134,30 @@ class SubscriptionService
 
         $frontendUrl = config('app.frontend_url');
 
-        $payment = $this->xenditService->createPaymentRequest(
+        $invoice = $this->xenditService->createInvoice(
             $referenceId,
             (float) $amount,
-            $payload['channel_code'],
+            "{$plan->name} Plan Subscription ({$billingCycle})",
             $frontendUrl . '/payment/success',
             $frontendUrl . '/payment/failed',
         );
 
         return response()->json([
             'reference_id' => $referenceId,
-            'payment_url' => $payment['payment_url'],
-            'status' => $payment['status'],
+            'payment_url' => $invoice['invoice_url'],
+            'status' => $invoice['status'],
         ], 200);
     }
 
-    // Called from XenditWebhookController once Xendit confirms the payment
-    // actually succeeded. Idempotent: if the reference_id's intent is missing
+    // Called from XenditWebhookController once Xendit confirms the invoice
+    // was actually paid. Idempotent: if the reference_id's intent is missing
     // (already processed, or expired/unknown) it silently no-ops instead of
     // creating duplicate rows.
     public function activateSubscriptionFromPayment(
         string $referenceId,
-        string $paymentRequestId,
-        string $channelCode,
+        string $invoiceId,
+        ?string $paymentMethod,
+        ?string $paymentChannel,
         float $paidAmount
     ): bool {
         $intent = Cache::get(self::PENDING_CACHE_PREFIX . $referenceId);
@@ -151,7 +167,7 @@ class SubscriptionService
             return false;
         }
 
-        DB::transaction(function () use ($intent, $paymentRequestId, $channelCode, $paidAmount, $referenceId) {
+        DB::transaction(function () use ($intent, $invoiceId, $paymentMethod, $paymentChannel, $paidAmount, $referenceId) {
             $subscription = $this->subscriptionRepository->create([
                 'spa_business_id' => $intent['spa_business_id'],
                 'subscription_plan_id' => $intent['subscription_plan_id'],
@@ -176,9 +192,9 @@ class SubscriptionService
             $this->paymentRepository->create([
                 'billing_id' => $billing->id,
                 'spa_business_id' => $intent['spa_business_id'],
-                'payment_method' => $this->mapChannelToPaymentMethod($channelCode),
+                'payment_method' => $this->mapChannelToPaymentMethod($paymentMethod, $paymentChannel),
                 'gateway_provider' => 'Xendit',
-                'gateway_reference' => $paymentRequestId,
+                'gateway_reference' => $invoiceId,
                 'reference_number' => $referenceId,
                 'amount' => $paidAmount,
                 'payment_status' => 'Paid',
@@ -191,12 +207,29 @@ class SubscriptionService
         return true;
     }
 
-    private function mapChannelToPaymentMethod(string $channelCode): string
+    // The customer can now land on any channel Xendit offers on its hosted
+    // invoice page, not just the GCash/Maya we used to hardcode — this maps
+    // Xendit's broad `payment_method` category plus the specific
+    // `payment_channel` down to the fixed set the payments table accepts.
+    private function mapChannelToPaymentMethod(?string $paymentMethod, ?string $paymentChannel): string
     {
-        return match ($channelCode) {
-            'GCASH' => 'GCash',
-            'PAYMAYA' => 'Maya',
-            default => 'Bank Transfer',
+        $channel = strtoupper($paymentChannel ?? '');
+        $method = strtoupper($paymentMethod ?? '');
+
+        if (str_contains($channel, 'GCASH')) {
+            return 'GCash';
+        }
+
+        if (str_contains($channel, 'PAYMAYA') || str_contains($channel, 'MAYA')) {
+            return 'Maya';
+        }
+
+        return match ($method) {
+            'CREDIT_CARD' => 'Credit Card',
+            'DEBIT_CARD' => 'Debit Card',
+            'BANK_TRANSFER', 'DIRECT_DEBIT', 'RETAIL_OUTLET' => 'Online Banking',
+            'QR_CODE' => 'QR Code',
+            default => 'Other',
         };
     }
 

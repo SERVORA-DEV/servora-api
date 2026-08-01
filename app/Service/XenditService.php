@@ -8,44 +8,40 @@ use RuntimeException;
 
 class XenditService
 {
-    public function createPaymentRequest(
-        string $referenceId,
+    // Uses Xendit's Invoice API rather than the Payment Requests API: we
+    // don't ask the customer which channel (GCash/Maya/card/etc.) they want
+    // before creating the request — Xendit's own hosted invoice page
+    // presents every enabled channel and lets the customer pick there.
+    public function createInvoice(
+        string $externalId,
         float $amount,
-        string $channelCode,
-        string $successReturnUrl,
-        string $failureReturnUrl
+        string $description,
+        string $successRedirectUrl,
+        string $failureRedirectUrl
     ): array {
         $response = Http::withBasicAuth(
             config('services.xendit.secret_key'),
             ''
         )
-            ->withHeaders(['api-version' => '2024-11-11'])
-            ->post(config('services.xendit.base_url') . '/v3/payment_requests', [
-                'reference_id' => $referenceId,
-                'type' => 'PAY',
-                'country' => 'PH',
+            ->post(config('services.xendit.base_url') . '/v2/invoices', [
+                'external_id' => $externalId,
+                'amount' => $amount,
                 'currency' => 'PHP',
-                'request_amount' => $amount,
-                'channel_code' => $channelCode,
-                'channel_properties' => [
-                    'success_return_url' => $successReturnUrl,
-                    'failure_return_url' => $failureReturnUrl,
-                ],
+                'description' => $description,
+                'success_redirect_url' => $successRedirectUrl,
+                'failure_redirect_url' => $failureRedirectUrl,
             ]);
 
         if ($response->failed()) {
-            throw new RuntimeException('Xendit payment request failed: ' . $response->body());
+            throw new RuntimeException('Xendit invoice creation failed: ' . $response->body());
         }
 
         $body = $response->json();
 
-        $paymentUrl = collect($body['actions'] ?? [])
-            ->firstWhere('descriptor', 'WEB_URL')['value'] ?? null;
-
         return [
-            'payment_request_id' => $body['payment_request_id'] ?? null,
+            'invoice_id' => $body['id'] ?? null,
             'status' => $body['status'] ?? null,
-            'payment_url' => $paymentUrl,
+            'invoice_url' => $body['invoice_url'] ?? null,
         ];
     }
 

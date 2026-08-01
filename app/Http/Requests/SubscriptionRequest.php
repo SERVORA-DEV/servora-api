@@ -25,7 +25,6 @@ class SubscriptionRequest extends FormRequest
         return [
             'subscription_plan_uuid' => 'required|uuid|exists:subscription_plans,uuid',
             'billing_cycle' => 'required|in:Monthly,Yearly',
-            'channel_code' => 'required|in:GCASH,PAYMAYA',
         ];
     }
 }

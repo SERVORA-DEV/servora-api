@@ -18,11 +18,15 @@ class XenditWebhookController extends Controller
         $this->subscriptionService = $subscriptionService;
     }
 
+    // Xendit's Invoice callback isn't wrapped in an {event, data} envelope
+    // like the Payment Requests API — it POSTs the invoice object itself
+    // (id, external_id, status, paid_amount, payment_method,
+    // payment_channel, ...) directly at the top level.
     public function handle(Request $request)
     {
         Log::info('xendit.webhook.received', [
-            'event' => $request->input('event'),
-            'data' => $request->input('data', []),
+            'external_id' => $request->input('external_id'),
+            'status' => $request->input('status'),
             'has_callback_token_header' => $request->hasHeader('x-callback-token'),
         ]);
 
@@ -31,22 +35,23 @@ class XenditWebhookController extends Controller
             abort(403, 'Invalid webhook token.');
         }
 
-        $event = $request->input('event');
-        $data = $request->input('data', []);
+        $status = $request->input('status');
+        $externalId = $request->input('external_id');
 
-        if ($event === 'payment.capture' && ($data['status'] ?? null) === 'SUCCEEDED') {
+        if ($status === 'PAID') {
             $activated = $this->subscriptionService->activateSubscriptionFromPayment(
-                $data['reference_id'],
-                $data['payment_request_id'],
-                $data['channel_code'] ?? '',
-                (float) ($data['request_amount'] ?? 0),
+                $externalId,
+                $request->input('id'),
+                $request->input('payment_method'),
+                $request->input('payment_channel'),
+                (float) ($request->input('paid_amount') ?? 0),
             );
 
             if ($activated) {
-                Log::info('xendit.webhook.activated', ['reference_id' => $data['reference_id'] ?? null]);
+                Log::info('xendit.webhook.activated', ['reference_id' => $externalId]);
             }
         } else {
-            Log::info('xendit.webhook.ignored', ['event' => $event, 'status' => $data['status'] ?? null]);
+            Log::info('xendit.webhook.ignored', ['external_id' => $externalId, 'status' => $status]);
         }
 
         return response()->json(['message' => 'ok'], 200);

@@ -54,7 +54,7 @@ Route::middleware('auth:sanctum')->group(function () {
 });
 
 
-// System Handle Part
+// System Handle Part   
 
 Route::get(
     '/email/verify/{id}/{hash}',
