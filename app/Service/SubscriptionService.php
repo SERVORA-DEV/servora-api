@@ -22,6 +22,15 @@ class SubscriptionService
     // billings/payments until the webhook proves the money actually moved.
     private const PENDING_CACHE_PREFIX = 'xendit_subscription_intent:';
 
+    // Mirrors the same intent, keyed by business instead of reference_id, so
+    // getCurrentSubscription() can self-check "does this business have an
+    // unconfirmed payment" without needing the frontend to hand back a
+    // reference_id at all. That hand-off (sessionStorage across a cross-site
+    // redirect to Xendit and back, or the redirect URL's query string) is a
+    // real point of failure in some browsers/environments — this makes the
+    // page you'd naturally check after paying self-heal regardless.
+    private const PENDING_BUSINESS_CACHE_PREFIX = 'xendit_subscription_pending_business:';
+
     private SubscriptionRepository $subscriptionRepository;
     private SpaBusinessRepository $businessRepository;
     private SubscriptionPlanRepository $subscriptionPlanRepository;
@@ -68,6 +77,8 @@ class SubscriptionService
                 'billings' => [],
             ], 200);
         }
+
+        $this->resolvePendingPaymentForBusiness($business->id);
 
         // Billing history is independent of the current subscription's
         // status — past invoices should stay visible even once a plan has
@@ -137,13 +148,21 @@ class SubscriptionService
             'amount' => $amount,
         ], now()->addDay());
 
+        Cache::put(self::PENDING_BUSINESS_CACHE_PREFIX . $business->id, $referenceId, now()->addDay());
+
         $frontendUrl = config('app.frontend_url');
 
+        // reference_id travels in the redirect URL itself, not just
+        // sessionStorage — browsers with cross-site bounce-tracking
+        // mitigations (Safari ITP and similar) can wipe session/local
+        // storage on a page that does a short-lived redirect out to another
+        // domain (Xendit) and back, which silently drops the id the success
+        // page needs to confirm the payment.
         $invoice = $this->xenditService->createInvoice(
             $referenceId,
             (float) $amount,
             "{$plan->name} Plan Subscription ({$billingCycle})",
-            $frontendUrl . '/payment/success',
+            $frontendUrl . '/payment/success?reference_id=' . $referenceId,
             $frontendUrl . '/payment/failed',
         );
 
@@ -208,8 +227,53 @@ class SubscriptionService
         });
 
         Cache::forget(self::PENDING_CACHE_PREFIX . $referenceId);
+        Cache::forget(self::PENDING_BUSINESS_CACHE_PREFIX . $intent['spa_business_id']);
 
         return true;
+    }
+
+    // Self-healing check run on every getCurrentSubscription() call: if this
+    // business has an unconfirmed payment on file, ask Xendit directly
+    // whether it actually went through and activate it if so. Makes simply
+    // loading the subscription page (or the Plans page, which also calls
+    // getCurrentSubscription) sufficient to pick up a payment even if the
+    // webhook never arrived and the /payment/success page's own confirm
+    // call never fired (lost sessionStorage, closed tab, etc).
+    private function resolvePendingPaymentForBusiness(int $businessId): void
+    {
+        $referenceId = Cache::get(self::PENDING_BUSINESS_CACHE_PREFIX . $businessId);
+
+        if (! $referenceId) {
+            return;
+        }
+
+        $intent = Cache::get(self::PENDING_CACHE_PREFIX . $referenceId);
+
+        if (! $intent) {
+            Cache::forget(self::PENDING_BUSINESS_CACHE_PREFIX . $businessId);
+            return;
+        }
+
+        try {
+            $invoice = $this->xenditService->getInvoiceByExternalId($referenceId);
+        } catch (\Throwable $e) {
+            Log::warning('xendit.pending_check.failed', ['reference_id' => $referenceId, 'error' => $e->getMessage()]);
+            return;
+        }
+
+        if (! $invoice || $invoice['status'] !== 'PAID') {
+            return;
+        }
+
+        $this->activateSubscriptionFromPayment(
+            $referenceId,
+            $invoice['id'],
+            $invoice['payment_method'] ?? null,
+            $invoice['payment_channel'] ?? null,
+            (float) ($invoice['paid_amount'] ?? $invoice['amount'] ?? 0),
+        );
+
+        Log::info('xendit.pending_check.activated', ['reference_id' => $referenceId]);
     }
 
     // Fallback for when Xendit's webhook can't reach us (e.g. local dev with
