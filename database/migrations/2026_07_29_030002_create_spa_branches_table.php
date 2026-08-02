@@ -38,11 +38,12 @@ return new class extends Migration
             $table->text('description')->nullable();
 
             $table->enum('verification_status', [
+                'Unregistered',
                 'Pending',
                 'Verified',
                 'Rejected',
                 'Suspended',
-            ])->nullable();
+            ])->default('Unregistered');
 
             $table->enum('operating_status', [
                 'Active',
@@ -62,7 +63,6 @@ return new class extends Migration
             $table->timestamps();
             $table->softDeletes();
 
-            $table->unique(['spa_business_id', 'branch_name']);
             $table->index(['city', 'province']);
             $table->index(['latitude', 'longitude']);
         });

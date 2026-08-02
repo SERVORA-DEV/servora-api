@@ -9,9 +9,12 @@ use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\System\SubscriptionPlanController;
 use App\Http\Controllers\System\AdminUsersController;
 use App\Http\Controllers\System\TransactionController;
-use App\Http\Controllers\Owner\OnboardingController;
+use App\Http\Controllers\Business\OnboardingController;
 use App\Http\Controllers\SubscriptionController;
 use App\Http\Controllers\XenditWebhookController;
+use App\Http\Controllers\Business\BranchScheduleController;
+use App\Http\Controllers\Business\SpaBranchController;
+use App\Http\Controllers\System\BranchRegistrationController;
 
 // authentication part
 Route::post('/auth/login', [AuthController::class, 'login']);
@@ -41,6 +44,15 @@ Route::middleware('auth:sanctum')->group(function () {
             ]);
 
             Route::get('transactions', [TransactionController::class, 'index']);
+
+            // No store/update/destroy — a registration is only ever
+            // reviewed (approve/reject), never created or edited here.
+            Route::apiResource('branch-registrations', BranchRegistrationController::class)
+                ->parameters(['branch-registrations' => 'uuid'])
+                ->only(['index', 'show']);
+
+            Route::post('branch-registrations/{uuid}/approve', [BranchRegistrationController::class, 'approve']);
+            Route::post('branch-registrations/{uuid}/reject', [BranchRegistrationController::class, 'reject']);
         });
 
     
@@ -51,8 +63,12 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/owner/onboarding', [OnboardingController::class, 'store']);
 
             Route::apiResources([
-                'subscription' => SubscriptionController::class
+                'subscription' => SubscriptionController::class,
+                'branch' => SpaBranchController::class,
+                'branch-schedule' => BranchScheduleController::class
             ]);
+
+            Route::post('branch/{uuid}/registration', [SpaBranchController::class, 'submitRegistration']);
         });
 });
 

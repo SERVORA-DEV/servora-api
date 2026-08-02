@@ -28,6 +28,10 @@ class TransactionResource extends JsonResource
             'uuid' => $this->uuid,
             'invoice' => $this->billing_number,
             'reference_number' => $payment?->reference_number,
+            // Groups billings back to their subscription so the frontend can
+            // tell a first charge from a renewal (a subscription with more
+            // than one billing has been renewed) — see useSystemTransactions.ts.
+            'subscription_id' => $subscription?->uuid,
             'spa_business' => $business?->business_name,
             'owner_first_name' => $owner?->first_name,
             'owner_last_name' => $owner?->last_name,

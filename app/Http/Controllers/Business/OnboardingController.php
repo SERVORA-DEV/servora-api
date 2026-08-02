@@ -1,10 +1,10 @@
 <?php
 
-namespace App\Http\Controllers\Owner;
+namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Owner\OnboardingRequest;
-use App\Service\Owner\OnboardingService;
+use App\Http\Requests\Business\OnboardingRequest;
+use App\Service\Business\OnboardingService;
 
 class OnboardingController extends Controller
 {

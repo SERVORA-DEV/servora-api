@@ -16,6 +16,13 @@ class AdminUsersRepository
         ->paginate($perPage);
     }
 
+    // Used to fan out branch-registration-submitted notifications to every
+    // system administrator, not just one.
+    public function allAdministrators()
+    {
+        return User::where('role', 'system_administrator')->get();
+    }
+
     public function createUser(array $payload)
     {
         return User::create($payload);
