@@ -18,7 +18,13 @@ return new class extends Migration
             $table->foreignId('spa_business_id')
                 ->constrained('spa_businesses')
                 ->cascadeOnDelete();
+            $table->index('spa_business_id');
 
+            // No unique constraint here: branch names are allowed to repeat,
+            // even within the same business (e.g. multiple unnamed/placeholder
+            // branches during setup, or two branches sharing a franchise name)
+            // — see SpaBranchService::createSpaBranch/updateSpaBranch, which
+            // doesn't check for an existing name before saving.
             $table->string('branch_name', 150)->nullable();
 
             $table->string('email')->nullable();
