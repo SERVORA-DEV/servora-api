@@ -26,6 +26,13 @@ class SubscriptionController extends Controller
         return $this->subscriptionService->createSubscription($request->user(), $request->validated());
     }
 
+    public function confirm(Request $request, string $referenceId)
+    {
+        return response()->json(
+            $this->subscriptionService->confirmPendingPayment($request->user(), $referenceId)
+        );
+    }
+
     public function show(string $uuid)
     {
         return $this->subscriptionService->getSubscription($uuid);

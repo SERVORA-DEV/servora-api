@@ -24,10 +24,17 @@ class XenditWebhookController extends Controller
     // payment_channel, ...) directly at the top level.
     public function handle(Request $request)
     {
+        // Log the full raw payload, not just the fields we expect — if
+        // Xendit ever changes the callback shape (e.g. switches this
+        // account back to the Payment Requests {event, data} envelope
+        // instead of the flat Invoice callback), external_id/status below
+        // silently read as null and the payment gets logged as "ignored"
+        // with no other trace. The raw payload is what makes that visible.
         Log::info('xendit.webhook.received', [
             'external_id' => $request->input('external_id'),
             'status' => $request->input('status'),
             'has_callback_token_header' => $request->hasHeader('x-callback-token'),
+            'payload' => $request->all(),
         ]);
 
         if (! $this->xenditService->verifyWebhookToken($request)) {

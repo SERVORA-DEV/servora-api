@@ -45,6 +45,26 @@ class XenditService
         ];
     }
 
+    // Fallback for when the webhook can't reach us (e.g. local dev with no
+    // public tunnel) — lets the frontend ask Xendit directly whether an
+    // invoice was paid instead of only waiting on the callback.
+    public function getInvoiceByExternalId(string $externalId): ?array
+    {
+        $response = Http::withBasicAuth(
+            config('services.xendit.secret_key'),
+            ''
+        )
+            ->get(config('services.xendit.base_url') . '/v2/invoices', [
+                'external_id' => $externalId,
+            ]);
+
+        if ($response->failed()) {
+            throw new RuntimeException('Xendit invoice lookup failed: ' . $response->body());
+        }
+
+        return $response->json()[0] ?? null;
+    }
+
     // Xendit signs every webhook with the account's verification token in the
     // x-callback-token header — this is the only thing standing between "a
     // payment really succeeded" and "anyone can POST a fake success event".

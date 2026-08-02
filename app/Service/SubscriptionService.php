@@ -125,12 +125,17 @@ class SubscriptionService
 
         $referenceId = 'SUB-' . Str::uuid();
 
+        // TTL must be >= the Xendit invoice's own validity window (24h,
+        // since createInvoice() doesn't set invoice_duration) — otherwise a
+        // customer who pays after the cache entry expires has their PAID
+        // webhook arrive to find no intent to activate, and it silently
+        // no-ops (see activateSubscriptionFromPayment's unknown_intent log).
         Cache::put(self::PENDING_CACHE_PREFIX . $referenceId, [
             'spa_business_id' => $business->id,
             'subscription_plan_id' => $plan->id,
             'billing_cycle' => $billingCycle,
             'amount' => $amount,
-        ], now()->addHour());
+        ], now()->addDay());
 
         $frontendUrl = config('app.frontend_url');
 
@@ -205,6 +210,60 @@ class SubscriptionService
         Cache::forget(self::PENDING_CACHE_PREFIX . $referenceId);
 
         return true;
+    }
+
+    // Fallback for when Xendit's webhook can't reach us (e.g. local dev with
+    // no public tunnel) — called from the frontend's /payment/success page
+    // instead of waiting on the callback. Safe to call alongside the real
+    // webhook: activateSubscriptionFromPayment() only acts while the intent
+    // is still cached, so whichever of the two runs first "wins" and the
+    // other silently no-ops instead of creating duplicate rows.
+    public function confirmPendingPayment(User $user, string $referenceId): array
+    {
+        Log::info('xendit.confirm.requested', ['reference_id' => $referenceId]);
+
+        $intent = Cache::get(self::PENDING_CACHE_PREFIX . $referenceId);
+
+        if (! $intent) {
+            $business = $this->businessRepository->findByOwnerId($user->id);
+            $subscription = $business ? $this->subscriptionRepository->findLatestForBusiness($business->id) : null;
+
+            Log::info('xendit.confirm.no_pending_intent', [
+                'reference_id' => $referenceId,
+                'found_subscription' => (bool) $subscription,
+            ]);
+
+            return [
+                'activated' => (bool) $subscription,
+                'status' => $subscription->status ?? 'unknown',
+            ];
+        }
+
+        $invoice = $this->xenditService->getInvoiceByExternalId($referenceId);
+
+        if (! $invoice || $invoice['status'] !== 'PAID') {
+            Log::info('xendit.confirm.not_yet_paid', [
+                'reference_id' => $referenceId,
+                'invoice_status' => $invoice['status'] ?? null,
+            ]);
+
+            return [
+                'activated' => false,
+                'status' => $invoice['status'] ?? 'PENDING',
+            ];
+        }
+
+        $this->activateSubscriptionFromPayment(
+            $referenceId,
+            $invoice['id'],
+            $invoice['payment_method'] ?? null,
+            $invoice['payment_channel'] ?? null,
+            (float) ($invoice['paid_amount'] ?? $invoice['amount'] ?? 0),
+        );
+
+        Log::info('xendit.confirm.activated', ['reference_id' => $referenceId]);
+
+        return ['activated' => true, 'status' => 'Active'];
     }
 
     // The customer can now land on any channel Xendit offers on its hosted

@@ -69,6 +69,8 @@ Route::middleware('auth:sanctum')->group(function () {
             ]);
 
             Route::post('branch/{uuid}/registration', [SpaBranchController::class, 'submitRegistration']);
+
+            Route::get('subscription/confirm/{referenceId}', [SubscriptionController::class, 'confirm']);
         });
 });
 
