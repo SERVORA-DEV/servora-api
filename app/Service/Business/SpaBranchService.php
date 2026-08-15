@@ -33,12 +33,14 @@ class SpaBranchService
         $this->notificationService = $notificationService;
     }
 
-    // Scoped to the authenticated owner's own business — paginate() has no
-    // business filter, so calling that here would leak every business's
-    // branches to every owner.
+    // Scoped to what this user can see — every branch for business_owner,
+    // only their own assigned branch for manager (see
+    // SpaBusinessRepository::branchesForUser). paginateForBusiness() would
+    // leak every branch in the business to a manager, who's only supposed
+    // to manage their one branch.
     public function listSpaBranch(User $user, int $perPage = 15)
     {
-        $business = $this->spaBusinessRepository->findByOwnerId($user->id);
+        $business = $this->spaBusinessRepository->findForUser($user);
 
         if (! $business) {
             return response()->json([
@@ -46,7 +48,8 @@ class SpaBranchService
             ], 422);
         }
 
-        $collection = $this->spaBranchRepository->paginateForBusiness($business->id, $perPage);
+        $branchIds = $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
+        $collection = $this->spaBranchRepository->paginateForBranches($branchIds, $perPage);
         return SpaBranchResource::collection($collection);
     }
 
@@ -59,7 +62,7 @@ class SpaBranchService
      */
     public function createSpaBranch(User $user, array $payload)
     {
-        $business = $this->spaBusinessRepository->findByOwnerId($user->id);
+        $business = $this->spaBusinessRepository->findForUser($user);
 
         if (! $business) {
             return response()->json([
@@ -79,9 +82,11 @@ class SpaBranchService
         return new SpaBranchResource($model);
     }
 
+    // Same manager-vs-owner scoping as listSpaBranch above — a manager can
+    // only look up their own branch by uuid, not any branch in the business.
     public function getSpaBranch(User $user, string $uuid)
     {
-        $business = $this->spaBusinessRepository->findByOwnerId($user->id);
+        $business = $this->spaBusinessRepository->findForUser($user);
 
         if (! $business) {
             return response()->json([
@@ -89,7 +94,8 @@ class SpaBranchService
             ], 422);
         }
 
-        $model = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
+        $branchIds = $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
+        $model = $this->spaBranchRepository->findByUuidForBranches($uuid, $branchIds);
         return new SpaBranchResource($model);
     }
 
@@ -107,7 +113,7 @@ class SpaBranchService
      */
     public function updateSpaBranch(User $user, string $uuid, array $payload)
     {
-        $business = $this->spaBusinessRepository->findByOwnerId($user->id);
+        $business = $this->spaBusinessRepository->findForUser($user);
 
         if (! $business) {
             return response()->json([
@@ -123,7 +129,7 @@ class SpaBranchService
 
     public function deleteSpaBranch(User $user, string $uuid)
     {
-        $business = $this->spaBusinessRepository->findByOwnerId($user->id);
+        $business = $this->spaBusinessRepository->findForUser($user);
 
         if (! $business) {
             return response()->json([
@@ -150,7 +156,7 @@ class SpaBranchService
      */
     public function submitRegistration(User $user, string $uuid, array $payload, ?Request $request = null)
     {
-        $business = $this->spaBusinessRepository->findByOwnerId($user->id);
+        $business = $this->spaBusinessRepository->findForUser($user);
 
         if (! $business) {
             return response()->json([

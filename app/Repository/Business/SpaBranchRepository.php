@@ -20,6 +20,15 @@ class SpaBranchRepository
         return SpaBranch::where('spa_business_id', $spaBusinessId)->latest()->paginate($perPage);
     }
 
+    // Scoped to a specific set of branch ids — what listSpaBranch() actually
+    // uses now (via SpaBusinessRepository::branchesForUser), since a manager
+    // must only ever see their own single branch, not the whole business's
+    // like paginateForBusiness() above returns.
+    public function paginateForBranches(array $spaBranchIds, int $perPage = 15)
+    {
+        return SpaBranch::whereIn('id', $spaBranchIds)->latest()->paginate($perPage);
+    }
+
     public function create(array $payload)
     {
         return SpaBranch::create($payload);
@@ -36,6 +45,18 @@ class SpaBranchRepository
     {
         return SpaBranch::where('uuid', $uuid)
             ->where('spa_business_id', $spaBusinessId)
+            ->firstOrFail();
+    }
+
+    // Same guard as findByUuidForBusiness, scoped to specific branch ids —
+    // what getSpaBranch() (the only manager-reachable single-branch lookup;
+    // create/update/delete stay owner-only per routes/api.php) uses now, so
+    // a manager 404s outside their own branch instead of being able to view
+    // any branch in the business.
+    public function findByUuidForBranches(string $uuid, array $spaBranchIds)
+    {
+        return SpaBranch::where('uuid', $uuid)
+            ->whereIn('id', $spaBranchIds)
             ->firstOrFail();
     }
 

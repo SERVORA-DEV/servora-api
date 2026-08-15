@@ -39,6 +39,25 @@ class SubscriptionRepository
             ->first();
     }
 
+    // The subscription (if any) currently blocking this business from
+    // starting a new one. Checked against expires_at rather than trusting
+    // status === 'Active' alone — nothing flips a row to 'Expired'
+    // automatically yet (no scheduled job exists), so a row that's still
+    // marked Active in the DB but past its own expires_at must still be
+    // treated as expired here, or a business could never resubscribe once
+    // their term actually ends.
+    public function findActiveForBusiness(int $spaBusinessId)
+    {
+        return Subscription::where('spa_business_id', $spaBusinessId)
+            ->where('status', 'Active')
+            ->where(function ($query) {
+                $query->whereNull('expires_at')
+                    ->orWhere('expires_at', '>', now());
+            })
+            ->latest()
+            ->first();
+    }
+
     public function update(string $uuid, array $payload)
     {
         $model = $this->findByUuid($uuid);

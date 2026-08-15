@@ -58,6 +58,39 @@ class UserService
             ], 403);
         }
 
+        // Business-scoped login — only sent by the branded
+        // /login/{business_uuid} page (see the "Copy Login Link" button and
+        // AccountCreatedModal on the Account Management page). Restricted
+        // to manager/front_officer
+        // accounts that actually belong to that business; an otherwise
+        // valid owner/admin/client login, or a staff account from a
+        // different business, is rejected here even though the
+        // credentials themselves checked out above.
+        if (! empty($payload->business_uuid)) {
+            if (! in_array($user->role, ['manager', 'front_officer'], true)) {
+                return response()->json([
+                    'message' => 'This login page is only for staff accounts of this business.'
+                ], 403);
+            }
+
+            $userBusinessUuid = $user->accountBranch?->branch?->business?->uuid;
+
+            if (! $userBusinessUuid || $userBusinessUuid !== $payload->business_uuid) {
+                return response()->json([
+                    'message' => 'This account doesn\'t belong to this business.'
+                ], 403);
+            }
+        } elseif (in_array($user->role, ['manager', 'front_officer'], true)) {
+            // Mirror of the block above — staff accounts only ever sign in
+            // through their business's own branded page, never the generic
+            // owner/admin one. No business_uuid in the response — leaking
+            // which business an email belongs to from an unauthenticated
+            // login attempt is its own info-disclosure risk.
+            return response()->json([
+                'message' => 'Staff accounts sign in from your business\'s own staff login page.',
+            ], 403);
+        }
+
         $token = $user->createToken($user->email)->plainTextToken;
 
         return response()->json([
@@ -214,11 +247,33 @@ class UserService
             return $user;
         });
 
-        $user->sendEmailVerificationNotification();
+        // Local dev has no way to actually receive this email: MAIL_HOST is
+        // a Mailtrap sandbox (it traps mail on Mailtrap's own dashboard,
+        // never delivers to the real inbox) and APP_URL has no port, so even
+        // a copied link wouldn't reach this API running on :8000. Without
+        // this, every locally-registered owner is permanently stuck behind
+        // "Please verify your email before logging in" (see UserService::login)
+        // with no way to clear it. Production/staging still go through the
+        // real email flow.
+        $verified = app()->environment('local');
+
+        if ($verified) {
+            $user->markEmailAsVerified();
+            $user->account_status = 'Active';
+            $user->save();
+        } else {
+            $user->sendEmailVerificationNotification();
+        }
 
         return response()->json([
             'success' => true,
-            'message' => 'Registration successful. Please check your email to verify your account.',
+            // Explicit flag rather than making the frontend pattern-match the
+            // message string — see RegisterForm.vue, which branches its
+            // success screen on this.
+            'verified' => $verified,
+            'message' => $verified
+                ? 'Registration successful. You can sign in now.'
+                : 'Registration successful. Please check your email to verify your account.',
         ], 201);
     }
 }

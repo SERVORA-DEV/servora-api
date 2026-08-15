@@ -7,6 +7,7 @@ use App\Repository\SubscriptionRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Repository\BillingRepository;
 use App\Repository\PaymentRepository;
+use App\Repository\Business\AccountRepository;
 use App\Repository\System\SubscriptionPlanRepository;
 use App\Http\Resources\SubscriptionResource;
 use App\Http\Resources\BillingResource;
@@ -36,6 +37,7 @@ class SubscriptionService
     private SubscriptionPlanRepository $subscriptionPlanRepository;
     private BillingRepository $billingRepository;
     private PaymentRepository $paymentRepository;
+    private AccountRepository $accountRepository;
     private XenditService $xenditService;
 
     public function __construct(
@@ -44,6 +46,7 @@ class SubscriptionService
         SubscriptionPlanRepository $subscriptionPlanRepository,
         BillingRepository $billingRepository,
         PaymentRepository $paymentRepository,
+        AccountRepository $accountRepository,
         XenditService $xenditService,
     ) {
         $this->subscriptionRepository = $subscriptionRepository;
@@ -51,6 +54,7 @@ class SubscriptionService
         $this->subscriptionPlanRepository = $subscriptionPlanRepository;
         $this->billingRepository = $billingRepository;
         $this->paymentRepository = $paymentRepository;
+        $this->accountRepository = $accountRepository;
         $this->xenditService = $xenditService;
     }
 
@@ -102,6 +106,12 @@ class SubscriptionService
             'has_subscription' => true,
             'subscription' => new SubscriptionResource($subscription),
             'billings' => $billings,
+            // Current usage against the plan's limits — counted live off
+            // branches/accounts rather than stored on the subscription row,
+            // so it stays correct as branches/staff are added or removed
+            // mid-cycle.
+            'branches_used' => $business->branches()->count(),
+            'staff_used' => $this->accountRepository->countForBusiness($business->id),
         ], 200);
     }
 
@@ -120,6 +130,21 @@ class SubscriptionService
         if (! $business) {
             return response()->json([
                 'message' => 'No spa business found for this account.',
+            ], 422);
+        }
+
+        // One live subscription per business at a time — upgrading/downgrading
+        // an existing plan is a separate flow (changes the current
+        // subscription's plan in place) and isn't this endpoint's job; this
+        // only stops a *second* subscription from being purchased alongside
+        // one that hasn't expired yet.
+        $activeSubscription = $this->subscriptionRepository->findActiveForBusiness($business->id);
+
+        if ($activeSubscription) {
+            return response()->json([
+                'message' => $activeSubscription->expires_at
+                    ? "You already have an active subscription, valid until {$activeSubscription->expires_at->format('F j, Y')}. It must expire before you can subscribe to a new plan."
+                    : 'You already have an active subscription. It must expire before you can subscribe to a new plan.',
             ], 422);
         }
 

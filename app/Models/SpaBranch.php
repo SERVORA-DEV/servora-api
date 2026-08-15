@@ -75,4 +75,14 @@ class SpaBranch extends Model
     {
         return $this->hasMany(BranchSchedule::class, 'spa_branch_id');
     }
+
+    public function branchServices()
+    {
+        return $this->hasMany(BranchService::class, 'spa_branch_id');
+    }
+
+    public function branchPackages()
+    {
+        return $this->hasMany(BranchPackage::class, 'spa_branch_id');
+    }
 }

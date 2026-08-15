@@ -10,10 +10,17 @@ use App\Http\Controllers\System\SubscriptionPlanController;
 use App\Http\Controllers\System\AdminUsersController;
 use App\Http\Controllers\System\TransactionController;
 use App\Http\Controllers\Business\OnboardingController;
+use App\Http\Controllers\Business\DashboardController;
 use App\Http\Controllers\SubscriptionController;
 use App\Http\Controllers\XenditWebhookController;
 use App\Http\Controllers\Business\BranchScheduleController;
 use App\Http\Controllers\Business\SpaBranchController;
+use App\Http\Controllers\Business\AccountController;
+use App\Http\Controllers\Business\StaffController;
+use App\Http\Controllers\Business\FacilityController;
+use App\Http\Controllers\Business\ServiceController;
+use App\Http\Controllers\Business\PackageController;
+use App\Http\Controllers\Business\SpaBusinessController;
 use App\Http\Controllers\System\BranchRegistrationController;
 
 // authentication part
@@ -26,6 +33,11 @@ Route::post('/business/administrator/register', [RegisterController::class, 'reg
 
 // display available subscription plan
 Route::get('/active-subscription-plans', [SubscriptionPlanController::class, 'displayActivePlans']);
+
+// Public, unauthenticated business lookup — backs the branded
+// /login/{business_uuid} page on the frontend (see PublicSpaBusinessResource
+// for what's exposed here).
+Route::get('/business/{uuid}/public', [SpaBusinessController::class, 'publicShow']);
 
 
 // auth sanctum
@@ -56,21 +68,50 @@ Route::middleware('auth:sanctum')->group(function () {
         });
 
     
-    // business owner access route
+    // business access routes — split by role. Manager shares the owner's
+    // dashboard and Employee Management (see ROLE_HOME.manager on the
+    // frontend and SpaBusinessRepository::findForUser, which resolves
+    // "their" business the same way for both), but not billing, account
+    // grants, or branch editing — those stay owner-only.
     Route::prefix('business')
-        ->middleware('role:business_owner')
         ->group(function () {
-            Route::post('/owner/onboarding', [OnboardingController::class, 'store']);
+            Route::middleware('role:business_owner,manager')->group(function () {
+                Route::apiResource('staff', StaffController::class);
+                Route::apiResource('branch', SpaBranchController::class)->only(['index', 'show']);
+                Route::apiResource('facility', FacilityController::class);
+                Route::get('dashboard', [DashboardController::class, 'index']);
 
-            Route::apiResources([
-                'subscription' => SubscriptionController::class,
-                'branch' => SpaBranchController::class,
-                'branch-schedule' => BranchScheduleController::class
-            ]);
+                // Manager can view and edit the catalog (service_view/service_update,
+                // package_view/package_update in config/permission.php) but not
+                // create or retire entries — those stay owner-only below.
+                Route::apiResource('service', ServiceController::class)->only(['index', 'show', 'update']);
+                Route::apiResource('package', PackageController::class)->only(['index', 'show', 'update']);
 
-            Route::post('branch/{uuid}/registration', [SpaBranchController::class, 'submitRegistration']);
+                // Per-branch availability toggle (branch_services/branch_packages) —
+                // reuses service_update/package_update rather than a new permission,
+                // scoped server-side to the caller's own branches (manager can only
+                // ever submit rows for their one AccountBranch-assigned branch).
+                Route::patch('service/{uuid}/branches', [ServiceController::class, 'updateBranches']);
+                Route::patch('package/{uuid}/branches', [PackageController::class, 'updateBranches']);
+            });
 
-            Route::get('subscription/confirm/{referenceId}', [SubscriptionController::class, 'confirm']);
+            Route::middleware('role:business_owner')->group(function () {
+                Route::post('/owner/onboarding', [OnboardingController::class, 'store']);
+                Route::get('/me', [SpaBusinessController::class, 'me']);
+
+                Route::apiResources([
+                    'subscription' => SubscriptionController::class,
+                    'branch-schedule' => BranchScheduleController::class,
+                    'account' => AccountController::class,
+                ]);
+                Route::apiResource('branch', SpaBranchController::class)->except(['index', 'show']);
+                Route::apiResource('service', ServiceController::class)->only(['store', 'destroy']);
+                Route::apiResource('package', PackageController::class)->only(['store', 'destroy']);
+
+                Route::post('branch/{uuid}/registration', [SpaBranchController::class, 'submitRegistration']);
+
+                Route::get('subscription/confirm/{referenceId}', [SubscriptionController::class, 'confirm']);
+            });
         });
 });
 
