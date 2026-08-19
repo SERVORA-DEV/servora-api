@@ -6,9 +6,12 @@ use App\Models\BranchService;
 use App\Models\User;
 use App\Repository\Business\BranchServiceRepository;
 use App\Repository\Business\ServiceRepository;
+use App\Repository\Business\ServiceVariantRepository;
 use App\Repository\Business\SpaBranchRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Http\Resources\ServiceResource;
+use App\Http\Resources\ServiceVariantResource;
+use App\Services\ImageUploadService;
 
 class ServiceService
 {
@@ -16,17 +19,23 @@ class ServiceService
     private SpaBusinessRepository $spaBusinessRepository;
     private SpaBranchRepository $spaBranchRepository;
     private BranchServiceRepository $branchServiceRepository;
+    private ServiceVariantRepository $serviceVariantRepository;
+    private ImageUploadService $imageUploadService;
 
     public function __construct(
         ServiceRepository $serviceRepository,
         SpaBusinessRepository $spaBusinessRepository,
         SpaBranchRepository $spaBranchRepository,
         BranchServiceRepository $branchServiceRepository,
+        ServiceVariantRepository $serviceVariantRepository,
+        ImageUploadService $imageUploadService,
     ) {
         $this->serviceRepository = $serviceRepository;
         $this->spaBusinessRepository = $spaBusinessRepository;
         $this->spaBranchRepository = $spaBranchRepository;
         $this->branchServiceRepository = $branchServiceRepository;
+        $this->serviceVariantRepository = $serviceVariantRepository;
+        $this->imageUploadService = $imageUploadService;
     }
 
     // business_owner's branch ids cover the whole business; manager's cover
@@ -51,7 +60,7 @@ class ServiceService
     }
 
     /**
-     * A new service is auto-enabled (BranchService, is_available=true, no
+     * Every variant is auto-enabled (BranchService, is_available=true, no
      * price override) at every one of the business's branches — matches
      * NIKA's single-list design (no per-branch nuance in the UI) while still
      * populating the real per-branch table underneath, so a future
@@ -65,21 +74,32 @@ class ServiceService
             return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
+        $variants = $payload['variants'] ?? [];
+        unset($payload['variants']);
+
+        if (! empty($payload['image'])) {
+            $payload['image_path'] = $this->imageUploadService->store($payload['image'], 'services');
+        }
+        unset($payload['image']);
+
         $payload['spa_business_id'] = $business->id;
         $payload['created_by'] = $user->id;
         $payload['is_active'] = $payload['is_active'] ?? true;
 
         $service = $this->serviceRepository->create($payload);
+        $createdVariants = $this->serviceVariantRepository->syncForService($service->id, $variants);
 
         foreach ($this->branchIds($user) as $branchId) {
-            BranchService::create([
-                'spa_branch_id' => $branchId,
-                'service_id' => $service->id,
-                'is_available' => true,
-            ]);
+            foreach ($createdVariants as $variant) {
+                BranchService::create([
+                    'spa_branch_id' => $branchId,
+                    'service_variant_id' => $variant->id,
+                    'is_available' => true,
+                ]);
+            }
         }
 
-        return new ServiceResource($service);
+        return new ServiceResource($service->load('variants'));
     }
 
     public function getService(User $user, string $uuid)
@@ -104,10 +124,38 @@ class ServiceService
 
         // 404s if this uuid isn't (or isn't a service of) this business —
         // update($uuid, ...) alone wouldn't scope that check.
-        $this->serviceRepository->findByUuidForBusiness($uuid, $business->id);
+        $service = $this->serviceRepository->findByUuidForBusiness($uuid, $business->id);
+
+        $variants = $payload['variants'] ?? null;
+        unset($payload['variants']);
+
+        // Only touch image_path when a new file was actually uploaded — an
+        // absent 'image' key leaves the column untouched by the partial
+        // update() below, so the existing image is kept as-is.
+        if (! empty($payload['image'])) {
+            $payload['image_path'] = $this->imageUploadService->replace($service->image_path, $payload['image'], 'services');
+        }
+        unset($payload['image']);
 
         $model = $this->serviceRepository->update($uuid, $payload);
-        return new ServiceResource($model);
+
+        if ($variants !== null) {
+            $syncedVariants = $this->serviceVariantRepository->syncForService($service->id, $variants);
+
+            // firstOrCreate is a no-op for a variant that already has branch
+            // rows — this only fills in rows for brand-new variants, it
+            // never touches an existing variant's custom_price/is_available.
+            foreach ($this->branchIds($user) as $branchId) {
+                foreach ($syncedVariants as $variant) {
+                    BranchService::firstOrCreate(
+                        ['spa_branch_id' => $branchId, 'service_variant_id' => $variant->id],
+                        ['is_available' => true]
+                    );
+                }
+            }
+        }
+
+        return new ServiceResource($model->load('variants'));
     }
 
     public function deleteService(User $user, string $uuid)
@@ -118,17 +166,24 @@ class ServiceService
             return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
-        $this->serviceRepository->findByUuidForBusiness($uuid, $business->id);
+        $service = $this->serviceRepository->findByUuidForBusiness($uuid, $business->id);
+
+        // Deleted immediately rather than kept for a soft-delete restore —
+        // there's no restore endpoint for services today, so keeping the
+        // file around would only ever leave it orphaned.
+        $this->imageUploadService->delete($service->image_path);
+
         $this->serviceRepository->delete($uuid);
         return true;
     }
 
-    // Bulk-replaces this service's branch_services rows — one per submitted
+    // Bulk-replaces one variant's branch_services rows — one per submitted
     // branch — rather than a per-row endpoint, since branch_services has no
     // uuid of its own to address and the frontend always edits the full set
     // at once (same "replace wholesale" shape as
-    // PackageService::syncPackageServices).
-    public function updateServiceBranches(User $user, string $uuid, array $branches)
+    // PackageService::syncPackageServices). Scoped to a single variant, not
+    // the whole service, since price/availability now live per variant.
+    public function updateVariantBranches(User $user, string $variantUuid, array $branches)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
 
@@ -137,7 +192,7 @@ class ServiceService
         }
 
         $branchIds = $this->branchIds($user);
-        $service = $this->serviceRepository->findByUuidForBusiness($uuid, $business->id);
+        $variant = $this->serviceVariantRepository->findByUuidForBusiness($variantUuid, $business->id);
 
         $rows = [];
         foreach ($branches as $branch) {
@@ -154,9 +209,9 @@ class ServiceService
             ];
         }
 
-        $this->branchServiceRepository->syncForService($service->id, $rows);
+        $this->branchServiceRepository->syncForVariant($variant->id, $rows);
 
-        $service = $this->serviceRepository->findByUuidForBusiness($uuid, $business->id, $branchIds);
-        return new ServiceResource($service);
+        $variant = $this->serviceVariantRepository->findByUuidForBusiness($variantUuid, $business->id, $branchIds);
+        return new ServiceVariantResource($variant);
     }
 }

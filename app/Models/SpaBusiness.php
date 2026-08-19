@@ -21,6 +21,14 @@ class SpaBusiness extends Model
         'business_logo',
         'business_description',
 
+        'business_type',
+        'registration_document_type',
+        'registration_document_path',
+        'registered_business_name',
+        'registered_owner_name',
+        'authorized_representative_name',
+        'registration_number',
+
         'verification_status',
         'operating_status',
 
@@ -61,5 +69,13 @@ class SpaBusiness extends Model
     public function subscriptions()
     {
         return $this->hasMany(Subscription::class, 'spa_business_id');
+    }
+
+    // Most recent subscription row — not necessarily status=Active (a
+    // lapsed/cancelled business still has a "current" plan worth showing
+    // on the system admin list), just the latest one on file.
+    public function activeSubscription()
+    {
+        return $this->hasOne(Subscription::class, 'spa_business_id')->latestOfMany();
     }
 }

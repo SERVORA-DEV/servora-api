@@ -19,6 +19,13 @@ class SpaBusinessRepository
         return SpaBusiness::where('owner_id', $ownerId)->first();
     }
 
+    public function update(SpaBusiness $business, array $payload): SpaBusiness
+    {
+        $business->update($payload);
+
+        return $business->fresh();
+    }
+
     // Resolves "the business this request is scoped to" for any of the
     // roles allowed into the business/* API — business_owner is
     // SpaBusiness.owner_id directly; manager (and front_officer, should it

@@ -76,6 +76,28 @@ class SpaBranch extends Model
         return $this->hasMany(BranchSchedule::class, 'spa_branch_id');
     }
 
+    public function accountBranch()
+    {
+        return $this->hasOne(AccountBranch::class, 'spa_branch_id');
+    }
+
+    // The branch's Manager specifically — account_branches can hold either
+    // a Manager or a Front Officer assignment (see AccountBranch), so
+    // accountBranch() alone isn't reliable for "who manages this branch"
+    // when both are assigned; this filters through to the manager-role
+    // user only.
+    public function manager()
+    {
+        return $this->hasOneThrough(
+            User::class,
+            AccountBranch::class,
+            'spa_branch_id',
+            'id',
+            'id',
+            'user_id'
+        )->where('users.role', 'manager');
+    }
+
     public function branchServices()
     {
         return $this->hasMany(BranchService::class, 'spa_branch_id');

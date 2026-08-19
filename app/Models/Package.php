@@ -17,9 +17,12 @@ class Package extends Model
         'spa_business_id',
         'created_by',
         'name',
+        'code',
         'description',
         'duration_minutes',
         'default_price',
+        'default_commission_amount',
+        'loyalty_points',
         'is_active',
     ];
 
@@ -27,6 +30,7 @@ class Package extends Model
     {
         return [
             'default_price' => 'decimal:2',
+            'default_commission_amount' => 'decimal:2',
             'is_active' => 'boolean',
         ];
     }

@@ -43,8 +43,8 @@ class ServiceController extends Controller
         return response()->json(['message' => 'Deleted successfully'], 200);
     }
 
-    public function updateBranches(BranchAvailabilityRequest $request, string $uuid)
+    public function updateVariantBranches(BranchAvailabilityRequest $request, string $uuid)
     {
-        return $this->serviceService->updateServiceBranches($request->user(), $uuid, $request->validated()['branches']);
+        return $this->serviceService->updateVariantBranches($request->user(), $uuid, $request->validated()['branches']);
     }
 }

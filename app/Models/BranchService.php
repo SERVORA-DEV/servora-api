@@ -5,18 +5,17 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-// Turns a business-level Service on for a specific branch, with an optional
-// per-branch price override (custom_price null = use the service's
-// default_price). Auto-created (is_available=true) for every one of the
-// business's branches when the service itself is created — see
-// ServiceService::createService.
+// Turns a specific ServiceVariant on for a specific branch, with an optional
+// per-branch price override (custom_price null = use the variant's price).
+// Auto-created (is_available=true) for every one of the business's branches
+// when the variant itself is created — see ServiceService::createService.
 class BranchService extends Model
 {
     use SoftDeletes;
 
     protected $fillable = [
         'spa_branch_id',
-        'service_id',
+        'service_variant_id',
         'custom_price',
         'is_available',
     ];
@@ -34,8 +33,8 @@ class BranchService extends Model
         return $this->belongsTo(SpaBranch::class, 'spa_branch_id');
     }
 
-    public function service()
+    public function serviceVariant()
     {
-        return $this->belongsTo(Service::class, 'service_id');
+        return $this->belongsTo(ServiceVariant::class, 'service_variant_id');
     }
 }

@@ -5,19 +5,27 @@ namespace App\Http\Requests\Business;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
-class OnboardingRequest extends FormRequest
+class OwnerPersonalDetailsRequest extends FormRequest
 {
     public function authorize(): bool
     {
         return true;
     }
 
+    /**
+     * Same rules the old (now-removed) OnboardingRequest used for its
+     * personal-detail half — just relocated to the first sub-step of the
+     * Owner Identity step. No status-machine guard in the service: a user
+     * can always correct their own name/contact info, unlike the
+     * verification artifacts (ID, face scan) below it.
+     *
+     * @return array<string, mixed>
+     */
     public function rules(): array
     {
         $userId = $this->user()->id;
 
         return [
-            // Personal detail
             'first_name' => 'required|string|max:100',
             'middle_name' => 'nullable|string|max:100',
             'last_name' => 'required|string|max:100',
@@ -34,14 +42,6 @@ class OnboardingRequest extends FormRequest
             ],
 
             'profile_photo' => 'nullable|string',
-
-            // Business detail
-            'business_name' => 'required|string|max:150',
-            'business_email' => 'required|email|unique:spa_businesses,business_email',
-            'business_phone' => ['required', 'string', 'regex:/^\+[1-9]\d{6,14}$/'],
-
-            'business_logo' => 'nullable|string',
-            'business_description' => 'nullable|string',
         ];
     }
 }

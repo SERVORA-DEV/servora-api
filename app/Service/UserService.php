@@ -247,15 +247,13 @@ class UserService
             return $user;
         });
 
-        // Local dev has no way to actually receive this email: MAIL_HOST is
-        // a Mailtrap sandbox (it traps mail on Mailtrap's own dashboard,
-        // never delivers to the real inbox) and APP_URL has no port, so even
-        // a copied link wouldn't reach this API running on :8000. Without
-        // this, every locally-registered owner is permanently stuck behind
-        // "Please verify your email before logging in" (see UserService::login)
-        // with no way to clear it. Production/staging still go through the
-        // real email flow.
-        $verified = app()->environment('local');
+        // Local dev previously auto-verified accounts instantly to skip email
+        // delivery. Commented out so verification behaves identically in
+        // every environment — mail is configured with a real Mailtrap
+        // sandbox account, so the email actually sends; view it at
+        // mailtrap.io and click the link.
+        // $verified = app()->environment('local');
+        $verified = false;
 
         if ($verified) {
             $user->markEmailAsVerified();
@@ -270,6 +268,40 @@ class UserService
             // Explicit flag rather than making the frontend pattern-match the
             // message string — see RegisterForm.vue, which branches its
             // success screen on this.
+            'verified' => $verified,
+            'message' => $verified
+                ? 'Registration successful. You can sign in now.'
+                : 'Registration successful. Please check your email to verify your account.',
+        ], 201);
+    }
+
+    public function registerClientUser(array $payload)
+    {
+        $payload['role'] = 'client';
+
+        // No permission grant here (unlike registerBusinessUser) — client
+        // isn't a key in config/permission.php, and clients don't manage a
+        // business — so a single create() call needs no transaction wrapper.
+        $user = $this->userRepository->create($payload);
+
+        // Local dev previously auto-verified accounts instantly to skip email
+        // delivery. Commented out so verification behaves identically in
+        // every environment — mail is configured with a real Mailtrap
+        // sandbox account, so the email actually sends; view it at
+        // mailtrap.io and click the link.
+        // $verified = app()->environment('local');
+        $verified = false;
+
+        if ($verified) {
+            $user->markEmailAsVerified();
+            $user->account_status = 'Active';
+            $user->save();
+        } else {
+            $user->sendEmailVerificationNotification();
+        }
+
+        return response()->json([
+            'success' => true,
             'verified' => $verified,
             'message' => $verified
                 ? 'Registration successful. You can sign in now.'

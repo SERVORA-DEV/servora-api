@@ -17,9 +17,12 @@ class PackageResource extends JsonResource
         return [
             'uuid' => $this->uuid,
             'name' => $this->name,
+            'code' => $this->code,
             'description' => $this->description,
             'duration_minutes' => $this->duration_minutes,
             'default_price' => (float) $this->default_price,
+            'default_commission_amount' => $this->default_commission_amount !== null ? (float) $this->default_commission_amount : null,
+            'loyalty_points' => $this->loyalty_points !== null ? (int) $this->loyalty_points : null,
             'is_active' => (bool) $this->is_active,
 
             // Line items, with the original (pre-bundle) price so the
@@ -27,13 +30,14 @@ class PackageResource extends JsonResource
             // computed here rather than stored, since it's just a sum of the
             // current service prices × quantity.
             'services' => $this->whenLoaded('packageServiceItems', fn () => $this->packageServiceItems->map(fn ($item) => [
-                'service_uuid' => $item->service?->uuid,
-                'name' => $item->service?->name,
+                'service_variant_uuid' => $item->serviceVariant?->uuid,
+                'name' => $item->serviceVariant?->service?->name,
+                'duration_minutes' => $item->serviceVariant?->duration_minutes,
                 'quantity' => $item->quantity,
-                'unit_price' => $item->service ? (float) $item->service->default_price : 0.0,
+                'unit_price' => $item->serviceVariant ? (float) $item->serviceVariant->price : 0.0,
             ])),
             'original_price' => $this->whenLoaded('packageServiceItems', fn () => $this->packageServiceItems->sum(
-                fn ($item) => $item->service ? ((float) $item->service->default_price * $item->quantity) : 0.0
+                fn ($item) => $item->serviceVariant ? ((float) $item->serviceVariant->price * $item->quantity) : 0.0
             )),
 
             // Per-branch availability/price override — see

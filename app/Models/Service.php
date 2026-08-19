@@ -17,10 +17,9 @@ class Service extends Model
         'spa_business_id',
         'created_by',
         'name',
+        'code',
         'description',
-        'duration_minutes',
-        'default_price',
-        'default_commission_percentage',
+        'image_path',
         'is_default',
         'is_active',
     ];
@@ -28,8 +27,6 @@ class Service extends Model
     protected function casts(): array
     {
         return [
-            'default_price' => 'decimal:2',
-            'default_commission_percentage' => 'decimal:2',
             'is_default' => 'boolean',
             'is_active' => 'boolean',
         ];
@@ -45,8 +42,8 @@ class Service extends Model
         return $this->belongsTo(SpaBusiness::class, 'spa_business_id');
     }
 
-    public function branchServices()
+    public function variants()
     {
-        return $this->hasMany(BranchService::class, 'service_id');
+        return $this->hasMany(ServiceVariant::class, 'service_id')->orderBy('duration_minutes');
     }
 }

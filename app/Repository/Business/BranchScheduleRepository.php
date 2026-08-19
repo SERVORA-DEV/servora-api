@@ -59,6 +59,18 @@ class BranchScheduleRepository
             ->firstOrFail();
     }
 
+    // Same guard as findByUuidForBusiness, but scoped to a specific set of
+    // branch ids rather than a whole business — what BranchScheduleService
+    // uses for a manager, whose access is one AccountBranch-assigned branch
+    // rather than every branch of the business (mirrors
+    // FacilityRepository::findByUuidForBranches).
+    public function findByUuidForBranches(string $uuid, array $spaBranchIds)
+    {
+        return BranchSchedule::where('uuid', $uuid)
+            ->whereIn('spa_branch_id', $spaBranchIds)
+            ->firstOrFail();
+    }
+
     public function findByField(string $field, $value)
     {
         return BranchSchedule::where($field, $value)->firstOrFail();

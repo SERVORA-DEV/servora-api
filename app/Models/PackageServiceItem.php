@@ -13,7 +13,7 @@ class PackageServiceItem extends Model
 
     protected $fillable = [
         'package_id',
-        'service_id',
+        'service_variant_id',
         'quantity',
         'sort_order',
     ];
@@ -23,8 +23,8 @@ class PackageServiceItem extends Model
         return $this->belongsTo(Package::class, 'package_id');
     }
 
-    public function service()
+    public function serviceVariant()
     {
-        return $this->belongsTo(Service::class, 'service_id');
+        return $this->belongsTo(ServiceVariant::class, 'service_variant_id');
     }
 }

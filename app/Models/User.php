@@ -78,6 +78,11 @@ class User extends Authenticatable implements MustVerifyEmail
         return $this->hasOne(SpaBusiness::class, 'owner_id');
     }
 
+    public function ownerIdentityVerification()
+    {
+        return $this->hasOne(OwnerIdentityVerification::class);
+    }
+
     // Which branch this account operates at — only meaningful for
     // manager/front_officer accounts (see AccountService). Goes through
     // account_branches rather than a column on this table; use

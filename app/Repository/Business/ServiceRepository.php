@@ -11,13 +11,13 @@ class ServiceRepository
     // manager service_view/service_update (unlike branches, which stay
     // owner-only for anything beyond index/show).
     //
-    // branchIds scopes the eager-loaded branchServices only, not which
-    // services are returned — every service is still visible to both roles,
-    // but a manager's response only carries their own branch's
-    // availability/price row, never a sibling branch's.
+    // branchIds scopes the eager-loaded variants.branchServices only, not
+    // which services are returned — every service is still visible to both
+    // roles, but a manager's response only carries their own branch's
+    // availability/price row per variant, never a sibling branch's.
     public function paginateForBusiness(int $spaBusinessId, array $branchIds, int $perPage = 15)
     {
-        return Service::with(['branchServices' => fn ($q) => $q->whereIn('spa_branch_id', $branchIds)->with('branch')])
+        return Service::with(['variants' => fn ($q) => $q->with(['branchServices' => fn ($q2) => $q2->whereIn('spa_branch_id', $branchIds)->with('branch')])])
             ->where('spa_business_id', $spaBusinessId)
             ->latest()
             ->paginate($perPage);
@@ -35,15 +35,19 @@ class ServiceRepository
 
     // Scoped lookup used by show/update/destroy — 404s instead of returning
     // (or letting someone edit) another business's service just because its
-    // uuid was guessed/known. branchIds is optional and only controls
-    // whether/how branchServices is eager-loaded (see paginateForBusiness) —
-    // callers that don't need branch data (plain update/delete) omit it.
+    // uuid was guessed/known. `variants` is always loaded (ServiceResource
+    // needs it to render at all); branchIds additionally controls whether
+    // each variant's branchServices is eager-loaded (see
+    // paginateForBusiness) — callers that don't need branch data (plain
+    // update/delete) omit it.
     public function findByUuidForBusiness(string $uuid, int $spaBusinessId, ?array $branchIds = null)
     {
         $query = Service::where('uuid', $uuid)->where('spa_business_id', $spaBusinessId);
 
         if ($branchIds !== null) {
-            $query->with(['branchServices' => fn ($q) => $q->whereIn('spa_branch_id', $branchIds)->with('branch')]);
+            $query->with(['variants' => fn ($q) => $q->with(['branchServices' => fn ($q2) => $q2->whereIn('spa_branch_id', $branchIds)->with('branch')])]);
+        } else {
+            $query->with('variants');
         }
 
         return $query->firstOrFail();

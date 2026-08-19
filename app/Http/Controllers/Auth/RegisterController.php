@@ -20,4 +20,9 @@ class RegisterController extends Controller
     {
         return $this->userService->registerBusinessUser($request->all());
     }
+
+    public function registerClient(RegisterRequest $request)
+    {
+        return $this->userService->registerClientUser($request->validated());
+    }
 }

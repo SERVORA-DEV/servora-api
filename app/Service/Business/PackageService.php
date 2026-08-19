@@ -4,7 +4,7 @@ namespace App\Service\Business;
 
 use App\Models\BranchPackage;
 use App\Models\PackageServiceItem;
-use App\Models\Service;
+use App\Models\ServiceVariant;
 use App\Models\User;
 use App\Repository\Business\BranchPackageRepository;
 use App\Repository\Business\PackageRepository;
@@ -82,7 +82,7 @@ class PackageService
             ]);
         }
 
-        return new PackageResource($package->load('packageServiceItems.service'));
+        return new PackageResource($package->load('packageServiceItems.serviceVariant.service'));
     }
 
     public function getPackage(User $user, string $uuid)
@@ -114,7 +114,7 @@ class PackageService
 
         if ($items !== null) {
             $this->syncPackageServices($model->id, $business->id, $items);
-            $model = $model->load('packageServiceItems.service');
+            $model = $model->load('packageServiceItems.serviceVariant.service');
         }
 
         return new PackageResource($model);
@@ -134,7 +134,7 @@ class PackageService
     }
 
     // Bulk-replaces this package's branch_packages rows — see
-    // ServiceService::updateServiceBranches for the identical reasoning
+    // ServiceService::updateVariantBranches for the identical reasoning
     // (no per-row uuid to address, frontend always edits the full set).
     // Deliberately independent of the component services' own branch
     // availability — a package may legitimately be staffed/available
@@ -169,23 +169,24 @@ class PackageService
 
     // Replaces this package's line items wholesale — simpler and safer than
     // diffing, since a package's service list is edited as a whole unit from
-    // the form (checkboxes + qty), never one row at a time.
+    // the form (checkboxes + qty), never one row at a time. Each item pins a
+    // specific service variant (duration/price option), not just a service.
     private function syncPackageServices(int $packageId, int $spaBusinessId, array $items): void
     {
         PackageServiceItem::where('package_id', $packageId)->delete();
 
         foreach (array_values($items) as $index => $item) {
-            $serviceId = Service::where('uuid', $item['service_uuid'])
-                ->where('spa_business_id', $spaBusinessId)
+            $variantId = ServiceVariant::where('uuid', $item['service_variant_uuid'])
+                ->whereHas('service', fn ($q) => $q->where('spa_business_id', $spaBusinessId))
                 ->value('id');
 
-            if (! $serviceId) {
+            if (! $variantId) {
                 continue;
             }
 
             PackageServiceItem::create([
                 'package_id' => $packageId,
-                'service_id' => $serviceId,
+                'service_variant_id' => $variantId,
                 'quantity' => $item['quantity'] ?? 1,
                 'sort_order' => $index + 1,
             ]);

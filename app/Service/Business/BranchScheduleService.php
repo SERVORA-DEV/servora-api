@@ -28,30 +28,45 @@ class BranchScheduleService
     // Every entry point below needs "is this branch mine?" before touching
     // schedule rows — centralized here so it can't be skipped. Throws
     // (via firstOrFail) the same 404 whether the branch doesn't exist or
-    // just isn't this owner's, so it can't be used to enumerate other
-    // businesses' branch uuids either.
+    // just isn't accessible to this user, so it can't be used to enumerate
+    // other businesses' branch uuids either.
+    //
+    // Scoped through SpaBusinessRepository::branchesForUser rather than
+    // findByOwnerId — a manager (Marketplace Listing's Booking & Policies
+    // quick-edit, which reads/writes this same endpoint) has no owner_id of
+    // their own and would always 422 "No spa business found" otherwise, same
+    // fix FacilityService applies for its branch scoping.
     private function resolveOwnedBranch(User $user, string $spaBranchUuid): SpaBranch
     {
-        $business = $this->spaBusinessRepository->findByOwnerId($user->id);
+        $business = $this->spaBusinessRepository->findForUser($user);
 
         if (! $business) {
             abort(422, 'No spa business found for this account.');
         }
 
-        return $this->spaBranchRepository->findByUuidForBusiness($spaBranchUuid, $business->id);
+        return $this->spaBranchRepository->findByUuidForBranches($spaBranchUuid, $this->branchIds($user));
     }
 
     // Same ownership guard, but for a schedule row uuid — resolves through
-    // the row's branch to the owning business rather than trusting a bare FK.
+    // the row's branch rather than trusting a bare FK.
     private function resolveOwnedSchedule(User $user, string $uuid)
     {
-        $business = $this->spaBusinessRepository->findByOwnerId($user->id);
+        $business = $this->spaBusinessRepository->findForUser($user);
 
         if (! $business) {
             abort(422, 'No spa business found for this account.');
         }
 
-        return $this->branchScheduleRepository->findByUuidForBusiness($uuid, $business->id);
+        return $this->branchScheduleRepository->findByUuidForBranches($uuid, $this->branchIds($user));
+    }
+
+    // business_owner's branch ids cover the whole business; manager's cover
+    // only their one AccountBranch-assigned branch — see
+    // SpaBusinessRepository::branchesForUser, same convention FacilityService
+    // uses.
+    private function branchIds(User $user): array
+    {
+        return $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
     }
 
     // Lists one branch's week — spa_branch_uuid is required precisely
