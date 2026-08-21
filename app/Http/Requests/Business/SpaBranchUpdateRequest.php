@@ -21,8 +21,9 @@ class SpaBranchUpdateRequest extends FormRequest
      * (Activate/Deactivate just sends operating_status, nothing else).
      * "sometimes|required" means: skip validation when the key is absent
      * (the status-only PATCH), but if it IS present it can't be blank (the
-     * full edit form always sends it) — same required set as
-     * SpaBranchRequest, only email/phone_number/description stay optional.
+     * full edit form always sends it). address/city/province/postal_code
+     * are handled by SpaBranchLocationRequest instead (see SpaBranchRequest)
+     * — this endpoint never touches location.
      *
      * @return array<string, ValidationRule|array<mixed>|string>
      */
@@ -34,16 +35,9 @@ class SpaBranchUpdateRequest extends FormRequest
             'email' => 'nullable|email|max:255',
             'phone_number' => 'nullable|string|max:20',
 
-            'address' => 'sometimes|required|string',
-
-            'city' => 'sometimes|required|string|max:100',
-            'province' => 'sometimes|required|string|max:100',
-            'postal_code' => 'sometimes|required|string|max:10',
-
-            'latitude' => 'nullable|numeric|between:-90,90',
-            'longitude' => 'nullable|numeric|between:-180,180',
-
             'description' => 'nullable|string',
+
+            'cover_photo' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:'.(int) config('uploads.max_size_kb', 5120),
 
             'operating_status' => 'sometimes|in:Active,Inactive,Temporarily Closed',
         ];

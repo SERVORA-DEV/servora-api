@@ -27,8 +27,17 @@ class SpaBranch extends Model
 
         'latitude',
         'longitude',
+        'formatted_address',
 
         'cover_photo',
+
+        'permit_document_path',
+        'permit_number',
+        'permit_business_name',
+        'permit_branch_location',
+        'permit_issue_date',
+        'permit_expiration_date',
+        'permit_confirmed',
 
         'description',
 
@@ -53,6 +62,10 @@ class SpaBranch extends Model
 
             'reopens_at' => 'date',
             'verified_at' => 'datetime',
+
+            'permit_issue_date' => 'date',
+            'permit_expiration_date' => 'date',
+            'permit_confirmed' => 'boolean',
         ];
     }
 

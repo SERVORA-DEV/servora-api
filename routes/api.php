@@ -30,6 +30,8 @@ Route::post('/auth/register', [RegisterController::class, 'registerClient']);
 Route::post('/auth/forget-password', [AuthController::class, 'forgetPassword']);
 Route::post('/auth/forget-password/verify-otp', [AuthController::class, 'verifyForgetPasswordOtp']);
 Route::post('/auth/reset-password', [AuthController::class, 'resetPassword']);
+Route::post('/auth/resend-verification', [EmailVerificationController::class, 'resend'])
+    ->middleware('throttle:6,1');
 Route::post('/business/administrator/register', [RegisterController::class, 'register']);
 
 
@@ -169,7 +171,9 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::apiResource('service', ServiceController::class)->only(['store', 'destroy']);
                 Route::apiResource('package', PackageController::class)->only(['store', 'destroy']);
 
-                Route::post('branch/{uuid}/registration', [SpaBranchController::class, 'submitRegistration']);
+                Route::post('branch/{uuid}/location', [SpaBranchController::class, 'saveLocation']);
+                Route::post('branch/{uuid}/permit', [SpaBranchController::class, 'savePermit']);
+                Route::post('branch/{uuid}/submit', [SpaBranchController::class, 'submit']);
 
                 Route::get('subscription/confirm/{referenceId}', [SubscriptionController::class, 'confirm']);
             });

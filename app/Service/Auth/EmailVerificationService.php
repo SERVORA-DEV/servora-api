@@ -18,27 +18,20 @@ class EmailVerificationService
 
     public function verifyEmail(array $payload, $id, $hash)
     {
-      $user = $this->userRepository->findByField('id', $id);
+        $frontendUrl = config('app.frontend_url');
+
+        $user = $this->userRepository->findByField('id', $id);
 
         if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'User not found.'
-            ], 404);
+            return redirect($frontendUrl . '/verify-email?status=invalid');
         }
 
         if (! hash_equals((string) $hash, sha1($user->email))) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid verification link.'
-            ], 403);
+            return redirect($frontendUrl . '/verify-email?status=invalid');
         }
 
         if ($user->hasVerifiedEmail()) {
-            return response()->json([
-                'success' => true,
-                'message' => 'Email is already verified.'
-            ]);
+            return redirect($frontendUrl . '/verify-email?status=already');
         }
 
         $user->markEmailAsVerified();
@@ -46,9 +39,29 @@ class EmailVerificationService
         $user->account_status = 'Active';
         $user->save();
 
+        return redirect($frontendUrl . '/verify-email?status=success');
+    }
+
+    public function resend(array $payload)
+    {
+        $user = $this->userRepository->findByField('email', $payload['email']);
+
+        if (! $user) {
+            return response()->json([
+                'message' => 'No account found with this email.'
+            ], 404);
+        }
+
+        if ($user->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'This email is already verified. You can log in.'
+            ]);
+        }
+
+        $user->sendEmailVerificationNotification();
+
         return response()->json([
-            'success' => true,
-            'message' => 'Email verified successfully.'
+            'message' => 'Verification email sent. Please check your inbox.'
         ]);
     }
 }

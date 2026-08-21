@@ -9,7 +9,10 @@ use App\Repository\System\AdminUsersRepository;
 use App\Repository\AuditLogRepository;
 use App\Http\Resources\SpaBranchResource;
 use App\Service\NotificationService;
+use App\Services\DocumentUploadService;
+use App\Services\ImageUploadService;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 
 class SpaBranchService
 {
@@ -18,19 +21,25 @@ class SpaBranchService
     private AdminUsersRepository $adminUsersRepository;
     private AuditLogRepository $auditLogRepository;
     private NotificationService $notificationService;
+    private ImageUploadService $imageUploadService;
+    private DocumentUploadService $documentUploadService;
 
     public function __construct(
         SpaBranchRepository $spaBranchRepository,
         SpaBusinessRepository $spaBusinessRepository,
         AdminUsersRepository $adminUsersRepository,
         AuditLogRepository $auditLogRepository,
-        NotificationService $notificationService
+        NotificationService $notificationService,
+        ImageUploadService $imageUploadService,
+        DocumentUploadService $documentUploadService
     ) {
         $this->spaBranchRepository = $spaBranchRepository;
         $this->spaBusinessRepository = $spaBusinessRepository;
         $this->adminUsersRepository = $adminUsersRepository;
         $this->auditLogRepository = $auditLogRepository;
         $this->notificationService = $notificationService;
+        $this->imageUploadService = $imageUploadService;
+        $this->documentUploadService = $documentUploadService;
     }
 
     // Scoped to what this user can see — every branch for business_owner,
@@ -57,8 +66,9 @@ class SpaBranchService
      * spa_business_id always comes from the authenticated owner's own
      * business, never from the request body — otherwise any owner could
      * register a branch under someone else's business by editing the
-     * payload. Latitude/longitude are left as whatever the form sent (or
-     * null) — picking a location on a map is a separate feature.
+     * payload. Location and the permit are separate wizard steps (see
+     * saveLocation/savePermit below) — this only handles the Info step
+     * (name/contact/photo).
      */
     public function createSpaBranch(User $user, array $payload)
     {
@@ -70,11 +80,20 @@ class SpaBranchService
             ], 422);
         }
 
+        if (isset($payload['cover_photo']) && $payload['cover_photo'] instanceof UploadedFile) {
+            $payload['cover_photo'] = $this->imageUploadService->store(
+                $payload['cover_photo'],
+                "branches/{$business->uuid}"
+            );
+        } else {
+            unset($payload['cover_photo']);
+        }
+
         $payload['spa_business_id'] = $business->id;
 
         // A newly created branch isn't registered yet — the owner still has
-        // to drop a map pin and submit it for admin review (see
-        // submitRegistration() below) before it can go to Pending.
+        // to complete Location + Permit and submit() (see below) before it
+        // can go to Pending.
         $payload['verification_status'] = 'Unregistered';
         $payload['operating_status'] = 'Active';
 
@@ -121,7 +140,17 @@ class SpaBranchService
             ], 422);
         }
 
-        $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
+        $branch = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
+
+        if (isset($payload['cover_photo']) && $payload['cover_photo'] instanceof UploadedFile) {
+            $payload['cover_photo'] = $this->imageUploadService->replace(
+                $branch->cover_photo,
+                $payload['cover_photo'],
+                "branches/{$business->uuid}"
+            );
+        } else {
+            unset($payload['cover_photo']);
+        }
 
         $model = $this->spaBranchRepository->update($uuid, $payload);
         return new SpaBranchResource($model);
@@ -149,12 +178,14 @@ class SpaBranchService
     }
 
     /**
-     * Submits (or resubmits) the map pin for admin review. Only allowed from
-     * Unregistered (first submission) or Rejected (owner fixed the pin and
-     * is trying again) — a branch that's already Pending/Verified/Suspended
-     * can't be resubmitted out from under the admin's review.
+     * Location step of the branch wizard — saves the confirmed map pin plus
+     * whatever address components the frontend resolved for it. Never
+     * changes verification_status on its own (unlike the old
+     * submitRegistration, which flipped straight to Pending off the pin
+     * alone) — only submit() below does that, once Permit is complete too.
+     * Same Unregistered/Rejected guard as every other draft-mutating step.
      */
-    public function submitRegistration(User $user, string $uuid, array $payload, ?Request $request = null)
+    public function saveLocation(User $user, string $uuid, array $payload, ?Request $request = null)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
 
@@ -172,16 +203,135 @@ class SpaBranchService
             ], 422);
         }
 
-        $oldValues = $branch->only(['latitude', 'longitude', 'verification_status']);
+        $oldValues = $branch->only(['latitude', 'longitude', 'formatted_address']);
 
-        // Only the coordinates are saved — address/city/province/postal_code
-        // stay exactly as the owner typed them when creating the branch.
-        // Review compares that typed address against the map itself (the
-        // pin at these coordinates), not against a second machine-generated
-        // address string.
         $branch = $this->spaBranchRepository->update($uuid, [
             'latitude' => $payload['latitude'],
             'longitude' => $payload['longitude'],
+            'formatted_address' => $payload['formatted_address'],
+            'address' => $payload['address'] ?? $branch->address,
+            'city' => $payload['city'] ?? $branch->city,
+            'province' => $payload['province'] ?? $branch->province,
+            'postal_code' => $payload['postal_code'] ?? $branch->postal_code,
+        ]);
+
+        $this->auditLogRepository->record(
+            $user->id,
+            'spa_branches',
+            $branch->id,
+            'Update',
+            $oldValues,
+            $branch->only(['latitude', 'longitude', 'formatted_address']),
+            $request
+        );
+
+        return new SpaBranchResource($branch);
+    }
+
+    /**
+     * Permit step of the branch wizard — the branch's own Business/Mayor's
+     * Permit, kept separate from the business-level DTI/SEC document (that
+     * already verified the business itself; this proves the specific
+     * location). Uses DocumentUploadService (private/authenticated), same
+     * as the business registration document. Same Unregistered/Rejected
+     * guard as saveLocation.
+     */
+    public function savePermit(User $user, string $uuid, array $payload, UploadedFile $permitFile, ?Request $request = null)
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+
+        if (! $business) {
+            return response()->json([
+                'message' => 'No spa business found for this account.',
+            ], 422);
+        }
+
+        $branch = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
+
+        if (! in_array($branch->verification_status, ['Unregistered', 'Rejected'], true)) {
+            return response()->json([
+                'message' => 'This branch already has a registration request in review or approved.',
+            ], 422);
+        }
+
+        $oldValues = $branch->only(['permit_number', 'permit_confirmed']);
+
+        $path = $this->documentUploadService->replace(
+            $branch->permit_document_path,
+            $permitFile,
+            "verification/branch/{$branch->uuid}/permit"
+        );
+
+        $branch = $this->spaBranchRepository->update($uuid, [
+            'permit_document_path' => $path,
+            'permit_number' => $payload['permit_number'],
+            'permit_business_name' => $payload['permit_business_name'],
+            'permit_branch_location' => $payload['permit_branch_location'],
+            'permit_issue_date' => $payload['permit_issue_date'],
+            'permit_expiration_date' => $payload['permit_expiration_date'],
+            'permit_confirmed' => true,
+        ]);
+
+        $this->auditLogRepository->record(
+            $user->id,
+            'spa_branches',
+            $branch->id,
+            'Upload',
+            $oldValues,
+            $branch->only(['permit_number', 'permit_confirmed']),
+            $request
+        );
+
+        return new SpaBranchResource($branch);
+    }
+
+    /**
+     * The combined "Review -> Submit for Verification" action. Only allowed
+     * from Unregistered (first submission) or Rejected (owner fixed the
+     * flagged step and is trying again) — a branch that's already
+     * Pending/Verified/Suspended can't be resubmitted out from under the
+     * admin's review. Requires Info + Location + Permit to all be complete,
+     * mirroring OwnerVerificationService::submit()'s completeness checks.
+     */
+    public function submit(User $user, string $uuid, ?Request $request = null)
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+
+        if (! $business) {
+            return response()->json([
+                'message' => 'No spa business found for this account.',
+            ], 422);
+        }
+
+        $branch = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
+
+        if (! in_array($branch->verification_status, ['Unregistered', 'Rejected'], true)) {
+            return response()->json([
+                'message' => 'This branch already has a registration request in review or approved.',
+            ], 422);
+        }
+
+        if (! $branch->branch_name) {
+            return response()->json([
+                'message' => 'Please complete the branch information before submitting.',
+            ], 422);
+        }
+
+        if ($branch->latitude === null || $branch->longitude === null) {
+            return response()->json([
+                'message' => 'Please select this branch\'s location on the map before submitting.',
+            ], 422);
+        }
+
+        if (! $branch->permit_document_path || ! $branch->permit_confirmed) {
+            return response()->json([
+                'message' => 'Please upload this branch\'s business permit before submitting.',
+            ], 422);
+        }
+
+        $oldValues = $branch->only(['verification_status']);
+
+        $branch = $this->spaBranchRepository->update($uuid, [
             'verification_status' => 'Pending',
             'rejection_reason' => null,
             'verified_by' => null,
@@ -192,9 +342,9 @@ class SpaBranchService
             $user->id,
             'spa_branches',
             $branch->id,
-            'Update',
+            'Submit',
             $oldValues,
-            $branch->only(['latitude', 'longitude', 'verification_status']),
+            $branch->only(['verification_status']),
             $request
         );
 

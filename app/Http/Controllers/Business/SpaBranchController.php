@@ -5,7 +5,8 @@ namespace App\Http\Controllers\Business;
 use App\Service\Business\SpaBranchService;
 use App\Http\Requests\Business\SpaBranchRequest;
 use App\Http\Requests\Business\SpaBranchUpdateRequest;
-use App\Http\Requests\Business\SpaBranchRegistrationRequest;
+use App\Http\Requests\Business\SpaBranchLocationRequest;
+use App\Http\Requests\Business\SpaBranchPermitRequest;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -50,8 +51,24 @@ class SpaBranchController extends Controller
         return $this->spaBranchService->restoreSpaBranch($uuid);
     }
 
-    public function submitRegistration(SpaBranchRegistrationRequest $request, string $uuid)
+    public function saveLocation(SpaBranchLocationRequest $request, string $uuid)
     {
-        return $this->spaBranchService->submitRegistration($request->user(), $uuid, $request->validated(), $request);
+        return $this->spaBranchService->saveLocation($request->user(), $uuid, $request->validated(), $request);
+    }
+
+    public function savePermit(SpaBranchPermitRequest $request, string $uuid)
+    {
+        return $this->spaBranchService->savePermit(
+            $request->user(),
+            $uuid,
+            $request->validated(),
+            $request->file('permit_document'),
+            $request
+        );
+    }
+
+    public function submit(Request $request, string $uuid)
+    {
+        return $this->spaBranchService->submit($request->user(), $uuid, $request);
     }
 }

@@ -103,6 +103,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Email Verification
+    |--------------------------------------------------------------------------
+    |
+    | The expiry time is the number of minutes a signed email verification
+    | link stays valid for (see Illuminate\Auth\Notifications\VerifyEmail,
+    | which reads this value — falling back to 60 if unset). Made explicit
+    | here rather than relying on that framework default.
+    |
+    */
+
+    'verification' => [
+        'expire' => 60,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Password Confirmation Timeout
     |--------------------------------------------------------------------------
     |

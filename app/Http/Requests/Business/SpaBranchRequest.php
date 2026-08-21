@@ -20,11 +20,11 @@ class SpaBranchRequest extends FormRequest
      *
      * spa_business_id is deliberately absent — it's derived server-side from
      * the authenticated owner (see SpaBranchService::createSpaBranch), never
-     * trusted from the request body. Latitude/longitude are validated only
-     * when present; picking them on a map is a separate feature, not a
-     * requirement for registering a branch. Only email, phone_number, and
-     * description are optional — everything else about where/what the
-     * branch is must be filled in.
+     * trusted from the request body. address/city/province/postal_code are
+     * deliberately absent here too — the owner no longer types an address at
+     * all; it's derived from the map pin in the Location step instead (see
+     * SpaBranchLocationRequest/SpaBranchService::saveLocation). Only email,
+     * phone_number, description, and cover_photo are optional.
      *
      * @return array<string, ValidationRule|array<mixed>|string>
      */
@@ -36,16 +36,11 @@ class SpaBranchRequest extends FormRequest
             'email' => 'nullable|email|max:255',
             'phone_number' => 'nullable|string|max:20',
 
-            'address' => 'required|string',
-
-            'city' => 'required|string|max:100',
-            'province' => 'required|string|max:100',
-            'postal_code' => 'required|string|max:10',
-
-            'latitude' => 'nullable|numeric|between:-90,90',
-            'longitude' => 'nullable|numeric|between:-180,180',
-
             'description' => 'nullable|string',
+
+            // Display/identification only — never treated as verification
+            // evidence (see PermitStep/SpaBranchPermitRequest for that).
+            'cover_photo' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:'.(int) config('uploads.max_size_kb', 5120),
         ];
     }
 }
