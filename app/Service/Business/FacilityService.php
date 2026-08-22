@@ -25,7 +25,7 @@ class FacilityService
     }
 
     // business_owner's branch ids cover the whole business; manager's cover
-    // only their one AccountBranch-assigned branch — see
+    // only their own staff record's branch — see
     // SpaBusinessRepository::branchesForUser. Every method below scopes
     // through this rather than $business->id, same convention as
     // StaffService, so a manager can only ever see/manage rooms at their own

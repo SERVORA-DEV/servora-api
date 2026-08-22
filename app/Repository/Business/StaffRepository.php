@@ -10,7 +10,7 @@ class StaffRepository
     // business filter, so every owner would see every business's staff.
     public function paginateForBusiness(int $spaBusinessId, int $perPage = 15)
     {
-        return Staff::with('branch')
+        return Staff::with(['branch', 'user'])
             ->whereHas('branch', fn ($query) => $query->where('spa_business_id', $spaBusinessId))
             ->latest()
             ->paginate($perPage);
@@ -22,7 +22,7 @@ class StaffRepository
     // like paginateForBusiness() above returns.
     public function paginateForBranches(array $spaBranchIds, int $perPage = 15)
     {
-        return Staff::with('branch')
+        return Staff::with(['branch', 'user'])
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->latest()
             ->paginate($perPage);
@@ -61,7 +61,7 @@ class StaffRepository
     // because their uuid was guessed/known.
     public function findByUuidForBusiness(string $uuid, int $spaBusinessId)
     {
-        return Staff::with('branch')
+        return Staff::with(['branch', 'user'])
             ->where('uuid', $uuid)
             ->whereHas('branch', fn ($query) => $query->where('spa_business_id', $spaBusinessId))
             ->firstOrFail();
@@ -73,7 +73,7 @@ class StaffRepository
     // branch, same as a business_owner already 404s outside their business.
     public function findByUuidForBranches(string $uuid, array $spaBranchIds)
     {
-        return Staff::with('branch')
+        return Staff::with(['branch', 'user'])
             ->where('uuid', $uuid)
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->firstOrFail();

@@ -35,6 +35,13 @@ class StaffResource extends JsonResource
             'spa_branch_uuid' => $this->branch?->uuid,
             'branch_name' => $this->branch?->branch_name,
 
+            // Whether this staff member has been granted a login yet (see
+            // AccountService::createAccount) — lets the Employees page
+            // decide whether to show "Create Account" without a second
+            // round-trip.
+            'has_account' => $this->user_id !== null,
+            'account_uuid' => $this->user?->uuid,
+
             'created_at' => $this->created_at,
         ];
     }

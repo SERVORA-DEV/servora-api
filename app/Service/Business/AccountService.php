@@ -2,25 +2,26 @@
 
 namespace App\Service\Business;
 
+use App\Models\Staff;
 use App\Models\User;
 use App\Repository\Business\AccountRepository;
-use App\Repository\Business\SpaBranchRepository;
+use App\Repository\Business\StaffRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Http\Resources\AccountResource;
 
 class AccountService
 {
     private AccountRepository $accountRepository;
-    private SpaBranchRepository $spaBranchRepository;
+    private StaffRepository $staffRepository;
     private SpaBusinessRepository $spaBusinessRepository;
 
     public function __construct(
         AccountRepository $accountRepository,
-        SpaBranchRepository $spaBranchRepository,
+        StaffRepository $staffRepository,
         SpaBusinessRepository $spaBusinessRepository,
     ) {
         $this->accountRepository = $accountRepository;
-        $this->spaBranchRepository = $spaBranchRepository;
+        $this->staffRepository = $staffRepository;
         $this->spaBusinessRepository = $spaBusinessRepository;
     }
 
@@ -37,9 +38,11 @@ class AccountService
     }
 
     /**
-     * Creates a standalone Manager/Front Officer login — credentials,
-     * role, and branch all come from this payload directly (no Staff
-     * record involved). Email uniqueness is enforced by AccountRequest.
+     * Creates a standalone Manager/Front Officer login tied to a specific
+     * staff member — credentials come from this payload, but role and
+     * branch are both derived from that staff member (see
+     * Staff::ACCOUNT_ROLE_MAP), never trusted from the client. Email/
+     * username uniqueness is enforced by AccountRequest.
      */
     public function createAccount(User $user, array $payload)
     {
@@ -49,25 +52,35 @@ class AccountService
             return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
-        // spa_branch_uuid must belong to this owner's own business —
-        // resolved server-side (404s otherwise) rather than trusted from
-        // the payload, same guard StaffService::createStaff uses.
-        $branch = $this->spaBranchRepository->findByUuidForBusiness($payload['spa_branch_uuid'], $business->id);
+        // staff_uuid must belong to this owner's own business — resolved
+        // server-side (404s otherwise) rather than trusted from the
+        // payload, same guard StaffService::createStaff uses for branch.
+        $staff = $this->staffRepository->findByUuidForBusiness($payload['staff_uuid'], $business->id);
+
+        if ($staff->user_id !== null) {
+            return response()->json(['message' => 'This staff member already has an account.'], 422);
+        }
+
+        if (! array_key_exists($staff->role, Staff::ACCOUNT_ROLE_MAP)) {
+            return response()->json(['message' => 'Only Manager or Front Desk staff can be granted a login.'], 422);
+        }
+
+        $role = Staff::ACCOUNT_ROLE_MAP[$staff->role];
 
         $account = $this->accountRepository->createUser([
-            'role' => $payload['role'],
+            'role' => $role,
             'username' => $payload['username'],
             'email' => $payload['email'],
             'password' => $payload['password'],
             'account_status' => 'Active',
         ]);
 
-        $this->accountRepository->assignBranch($account, $branch->id);
+        $this->accountRepository->assignStaff($account, $staff);
 
         // No granular permission picker on this form — an account gets its
         // role's full permission bundle by default; individual flags can
         // be toggled afterward via updateAccount().
-        $roleConfig = config('permission.' . $payload['role'], []);
+        $roleConfig = config('permission.' . $role, []);
         $this->accountRepository->createPermission(array_merge(
             array_fill_keys($roleConfig, true),
             ['user_id' => $account->id]
@@ -78,7 +91,7 @@ class AccountService
         // AdminUsersService::createAdminUsers).
         $account->markEmailAsVerified();
 
-        return new AccountResource($account->fresh(['permission', 'accountBranch.branch']));
+        return new AccountResource($account->fresh(['permission', 'staff.branch']));
     }
 
     public function getAccount(User $user, string $uuid)
@@ -94,10 +107,11 @@ class AccountService
     }
 
     /**
-     * Password reset, suspend/reactivate, branch reassignment, and
-     * permission toggles — role is locked at creation (see AccountRequest,
-     * which prohibits role on update) since changing it would invalidate
-     * the account's permission bundle.
+     * Password reset, suspend/reactivate, and permission toggles — role and
+     * staff assignment are both locked at creation (see AccountRequest,
+     * which prohibits both on update) since changing either would
+     * invalidate the account's permission bundle / detach it from the
+     * employee it represents.
      */
     public function updateAccount(User $user, string $uuid, array $payload)
     {
@@ -108,12 +122,6 @@ class AccountService
         }
 
         $account = $this->accountRepository->findAccountByUuidForBusiness($uuid, $business->id);
-
-        if (! empty($payload['spa_branch_uuid'])) {
-            $branch = $this->spaBranchRepository->findByUuidForBusiness($payload['spa_branch_uuid'], $business->id);
-            $this->accountRepository->assignBranch($account, $branch->id);
-        }
-        unset($payload['spa_branch_uuid']);
 
         $account = $this->accountRepository->updateAccount($account, $payload);
         return new AccountResource($account);

@@ -32,4 +32,11 @@ class AuditLogRepository
     {
         return AuditLog::with('user')->latest()->paginate($perPage);
     }
+
+    // Top-N for the system dashboard's "Audit Logs" card — a plain
+    // limit()->get() rather than paginate() since no page count is needed.
+    public function recent(int $limit = 8)
+    {
+        return AuditLog::with('user')->latest()->limit($limit)->get();
+    }
 }

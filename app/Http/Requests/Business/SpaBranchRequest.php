@@ -20,8 +20,7 @@ class SpaBranchRequest extends FormRequest
      *
      * spa_business_id is deliberately absent — it's derived server-side from
      * the authenticated owner (see SpaBranchService::createSpaBranch), never
-     * trusted from the request body. address/city/province/postal_code are
-     * deliberately absent here too — the owner no longer types an address at
+     * trusted from the request body. The owner never types an address at
      * all; it's derived from the map pin in the Location step instead (see
      * SpaBranchLocationRequest/SpaBranchService::saveLocation). Only email,
      * phone_number, description, and cover_photo are optional.

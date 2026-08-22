@@ -2,7 +2,6 @@
 
 namespace App\Service\Business;
 
-use App\Models\BranchPackage;
 use App\Models\PackageServiceItem;
 use App\Models\ServiceVariant;
 use App\Models\User;
@@ -53,7 +52,9 @@ class PackageService
      * payload['services'] is [{service_uuid, quantity}, ...] — each uuid must
      * belong to this same business (resolved server-side, 404s otherwise,
      * same guard used everywhere else for cross-resource ownership). Like
-     * createService, the new package is auto-enabled at every branch.
+     * createService, the new package starts with no BranchPackage rows — the
+     * owner is prompted right after create to explicitly assign branches
+     * (saved separately via updatePackageBranches()).
      */
     public function createPackage(User $user, array $payload)
     {
@@ -73,14 +74,6 @@ class PackageService
         $package = $this->packageRepository->create($payload);
 
         $this->syncPackageServices($package->id, $business->id, $items);
-
-        foreach ($this->branchIds($user) as $branchId) {
-            BranchPackage::create([
-                'spa_branch_id' => $branchId,
-                'package_id' => $package->id,
-                'is_available' => true,
-            ]);
-        }
 
         return new PackageResource($package->load('packageServiceItems.serviceVariant.service'));
     }

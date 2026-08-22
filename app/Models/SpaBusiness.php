@@ -78,4 +78,14 @@ class SpaBusiness extends Model
     {
         return $this->hasOne(Subscription::class, 'spa_business_id')->latestOfMany();
     }
+
+    public function services()
+    {
+        return $this->hasMany(Service::class, 'spa_business_id');
+    }
+
+    public function packages()
+    {
+        return $this->hasMany(Package::class, 'spa_business_id');
+    }
 }

@@ -33,10 +33,6 @@ class SpaBranchResource extends JsonResource
             'phone_number' => $this->phone_number,
             'description' => $this->description,
 
-            'address' => $this->address,
-            'city' => $this->city,
-            'province' => $this->province,
-            'postal_code' => $this->postal_code,
             'formatted_address' => $this->formatted_address,
 
             'latitude' => $this->latitude,
@@ -69,6 +65,7 @@ class SpaBranchResource extends JsonResource
 
             'business' => $this->whenLoaded('business', function () {
                 return [
+                    'uuid' => $this->business->uuid,
                     'business_name' => $this->business->business_name,
                     'owner' => $this->business->relationLoaded('owner') && $this->business->owner ? [
                         'first_name' => $this->business->owner->first_name,
@@ -80,6 +77,59 @@ class SpaBranchResource extends JsonResource
             }),
 
             'schedules' => $this->whenLoaded('schedules'),
+
+            // Full detail-page relations — only present when the caller
+            // eager-loads them (see BranchRepository::findByUuid); the
+            // list-page repository doesn't load these, so they simply omit
+            // from that response instead of adding N+1 queries there.
+            'manager' => $this->whenLoaded('manager', function () {
+                return $this->manager ? [
+                    'uuid' => $this->manager->uuid,
+                    'first_name' => $this->manager->first_name,
+                    'last_name' => $this->manager->last_name,
+                    'email' => $this->manager->email,
+                    'phone_number' => $this->manager->phone_number,
+                ] : null;
+            }),
+
+            'assigned_account' => $this->whenLoaded('assignedAccount', function () {
+                $user = $this->assignedAccount;
+                return $user ? [
+                    'uuid' => $user->uuid,
+                    'first_name' => $user->first_name,
+                    'last_name' => $user->last_name,
+                    'email' => $user->email,
+                    'phone_number' => $user->phone_number,
+                    'role' => $user->role,
+                ] : null;
+            }),
+
+            'staff' => $this->whenLoaded('staff', fn () => StaffResource::collection($this->staff)),
+
+            'facilities' => $this->whenLoaded('facilities', fn () => FacilityResource::collection($this->facilities)),
+
+            'services' => $this->whenLoaded('branchServices', function () {
+                return $this->branchServices->map(fn ($bs) => [
+                    'service_variant_uuid' => $bs->serviceVariant?->uuid,
+                    'service_name' => $bs->serviceVariant?->service?->name,
+                    'duration_minutes' => $bs->serviceVariant?->duration_minutes,
+                    'price' => $bs->custom_price !== null
+                        ? (float) $bs->custom_price
+                        : ($bs->serviceVariant ? (float) $bs->serviceVariant->price : null),
+                    'is_available' => (bool) $bs->is_available,
+                ]);
+            }),
+
+            'packages' => $this->whenLoaded('branchPackages', function () {
+                return $this->branchPackages->map(fn ($bp) => [
+                    'package_uuid' => $bp->package?->uuid,
+                    'package_name' => $bp->package?->name,
+                    'price' => $bp->custom_price !== null
+                        ? (float) $bp->custom_price
+                        : ($bp->package ? (float) $bp->package->default_price : null),
+                    'is_available' => (bool) $bp->is_available,
+                ]);
+            }),
         ];
     }
 }

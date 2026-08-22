@@ -19,4 +19,9 @@ class BusinessController extends Controller
     {
         return $this->businessService->listBusinesses($request->input('per_page', 100));
     }
+
+    public function show(string $uuid)
+    {
+        return $this->businessService->getBusiness($uuid);
+    }
 }

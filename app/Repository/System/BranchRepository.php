@@ -23,4 +23,19 @@ class BranchRepository
     {
         return SpaBranch::where('verification_status', $status)->count();
     }
+
+    public function findByUuid(string $uuid): SpaBranch
+    {
+        return SpaBranch::with([
+            'business.owner',
+            'verifier',
+            'manager',
+            'assignedAccount',
+            'schedules',
+            'staff',
+            'facilities',
+            'branchServices.serviceVariant.service',
+            'branchPackages.package',
+        ])->where('uuid', $uuid)->firstOrFail();
+    }
 }

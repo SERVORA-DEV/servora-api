@@ -103,6 +103,6 @@ class ServiceRequest extends FormRequest
             return \App\Models\SpaBusiness::where('owner_id', $user->id)->value('id');
         }
 
-        return $user->accountBranch?->branch?->business?->id;
+        return $user->staff?->branch?->business?->id;
     }
 }

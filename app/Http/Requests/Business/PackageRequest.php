@@ -63,6 +63,6 @@ class PackageRequest extends FormRequest
             return SpaBusiness::where('owner_id', $user->id)->value('id');
         }
 
-        return $user->accountBranch?->branch?->business?->id;
+        return $user->staff?->branch?->business?->id;
     }
 }

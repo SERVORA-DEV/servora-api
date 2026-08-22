@@ -19,4 +19,9 @@ class BranchController extends Controller
     {
         return $this->branchService->listBranches($request->input('per_page', 100));
     }
+
+    public function show(string $uuid)
+    {
+        return $this->branchService->getBranch($uuid);
+    }
 }

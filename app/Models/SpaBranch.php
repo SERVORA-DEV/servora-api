@@ -19,12 +19,6 @@ class SpaBranch extends Model
         'email',
         'phone_number',
 
-        'address',
-
-        'city',
-        'province',
-        'postal_code',
-
         'latitude',
         'longitude',
         'formatted_address',
@@ -89,26 +83,35 @@ class SpaBranch extends Model
         return $this->hasMany(BranchSchedule::class, 'spa_branch_id');
     }
 
-    public function accountBranch()
-    {
-        return $this->hasOne(AccountBranch::class, 'spa_branch_id');
-    }
-
-    // The branch's Manager specifically — account_branches can hold either
-    // a Manager or a Front Officer assignment (see AccountBranch), so
-    // accountBranch() alone isn't reliable for "who manages this branch"
-    // when both are assigned; this filters through to the manager-role
-    // user only.
-    public function manager()
+    // Any account (Manager or Front Officer) assigned to a staff member at
+    // this branch — reached transitively via Staff.user_id now rather than
+    // a branch-owned pivot row (see Staff::user, User::staff).
+    public function assignedAccount()
     {
         return $this->hasOneThrough(
             User::class,
-            AccountBranch::class,
+            Staff::class,
             'spa_branch_id',
             'id',
             'id',
             'user_id'
-        )->where('users.role', 'manager');
+        );
+    }
+
+    // The branch's Manager specifically — a branch's staff can hold either
+    // a Manager or a Front Desk account (see assignedAccount()), so that
+    // alone isn't reliable for "who manages this branch"; this filters
+    // through to the manager-role staff member's account only.
+    public function manager()
+    {
+        return $this->hasOneThrough(
+            User::class,
+            Staff::class,
+            'spa_branch_id',
+            'id',
+            'id',
+            'user_id'
+        )->where('staff.role', 'manager');
     }
 
     public function branchServices()
@@ -119,5 +122,15 @@ class SpaBranch extends Model
     public function branchPackages()
     {
         return $this->hasMany(BranchPackage::class, 'spa_branch_id');
+    }
+
+    public function staff()
+    {
+        return $this->hasMany(Staff::class, 'spa_branch_id');
+    }
+
+    public function facilities()
+    {
+        return $this->hasMany(Facility::class, 'spa_branch_id');
     }
 }

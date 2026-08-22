@@ -27,7 +27,7 @@ class DashboardService
      * plausible-looking numbers.
      *
      * Branch scope is business_owner = every branch of their business,
-     * manager/front_officer = only their own AccountBranch-assigned branch
+     * manager/front_officer = only their own staff record's branch
      * — see SpaBusinessRepository::branchesForUser, the same primitive the
      * staff/branch listing endpoints use.
      */

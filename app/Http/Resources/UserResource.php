@@ -31,6 +31,19 @@ class UserResource extends JsonResource
         $data['business_verification_status'] = null;
         $data['overall_verification_status'] = null;
         $data['has_active_subscription'] = null;
+        $data['staff_name'] = null;
+        $data['branch_name'] = null;
+
+        // The login is a User account, but for manager/front_officer roles
+        // the "who is this" the dashboard should show is the linked Staff
+        // (employee) record, not the User's own name — see User::staff()
+        // and SpaBusinessRepository::branchesForUser for why Staff is the
+        // source of truth for name/branch on these roles.
+        if (in_array($this->role, ['manager', 'front_officer'], true) && $this->resource->staff) {
+            $staff = $this->resource->staff;
+            $data['staff_name'] = trim("{$staff->first_name} {$staff->last_name}") ?: null;
+            $data['branch_name'] = $staff->branch?->branch_name;
+        }
 
         if (in_array($this->role, ['business_owner', 'manager'], true)) {
             $business = app(SpaBusinessRepository::class)->findForUser($this->resource);

@@ -73,7 +73,7 @@ class UserService
                 ], 403);
             }
 
-            $userBusinessUuid = $user->accountBranch?->branch?->business?->uuid;
+            $userBusinessUuid = $user->staff?->branch?->business?->uuid;
 
             if (! $userBusinessUuid || $userBusinessUuid !== $payload->business_uuid) {
                 return response()->json([

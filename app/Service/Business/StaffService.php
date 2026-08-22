@@ -25,7 +25,7 @@ class StaffService
     }
 
     // business_owner's branch ids cover the whole business; manager's cover
-    // only their one AccountBranch-assigned branch — see
+    // only their own staff record's branch — see
     // SpaBusinessRepository::branchesForUser. Every method below scopes
     // through this rather than $business->id, so a manager can only ever
     // list/view/create/update/delete staff at their own branch.

@@ -9,6 +9,9 @@ use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\System\SubscriptionPlanController;
 use App\Http\Controllers\System\AdminUsersController;
 use App\Http\Controllers\System\TransactionController;
+use App\Http\Controllers\System\BranchController;
+use App\Http\Controllers\System\BusinessController;
+use App\Http\Controllers\System\DashboardController as SystemDashboardController;
 use App\Http\Controllers\Business\DashboardController;
 use App\Http\Controllers\SubscriptionController;
 use App\Http\Controllers\XenditWebhookController;
@@ -65,7 +68,14 @@ Route::middleware('auth:sanctum')->group(function () {
                 'admin/user-management' => AdminUsersController::class
             ]);
 
+            Route::get('dashboard', [SystemDashboardController::class, 'index']);
+
             Route::get('transactions', [TransactionController::class, 'index']);
+
+            Route::get('branches', [BranchController::class, 'index']);
+            Route::get('branches/{uuid}', [BranchController::class, 'show']);
+            Route::get('businesses', [BusinessController::class, 'index']);
+            Route::get('businesses/{uuid}', [BusinessController::class, 'show']);
 
             // No store/update/destroy — a registration is only ever
             // reviewed (approve/reject), never created or edited here.
@@ -126,7 +136,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Per-branch availability toggle (branch_services/branch_packages) —
                 // reuses service_update/package_update rather than a new permission,
                 // scoped server-side to the caller's own branches (manager can only
-                // ever submit rows for their one AccountBranch-assigned branch).
+                // ever submit rows for their own staff record's branch).
                 // Service-side is scoped to one variant (a specific duration/price
                 // option), not the whole service, since price/availability live
                 // per variant now.

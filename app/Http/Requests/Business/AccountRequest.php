@@ -6,9 +6,10 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 // Validates POST/PATCH /business/account. An account is a standalone
-// Manager/Front Officer login — no Staff record involved (see
-// AccountService::createAccount) — so credentials, role, and branch are
-// all collected directly here.
+// Manager/Front Officer login tied to a specific Staff record (see
+// AccountService::createAccount) — credentials and the target staff member
+// are collected here; role and branch are both derived server-side from
+// that staff member, never accepted from the client.
 class AccountRequest extends FormRequest
 {
     public function authorize(): bool
@@ -24,15 +25,23 @@ class AccountRequest extends FormRequest
             'username' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:50', Rule::unique('users', 'username')],
             'email' => [$isCreate ? 'required' : 'sometimes', 'email', 'max:255', Rule::unique('users', 'email')],
 
-            // Locked at creation — changing it later would invalidate the
-            // account's permission bundle, so it's rejected outright on
-            // update rather than silently ignored (same idiom this class
-            // used for staff_uuid before the Staff link was removed).
-            'role' => [$isCreate ? 'required' : 'prohibited', Rule::in(['manager', 'front_officer'])],
+            // Which staff member this login belongs to — locked at
+            // creation, same as role below, since reassigning an account to
+            // a different employee isn't a supported operation. Business
+            // ownership, eligibility (manager/frontdesk only), and the
+            // one-account-per-staff rule are all enforced in
+            // AccountService::createAccount, not here.
+            'staff_uuid' => [$isCreate ? 'required' : 'prohibited', 'uuid', 'exists:staff,uuid'],
 
-            // Editable on update too, unlike role — an owner can reassign
-            // an account to a different branch without recreating it.
-            'spa_branch_uuid' => [$isCreate ? 'required' : 'sometimes', 'uuid', 'exists:spa_branches,uuid'],
+            // Never client-settable — derived from the staff member's job
+            // role in AccountService::createAccount. Still validated as
+            // prohibited (not just omitted) so a client can never smuggle a
+            // role in on create or update.
+            'role' => ['prohibited'],
+
+            // Fully derived via staff.branch now — never accepted from the
+            // client, on create or update.
+            'spa_branch_uuid' => ['prohibited'],
 
             'password' => [$isCreate ? 'required' : 'nullable', 'string', 'min:8'],
 

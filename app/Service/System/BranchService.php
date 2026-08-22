@@ -35,4 +35,9 @@ class BranchService
             ],
         ]);
     }
+
+    public function getBranch(string $uuid): SpaBranchResource
+    {
+        return new SpaBranchResource($this->branchRepository->findByUuid($uuid));
+    }
 }

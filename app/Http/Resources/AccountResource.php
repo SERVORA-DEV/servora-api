@@ -5,9 +5,9 @@ namespace App\Http\Resources;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
-// Wraps a User model directly (with accountBranch.branch + permission
-// eager-loaded) — an account is a standalone Manager/Front Officer login,
-// not a Staff row. See AccountRepository.
+// Wraps a User model directly (with staff.branch + permission
+// eager-loaded) — an account is a standalone Manager/Front Officer login
+// tied to the Staff row it was created for. See AccountRepository.
 class AccountResource extends JsonResource
 {
     // users.role stores the lowercase/underscored form (also the
@@ -30,8 +30,10 @@ class AccountResource extends JsonResource
             'username' => $this->username,
             'email' => $this->email,
             'role' => self::ROLE_LABELS[$this->role] ?? $this->role,
-            'spa_branch_uuid' => $this->accountBranch?->branch?->uuid,
-            'branch_name' => $this->accountBranch?->branch?->branch_name,
+            'staff_uuid' => $this->staff?->uuid,
+            'staff_name' => $this->staff ? trim("{$this->staff->first_name} {$this->staff->last_name}") : null,
+            'spa_branch_uuid' => $this->staff?->branch?->uuid,
+            'branch_name' => $this->staff?->branch?->branch_name,
             'account_status' => $this->account_status,
             'created_at' => $this->created_at,
 

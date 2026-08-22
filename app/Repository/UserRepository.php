@@ -7,9 +7,12 @@ use App\Models\UserPermission;
 
 class UserRepository
 {
+    // Eager-loads staff.branch so UserResource can surface the linked
+    // employee record (manager/front_officer accounts only — see
+    // User::staff()) without an extra query per request.
     public function findByField(string $field, $value)
     {
-        return User::where($field, $value)->first();
+        return User::with('staff.branch')->where($field, $value)->first();
     }
 
     public function create(array $payload)

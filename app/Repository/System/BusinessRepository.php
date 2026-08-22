@@ -22,4 +22,18 @@ class BusinessRepository
     {
         return SpaBusiness::where('verification_status', $status)->count();
     }
+
+    public function findByUuid(string $uuid): SpaBusiness
+    {
+        return SpaBusiness::with([
+            'owner.ownerIdentityVerification.verifier',
+            'verifier',
+            'branches',
+            'subscriptions.plan',
+            'subscriptions.billings.payments',
+            'activeSubscription.plan',
+            'services.variants',
+            'packages.branchPackages.branch',
+        ])->where('uuid', $uuid)->firstOrFail();
+    }
 }

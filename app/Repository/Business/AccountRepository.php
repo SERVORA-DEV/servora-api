@@ -2,22 +2,22 @@
 
 namespace App\Repository\Business;
 
-use App\Models\AccountBranch;
+use App\Models\Staff;
 use App\Models\User;
 use App\Models\UserPermission;
 use Illuminate\Support\Arr;
 
 // An "account" is a standalone Manager/Front Officer login — a User row,
-// scoped to a business through account_branches (see AccountBranch), with
-// no Staff record involved. See AccountService.
+// scoped to a business through the staff member it's assigned to (see
+// Staff::user_id, AccountService).
 class AccountRepository
 {
-    // Every account for this business, scoped through account_branches.
+    // Every account for this business, scoped through staff.branch.
     public function paginateForBusiness(int $spaBusinessId, int $perPage = 15)
     {
-        return User::with(['permission', 'accountBranch.branch'])
+        return User::with(['permission', 'staff.branch'])
             ->whereIn('role', ['manager', 'front_officer'])
-            ->whereHas('accountBranch.branch', fn ($query) => $query->where('spa_business_id', $spaBusinessId))
+            ->whereHas('staff.branch', fn ($query) => $query->where('spa_business_id', $spaBusinessId))
             ->latest()
             ->paginate($perPage);
     }
@@ -28,7 +28,7 @@ class AccountRepository
     public function countForBusiness(int $spaBusinessId): int
     {
         return User::whereIn('role', ['manager', 'front_officer'])
-            ->whereHas('accountBranch.branch', fn ($query) => $query->where('spa_business_id', $spaBusinessId))
+            ->whereHas('staff.branch', fn ($query) => $query->where('spa_business_id', $spaBusinessId))
             ->count();
     }
 
@@ -36,10 +36,10 @@ class AccountRepository
     // another business's account just because the uuid was guessed/known.
     public function findAccountByUuidForBusiness(string $uuid, int $spaBusinessId): User
     {
-        return User::with(['permission', 'accountBranch.branch'])
+        return User::with(['permission', 'staff.branch'])
             ->whereIn('role', ['manager', 'front_officer'])
             ->where('uuid', $uuid)
-            ->whereHas('accountBranch.branch', fn ($query) => $query->where('spa_business_id', $spaBusinessId))
+            ->whereHas('staff.branch', fn ($query) => $query->where('spa_business_id', $spaBusinessId))
             ->firstOrFail();
     }
 
@@ -53,15 +53,12 @@ class AccountRepository
         return UserPermission::create($payload);
     }
 
-    // One row per account, enforced by account_branches' unique(user_id) —
-    // updateOrCreate so this doubles as both the initial assignment (see
-    // AccountService::createAccount) and a later reassignment.
-    public function assignBranch(User $account, int $spaBranchId): void
+    // Links the new account to the staff member it was created for —
+    // enforced by staff.user_id's unique() constraint, so a staff member
+    // can only ever back one account (see AccountService::createAccount).
+    public function assignStaff(User $account, Staff $staff): void
     {
-        AccountBranch::updateOrCreate(
-            ['user_id' => $account->id],
-            ['spa_branch_id' => $spaBranchId]
-        );
+        $staff->update(['user_id' => $account->id]);
     }
 
     // password / account_status / permission — role is never editable here
@@ -82,7 +79,7 @@ class AccountRepository
             }
         }
 
-        return $account->fresh(['permission', 'accountBranch.branch']);
+        return $account->fresh(['permission', 'staff.branch']);
     }
 
     // user_permissions.user_id has cascadeOnDelete — deleting the account

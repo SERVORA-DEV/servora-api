@@ -12,10 +12,19 @@ class Staff extends Model
 
     protected $table = 'staff';
 
+    // Maps a staff member's job role to the login role their account gets
+    // once granted (see AccountService::createAccount) — only these two job
+    // roles can ever have a login; therapist never appears here.
+    public const ACCOUNT_ROLE_MAP = [
+        'manager' => 'manager',
+        'frontdesk' => 'front_officer',
+    ];
+
     protected $fillable = [
         'uuid',
 
         'spa_branch_id',
+        'user_id',
         'employee_number',
 
         'first_name',
@@ -53,5 +62,13 @@ class Staff extends Model
     public function branch()
     {
         return $this->belongsTo(SpaBranch::class, 'spa_branch_id');
+    }
+
+    // Null until this staff member is granted a login (see
+    // AccountService::createAccount) — unique(user_id) on the table caps
+    // this at one account per staff member.
+    public function user()
+    {
+        return $this->belongsTo(User::class);
     }
 }

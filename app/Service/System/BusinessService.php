@@ -4,6 +4,7 @@ namespace App\Service\System;
 
 use App\Repository\System\BusinessRepository;
 use App\Http\Resources\System\BusinessResource;
+use App\Http\Resources\System\BusinessDetailResource;
 
 class BusinessService
 {
@@ -26,5 +27,10 @@ class BusinessService
                 'suspended' => $this->businessRepository->countByVerificationStatus('Suspended'),
             ],
         ]);
+    }
+
+    public function getBusiness(string $uuid): BusinessDetailResource
+    {
+        return new BusinessDetailResource($this->businessRepository->findByUuid($uuid));
     }
 }

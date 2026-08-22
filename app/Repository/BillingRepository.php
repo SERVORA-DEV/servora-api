@@ -48,4 +48,20 @@ class BillingRepository
             ->orderByDesc('issued_at')
             ->paginate($perPage);
     }
+
+    // Top-N for the system dashboard's "Recent Transactions" card — same
+    // eager-loads as paginateSubscriptionTransactions(), just limit()->get()
+    // instead of paginate() since no page count is needed for a fixed card.
+    public function recentSubscriptionTransactions(int $limit = 8)
+    {
+        return Billing::with([
+            'subscription.plan',
+            'subscription.business.owner',
+            'payments' => fn ($query) => $query->latest('paid_at'),
+        ])
+            ->where('billing_type', 'Subscription')
+            ->orderByDesc('issued_at')
+            ->limit($limit)
+            ->get();
+    }
 }

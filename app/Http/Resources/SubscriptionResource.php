@@ -17,6 +17,7 @@ class SubscriptionResource extends JsonResource
         return [
             ...parent::toArray($request),
             'plan' => $this->whenLoaded('plan', fn () => new SubscriptionPlanResource($this->plan)),
+            'billings' => $this->whenLoaded('billings', fn () => BillingResource::collection($this->billings)),
         ];
     }
 }

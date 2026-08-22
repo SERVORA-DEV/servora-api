@@ -39,7 +39,7 @@ class ServiceService
     }
 
     // business_owner's branch ids cover the whole business; manager's cover
-    // only their one AccountBranch-assigned branch — see
+    // only their own staff record's branch — see
     // SpaBusinessRepository::branchesForUser. Same convention as
     // FacilityService::branchIds().
     private function branchIds(User $user): array
@@ -60,11 +60,11 @@ class ServiceService
     }
 
     /**
-     * Every variant is auto-enabled (BranchService, is_available=true, no
-     * price override) at every one of the business's branches — matches
-     * NIKA's single-list design (no per-branch nuance in the UI) while still
-     * populating the real per-branch table underneath, so a future
-     * per-branch toggle has correct data to start from instead of nothing.
+     * New variants start with no BranchService rows at all — the owner is
+     * prompted right after create (see the "Assign Branches" panel on the
+     * frontend) to explicitly choose which branches offer it, rather than
+     * every branch being silently auto-enabled. Branch assignment is saved
+     * separately via updateVariantBranches().
      */
     public function createService(User $user, array $payload)
     {
@@ -87,17 +87,7 @@ class ServiceService
         $payload['is_active'] = $payload['is_active'] ?? true;
 
         $service = $this->serviceRepository->create($payload);
-        $createdVariants = $this->serviceVariantRepository->syncForService($service->id, $variants);
-
-        foreach ($this->branchIds($user) as $branchId) {
-            foreach ($createdVariants as $variant) {
-                BranchService::create([
-                    'spa_branch_id' => $branchId,
-                    'service_variant_id' => $variant->id,
-                    'is_available' => true,
-                ]);
-            }
-        }
+        $this->serviceVariantRepository->syncForService($service->id, $variants);
 
         return new ServiceResource($service->load('variants'));
     }

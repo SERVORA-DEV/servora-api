@@ -61,7 +61,7 @@ class BranchScheduleService
     }
 
     // business_owner's branch ids cover the whole business; manager's cover
-    // only their one AccountBranch-assigned branch — see
+    // only their own staff record's branch — see
     // SpaBusinessRepository::branchesForUser, same convention FacilityService
     // uses.
     private function branchIds(User $user): array

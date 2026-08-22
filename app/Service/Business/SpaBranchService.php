@@ -209,10 +209,6 @@ class SpaBranchService
             'latitude' => $payload['latitude'],
             'longitude' => $payload['longitude'],
             'formatted_address' => $payload['formatted_address'],
-            'address' => $payload['address'] ?? $branch->address,
-            'city' => $payload['city'] ?? $branch->city,
-            'province' => $payload['province'] ?? $branch->province,
-            'postal_code' => $payload['postal_code'] ?? $branch->postal_code,
         ]);
 
         $this->auditLogRepository->record(

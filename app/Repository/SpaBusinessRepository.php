@@ -30,8 +30,8 @@ class SpaBusinessRepository
     // roles allowed into the business/* API — business_owner is
     // SpaBusiness.owner_id directly; manager (and front_officer, should it
     // ever need this) has no owner_id of its own and is instead linked via
-    // User::accountBranch -> SpaBranch -> SpaBusiness (see AccountService::
-    // createAccount, which is what populates account_branches). Services
+    // User::staff -> SpaBranch -> SpaBusiness (see AccountService::
+    // createAccount, which is what populates staff.user_id). Services
     // that used to call findByOwnerId($user->id) directly should call this
     // instead so manager requests resolve the same business the owner sees,
     // rather than always coming back null.
@@ -41,14 +41,14 @@ class SpaBusinessRepository
             return $this->findByOwnerId($user->id);
         }
 
-        return $user->accountBranch?->branch?->business;
+        return $user->staff?->branch?->business;
     }
 
     // Single source of truth for "which branches can this user see" — every
     // scoped endpoint (staff list, branch list, dashboard, ...) should go
     // through this rather than re-deriving it: business_owner gets every
-    // branch of their business, manager/front_officer gets only their one
-    // AccountBranch-assigned branch. Empty collection if the user has no
+    // branch of their business, manager/front_officer gets only their own
+    // staff record's branch. Empty collection if the user has no
     // business/branch resolved at all (mirrors findForUser's null case).
     public function branchesForUser(User $user): Collection
     {
@@ -57,7 +57,7 @@ class SpaBusinessRepository
             return $business ? SpaBranch::where('spa_business_id', $business->id)->get() : collect();
         }
 
-        $branch = $user->accountBranch?->branch;
+        $branch = $user->staff?->branch;
         return $branch ? collect([$branch]) : collect();
     }
 
