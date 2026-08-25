@@ -33,6 +33,18 @@ class StaffRepository
         return Staff::create($payload);
     }
 
+    // Flat (unpaginated) active-therapist list for the front-office
+    // therapist picker — a thinner projection than paginateForBranches, see
+    // FrontOfficeLookupService.
+    public function listActiveTherapistsForBranches(array $spaBranchIds)
+    {
+        return Staff::whereIn('spa_branch_id', $spaBranchIds)
+            ->where('role', 'therapist')
+            ->where('status', 'active')
+            ->orderBy('first_name')
+            ->get();
+    }
+
     // Best-effort sequential employee number (EMP-0001, EMP-0002, ...) scoped
     // to the branch, since the unique index is (spa_branch_id, employee_number)
     // rather than global. withTrashed so a deleted staff member's number is

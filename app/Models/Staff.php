@@ -71,4 +71,21 @@ class Staff extends Model
     {
         return $this->belongsTo(User::class);
     }
+
+    public function schedules()
+    {
+        return $this->hasMany(StaffSchedule::class, 'staff_id');
+    }
+
+    // Empty = qualified for every service (opt-in-if-configured) — see
+    // AppointmentAvailabilityService::isStaffQualified().
+    public function qualifiedServices()
+    {
+        return $this->belongsToMany(Service::class, 'staff_services', 'staff_id', 'service_id');
+    }
+
+    public function therapistAssignments()
+    {
+        return $this->hasMany(TherapistAssignment::class, 'staff_id');
+    }
 }

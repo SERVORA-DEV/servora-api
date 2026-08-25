@@ -24,6 +24,8 @@ class BillingResource extends JsonResource
             'issued_at' => optional($this->issued_at)->toIso8601String(),
             'paid_at' => optional($this->paid_at)->toIso8601String(),
             'plan_name' => $this->whenLoaded('subscription', fn () => optional($this->subscription?->plan)->name),
+            'appointment_uuid' => $this->whenLoaded('appointment', fn () => $this->appointment?->uuid),
+            'payments' => PaymentResource::collection($this->whenLoaded('payments')),
         ];
     }
 }

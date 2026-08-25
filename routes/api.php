@@ -26,6 +26,13 @@ use App\Http\Controllers\Business\SpaBusinessController;
 use App\Http\Controllers\System\BranchRegistrationController;
 use App\Http\Controllers\Business\OwnerVerificationController as BusinessOwnerVerificationController;
 use App\Http\Controllers\System\OwnerVerificationController as SystemOwnerVerificationController;
+use App\Http\Controllers\Business\ClientController;
+use App\Http\Controllers\Business\AppointmentController;
+use App\Http\Controllers\Business\AppointmentServiceController;
+use App\Http\Controllers\Business\QueueController;
+use App\Http\Controllers\Business\BillingController;
+use App\Http\Controllers\Business\PaymentController;
+use App\Http\Controllers\Business\FrontOfficeLookupController;
 
 // authentication part
 Route::post('/auth/login', [AuthController::class, 'login']);
@@ -150,6 +157,58 @@ Route::middleware('auth:sanctum')->group(function () {
                 // with the Owner's Marketplace Listing access (its Booking &
                 // Policies quick-edit reads/writes this).
                 Route::apiResource('branch-schedule', BranchScheduleController::class);
+
+                // Staff service qualifications (staff_services) — which
+                // services a therapist is qualified to perform, consumed by
+                // AppointmentAvailabilityService::isStaffQualified(). Staff
+                // management stays owner/manager-only, unlike the
+                // day-to-day appointment operations below.
+                Route::patch('staff/{uuid}/services', [StaffController::class, 'updateServices']);
+            });
+
+            // Day-to-day front-desk operations: appointment creation,
+            // check-in, service/therapist/room assignment, queueing,
+            // service execution, and billing/payment. front_officer has
+            // zero routes anywhere else in this file despite already having
+            // a permission set defined in config/permission.php for exactly
+            // this — see EnsurePermission (aliased 'permission') for how
+            // those keys are enforced below. Actions with no matching
+            // front_officer key yet (cancel, no-show, assign therapist/room,
+            // start/complete service, add/remove service, add package) stay
+            // gated at this role-group level only — see
+            // config/permission.php's front_officer array for the gap.
+            Route::middleware(['role:business_owner,manager,front_officer', 'verified.business', 'subscribed.business'])->group(function () {
+                Route::get('client', [ClientController::class, 'index'])->middleware('permission:client_view');
+                Route::post('client', [ClientController::class, 'store'])->middleware('permission:client_create');
+
+                Route::get('appointment', [AppointmentController::class, 'index'])->middleware('permission:appointment_view');
+                Route::post('appointment', [AppointmentController::class, 'store'])->middleware('permission:appointment_create');
+                Route::get('appointment/{uuid}', [AppointmentController::class, 'show'])->middleware('permission:appointment_view');
+                Route::post('appointment/{uuid}/confirm', [AppointmentController::class, 'confirm'])->middleware('permission:appointment_confirm');
+                Route::post('appointment/{uuid}/checkin', [AppointmentController::class, 'checkIn'])->middleware('permission:appointment_checkin');
+                Route::post('appointment/{uuid}/cancel', [AppointmentController::class, 'cancel']);
+                Route::post('appointment/{uuid}/no-show', [AppointmentController::class, 'markNoShow']);
+                Route::post('appointment/{uuid}/services', [AppointmentController::class, 'addService']);
+                Route::delete('appointment-service/{uuid}', [AppointmentController::class, 'removeService']);
+                Route::post('appointment/{uuid}/packages', [AppointmentController::class, 'addPackage']);
+                Route::post('appointment/{uuid}/additional-services', [AppointmentServiceController::class, 'addAdditionalService']);
+                Route::post('appointment/{uuid}/queue', [AppointmentController::class, 'addToQueue'])->middleware('permission:queue_create');
+                Route::post('appointment/{uuid}/billing', [AppointmentController::class, 'proceedToBilling'])->middleware('permission:billing_create');
+
+                Route::post('appointment-service/{uuid}/assignments', [AppointmentServiceController::class, 'assignTherapist']);
+                Route::delete('assignment/{uuid}', [AppointmentServiceController::class, 'cancelAssignment']);
+                Route::patch('assignment/{uuid}/room', [AppointmentServiceController::class, 'assignRoom']);
+                Route::post('appointment-service/{uuid}/start', [AppointmentServiceController::class, 'startService']);
+                Route::post('appointment-service/{uuid}/complete', [AppointmentServiceController::class, 'completeService']);
+
+                Route::get('queue', [QueueController::class, 'index'])->middleware('permission:queue_view');
+
+                Route::get('billing/{uuid}', [BillingController::class, 'show'])->middleware('permission:billing_view');
+                Route::post('billing/{uuid}/payments', [PaymentController::class, 'store'])->middleware('permission:payment_create');
+
+                Route::get('frontoffice/therapists', [FrontOfficeLookupController::class, 'therapists']);
+                Route::get('frontoffice/facilities', [FrontOfficeLookupController::class, 'facilities']);
+                Route::get('frontoffice/services', [FrontOfficeLookupController::class, 'services']);
             });
 
             Route::middleware('role:business_owner')->group(function () {

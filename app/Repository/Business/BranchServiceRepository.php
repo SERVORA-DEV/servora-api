@@ -21,6 +21,16 @@ class BranchServiceRepository
     // but upsert rather than delete+recreate: branch_service_facilities FKs
     // to branch_services.id with cascade delete, so recreating rows here
     // would silently orphan any room assignments hanging off the old id.
+    // Flat bookable-and-priced list for the front-office service picker —
+    // see FrontOfficeLookupService.
+    public function listBookableForBranches(array $spaBranchIds)
+    {
+        return BranchService::with('serviceVariant.service')
+            ->whereIn('spa_branch_id', $spaBranchIds)
+            ->where('is_available', true)
+            ->get();
+    }
+
     public function syncForVariant(int $serviceVariantId, array $rows): void
     {
         foreach ($rows as $row) {

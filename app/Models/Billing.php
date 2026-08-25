@@ -55,6 +55,11 @@ class Billing extends Model
         return $this->belongsTo(Subscription::class, 'subscription_id');
     }
 
+    public function appointment()
+    {
+        return $this->belongsTo(Appointment::class, 'appointment_id');
+    }
+
     public function business()
     {
         return $this->belongsTo(SpaBusiness::class, 'spa_business_id');

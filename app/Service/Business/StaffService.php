@@ -2,8 +2,10 @@
 
 namespace App\Service\Business;
 
+use App\Models\Service;
 use App\Models\User;
 use App\Repository\Business\StaffRepository;
+use App\Repository\Business\StaffServiceRepository as StaffQualificationRepository;
 use App\Repository\Business\SpaBranchRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Http\Resources\StaffResource;
@@ -13,15 +15,18 @@ class StaffService
     private StaffRepository $staffRepository;
     private SpaBranchRepository $spaBranchRepository;
     private SpaBusinessRepository $spaBusinessRepository;
+    private StaffQualificationRepository $staffQualificationRepository;
 
     public function __construct(
         StaffRepository $staffRepository,
         SpaBranchRepository $spaBranchRepository,
         SpaBusinessRepository $spaBusinessRepository,
+        StaffQualificationRepository $staffQualificationRepository,
     ) {
         $this->staffRepository = $staffRepository;
         $this->spaBranchRepository = $spaBranchRepository;
         $this->spaBusinessRepository = $spaBusinessRepository;
+        $this->staffQualificationRepository = $staffQualificationRepository;
     }
 
     // business_owner's branch ids cover the whole business; manager's cover
@@ -130,6 +135,31 @@ class StaffService
         $model = $this->staffRepository->update($uuid, $payload);
 
         return new StaffResource($model);
+    }
+
+    // Replaces this staff member's service qualifications wholesale — see
+    // StaffServiceRepository::sync / isQualified for the opt-in-if-configured
+    // semantics AppointmentAvailabilityService relies on. Stays in the
+    // owner/manager staff-management group (routes/api.php), not the
+    // day-to-day front-office group.
+    public function updateServices(User $user, string $uuid, array $serviceUuids)
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+
+        if (! $business) {
+            return response()->json(['message' => 'No spa business found for this account.'], 422);
+        }
+
+        $staff = $this->staffRepository->findByUuidForBranches($uuid, $this->branchIds($user));
+
+        $serviceIds = Service::where('spa_business_id', $business->id)
+            ->whereIn('uuid', $serviceUuids)
+            ->pluck('id')
+            ->all();
+
+        $this->staffQualificationRepository->sync($staff->id, $serviceIds);
+
+        return new StaffResource($staff->load('branch'));
     }
 
     public function deleteStaff(User $user, string $uuid)

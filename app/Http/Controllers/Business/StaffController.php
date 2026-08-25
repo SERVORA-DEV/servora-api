@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Business\StaffRequest;
+use App\Http\Requests\Business\StaffServiceRequest;
 use App\Service\Business\StaffService;
 use Illuminate\Http\Request;
 
@@ -40,5 +41,10 @@ class StaffController extends Controller
     {
         $this->staffService->deleteStaff($request->user(), $uuid);
         return response()->json(['message' => 'Deleted successfully'], 200);
+    }
+
+    public function updateServices(StaffServiceRequest $request, string $uuid)
+    {
+        return $this->staffService->updateServices($request->user(), $uuid, $request->validated()['service_uuids'] ?? []);
     }
 }

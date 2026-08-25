@@ -41,4 +41,9 @@ class Facility extends Model
     {
         return $this->belongsTo(SpaBranch::class, 'spa_branch_id');
     }
+
+    public function therapistAssignments()
+    {
+        return $this->hasMany(TherapistAssignment::class, 'facility_id');
+    }
 }

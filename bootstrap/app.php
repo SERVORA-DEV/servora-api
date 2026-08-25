@@ -16,6 +16,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'role' => \App\Http\Middleware\RoleMiddleware::class,
             'verified.business' => \App\Http\Middleware\EnsureBusinessVerified::class,
             'subscribed.business' => \App\Http\Middleware\EnsureBusinessSubscribed::class,
+            'permission' => \App\Http\Middleware\EnsurePermission::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

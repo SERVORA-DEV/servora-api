@@ -23,6 +23,16 @@ class FacilityRepository
         return Facility::create($payload)->load('branch');
     }
 
+    // Flat (unpaginated) list for the front-office room picker — see
+    // FrontOfficeLookupService.
+    public function listAvailableForBranches(array $spaBranchIds)
+    {
+        return Facility::whereIn('spa_branch_id', $spaBranchIds)
+            ->where('is_available', true)
+            ->orderBy('name')
+            ->get();
+    }
+
     public function findByUuid(string $uuid)
     {
         return Facility::where('uuid', $uuid)->firstOrFail();

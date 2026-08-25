@@ -64,4 +64,16 @@ class BillingRepository
             ->limit($limit)
             ->get();
     }
+
+    // One appointment has at most one Billing row — enforced in
+    // AppointmentService::proceedToBilling (422 if one already exists), not
+    // at the DB level, since appointment_id stays nullable/shared with
+    // Subscription billing.
+    public function findForAppointment(int $appointmentId)
+    {
+        return Billing::with('payments')
+            ->where('appointment_id', $appointmentId)
+            ->where('billing_type', 'Appointment')
+            ->first();
+    }
 }
