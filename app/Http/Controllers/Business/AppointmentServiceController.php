@@ -21,6 +21,11 @@ class AppointmentServiceController extends Controller
         $this->appointmentService = $appointmentService;
     }
 
+    public function therapistOptions(Request $request, string $uuid)
+    {
+        return $this->appointmentService->therapistOptions($request->user(), $uuid);
+    }
+
     public function assignTherapist(TherapistAssignmentRequest $request, string $uuid)
     {
         return $this->appointmentService->assignTherapist($request->user(), $uuid, $request->validated());

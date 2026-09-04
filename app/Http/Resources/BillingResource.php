@@ -25,6 +25,11 @@ class BillingResource extends JsonResource
             'paid_at' => optional($this->paid_at)->toIso8601String(),
             'plan_name' => $this->whenLoaded('subscription', fn () => optional($this->subscription?->plan)->name),
             'appointment_uuid' => $this->whenLoaded('appointment', fn () => $this->appointment?->uuid),
+            // Full appointment context (client, branch, itemized services) —
+            // populated only when AppointmentService::getBilling's eager
+            // loads are present; the appointment-detail page's own nested
+            // billing (loaded without these relations) stays lean.
+            'appointment' => new AppointmentResource($this->whenLoaded('appointment')),
             'payments' => PaymentResource::collection($this->whenLoaded('payments')),
         ];
     }

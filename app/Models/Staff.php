@@ -3,12 +3,13 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Staff extends Model
 {
-    use HasUuids, SoftDeletes;
+    use HasFactory, HasUuids, SoftDeletes;
 
     protected $table = 'staff';
 
@@ -87,5 +88,10 @@ class Staff extends Model
     public function therapistAssignments()
     {
         return $this->hasMany(TherapistAssignment::class, 'staff_id');
+    }
+
+    public function attendance()
+    {
+        return $this->hasMany(Attendance::class, 'staff_id');
     }
 }

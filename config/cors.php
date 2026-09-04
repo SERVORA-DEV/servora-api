@@ -30,6 +30,11 @@ return [
         // so a remote machine on the same Radmin network can reach this
         // laptop's Laravel API the same way a LAN device does.
         '#^http://26\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?$#',
+        // Flutter web dev (`flutter run -d chrome`) binds a random port per
+        // run unless --web-port is pinned — allow any localhost/127.0.0.1
+        // port rather than hardcoding one.
+        '#^http://localhost:\d+$#',
+        '#^http://127\.0\.0\.1:\d+$#',
     ],
 
     'allowed_headers' => ['*'],

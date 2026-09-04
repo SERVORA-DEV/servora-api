@@ -3,12 +3,13 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Service extends Model
 {
-    use HasUuids, SoftDeletes;
+    use HasFactory, HasUuids, SoftDeletes;
 
     protected $table = 'services';
 
@@ -45,5 +46,10 @@ class Service extends Model
     public function variants()
     {
         return $this->hasMany(ServiceVariant::class, 'service_id')->orderBy('duration_minutes');
+    }
+
+    public function facilities()
+    {
+        return $this->belongsToMany(Facility::class, 'facility_services');
     }
 }

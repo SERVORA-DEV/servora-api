@@ -36,7 +36,11 @@ class BranchServiceRepository
         foreach ($rows as $row) {
             BranchService::updateOrCreate(
                 ['service_variant_id' => $serviceVariantId, 'spa_branch_id' => $row['spa_branch_id']],
-                ['is_available' => $row['is_available'], 'custom_price' => $row['custom_price'] ?? null]
+                [
+                    'is_available' => $row['is_available'],
+                    'custom_price' => $row['custom_price'] ?? null,
+                    'custom_commission' => $row['custom_commission'] ?? null,
+                ]
             );
         }
     }

@@ -12,7 +12,8 @@ class FacilityRepository
     // business_owner, only the manager's own branch's rooms for manager.
     public function paginateForBranches(array $spaBranchIds, int $perPage = 15)
     {
-        return Facility::with('branch')
+        return Facility::with(['branch', 'services'])
+            ->withExists(['therapistAssignments as is_occupied' => fn ($q) => $q->where('assignment_status', 'In Progress')])
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->latest()
             ->paginate($perPage);
@@ -24,11 +25,22 @@ class FacilityRepository
     }
 
     // Flat (unpaginated) list for the front-office room picker — see
-    // FrontOfficeLookupService.
-    public function listAvailableForBranches(array $spaBranchIds)
+    // FrontOfficeLookupService. Excludes rooms under maintenance; a room
+    // still marked Available but currently occupied is filtered by the
+    // caller's own time-window check, not here. A room with no services
+    // configured at all is treated as unrestricted (matches the same
+    // backward-compatible rule enforced in AppointmentService's
+    // checkRoomEligibility) rather than being hidden from every filtered
+    // picker just because it hasn't been categorized yet.
+    public function listAvailableForBranches(array $spaBranchIds, ?int $serviceId = null)
     {
         return Facility::whereIn('spa_branch_id', $spaBranchIds)
             ->where('is_available', true)
+            ->where('status', '!=', 'Maintenance')
+            ->when($serviceId, fn ($q) => $q->where(fn ($q2) => $q2
+                ->doesntHave('services')
+                ->orWhereHas('services', fn ($sq) => $sq->where('services.id', $serviceId))
+            ))
             ->orderBy('name')
             ->get();
     }
@@ -43,7 +55,8 @@ class FacilityRepository
     // guard StaffRepository::findByUuidForBranches uses for staff.
     public function findByUuidForBranches(string $uuid, array $spaBranchIds)
     {
-        return Facility::with('branch')
+        return Facility::with(['branch', 'services'])
+            ->withExists(['therapistAssignments as is_occupied' => fn ($q) => $q->where('assignment_status', 'In Progress')])
             ->where('uuid', $uuid)
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->firstOrFail();

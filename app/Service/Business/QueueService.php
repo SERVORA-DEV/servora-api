@@ -8,10 +8,10 @@ use App\Repository\Business\QueueRepository;
 use App\Repository\SpaBusinessRepository;
 
 // Read-only — every queue state change is a side effect of an
-// AppointmentService lifecycle action (check-in, addToQueue, startService,
-// completeService, cancelAppointment), kept there so there's exactly one
-// write path per appointment. This class only serves the Queue tab's list
-// view.
+// AppointmentService lifecycle action (check-in queues automatically,
+// then startService, completeService, cancelAppointment update it), kept
+// there so there's exactly one write path per appointment. This class only
+// serves the Queue tab's list view.
 class QueueService
 {
     private QueueRepository $queueRepository;

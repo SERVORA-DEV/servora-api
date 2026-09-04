@@ -38,6 +38,17 @@ class ClientResource extends JsonResource
                     'avatar' => $this->user->avatar,
                 ]
             ),
+
+            // The standing preferred-therapist relationship (see
+            // Client::preferredTherapist) — omitted entirely (not null) when
+            // unset or not eager-loaded, same convention as `account` above.
+            'preferred_therapist' => $this->when(
+                $this->preferred_staff_id && $this->relationLoaded('preferredTherapist') && $this->preferredTherapist,
+                fn () => [
+                    'uuid' => $this->preferredTherapist->uuid,
+                    'name' => trim("{$this->preferredTherapist->first_name} {$this->preferredTherapist->last_name}"),
+                ]
+            ),
         ];
     }
 }

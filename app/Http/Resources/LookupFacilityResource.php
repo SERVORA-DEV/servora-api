@@ -12,8 +12,9 @@ class LookupFacilityResource extends JsonResource
         return [
             'uuid' => $this->uuid,
             'name' => $this->name,
-            'type' => $this->type,
+            'category' => $this->category,
             'status' => $this->status,
+            'amenities' => $this->amenities ?? [],
         ];
     }
 }

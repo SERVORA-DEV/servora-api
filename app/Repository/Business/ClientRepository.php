@@ -11,7 +11,7 @@ class ClientRepository
     // standalone client lookup.
     public function search(int $spaBusinessId, ?string $query, int $perPage = 15)
     {
-        return Client::with('user')
+        return Client::with(['user', 'preferredTherapist'])
             ->where('spa_business_id', $spaBusinessId)
             ->where('is_active', true)
             ->when($query, function ($q) use ($query) {
@@ -32,12 +32,31 @@ class ClientRepository
         return Client::create($payload);
     }
 
+    // Business-scoping is the caller's responsibility (see
+    // ClientService::updateClient, which resolves via findByUuidForBusiness
+    // first) — same convention as StaffRepository::update.
+    public function update(string $uuid, array $payload)
+    {
+        $model = Client::where('uuid', $uuid)->firstOrFail();
+        $model->update($payload);
+        return $model;
+    }
+
     public function findByUuidForBusiness(string $uuid, int $spaBusinessId)
     {
-        return Client::with('user')
+        return Client::with(['user', 'preferredTherapist'])
             ->where('uuid', $uuid)
             ->where('spa_business_id', $spaBusinessId)
             ->firstOrFail();
+    }
+
+    // Business-scoping is the caller's responsibility (see
+    // ClientService::setPreferredTherapist) — same convention as update().
+    public function setPreferredTherapist(string $uuid, ?int $staffId)
+    {
+        $model = Client::where('uuid', $uuid)->firstOrFail();
+        $model->update(['preferred_staff_id' => $staffId]);
+        return $model->load('preferredTherapist');
     }
 
     // Dedup check before creating a new client — matched on phone or email,

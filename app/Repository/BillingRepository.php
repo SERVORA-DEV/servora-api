@@ -76,4 +76,34 @@ class BillingRepository
             ->where('billing_type', 'Appointment')
             ->first();
     }
+
+    // Backs the owner/manager "Billing & Payments" list page — every
+    // appointment billing across the caller's branches, newest first, with
+    // enough eager-loaded relations for BillingListResource to flatten
+    // client/appointment/service info without N+1s. payment_method filters
+    // by whether *any* payment on the billing used that method (a split
+    // payment can span methods), mirroring how AppointmentRepository::
+    // paginateForBranches structures its own optional filters.
+    public function paginateAppointmentBillingsForBranches(array $spaBranchIds, array $filters, int $perPage = 15)
+    {
+        return Billing::with([
+            'appointment.client',
+            'appointment.services.serviceVariant.service',
+            'branch',
+            'payments' => fn ($query) => $query->latest('paid_at'),
+        ])
+            ->whereIn('spa_branch_id', $spaBranchIds)
+            ->where('billing_type', 'Appointment')
+            ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
+            ->when($filters['payment_method'] ?? null, fn ($q, $method) => $q->whereHas('payments', fn ($p) => $p->where('payment_method', $method)))
+            ->when($filters['date_from'] ?? null, fn ($q, $date) => $q->whereDate('issued_at', '>=', $date))
+            ->when($filters['date_to'] ?? null, fn ($q, $date) => $q->whereDate('issued_at', '<=', $date))
+            ->when($filters['search'] ?? null, fn ($q, $search) => $q->where(fn ($qq) => $qq
+                ->where('billing_number', 'like', "%{$search}%")
+                ->orWhereHas('appointment', fn ($a) => $a->where('appointment_number', 'like', "%{$search}%"))
+                ->orWhereHas('appointment.client', fn ($c) => $c->where('first_name', 'like', "%{$search}%")
+                    ->orWhere('last_name', 'like', "%{$search}%"))))
+            ->orderByDesc('issued_at')
+            ->paginate($perPage);
+    }
 }

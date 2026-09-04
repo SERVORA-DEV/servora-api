@@ -196,6 +196,7 @@ class ServiceService
                 'spa_branch_id' => $spaBranch->id,
                 'is_available' => $branch['is_available'],
                 'custom_price' => $branch['custom_price'] ?? null,
+                'custom_commission' => $branch['custom_commission'] ?? null,
             ];
         }
 

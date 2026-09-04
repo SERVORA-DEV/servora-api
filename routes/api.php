@@ -18,7 +18,9 @@ use App\Http\Controllers\XenditWebhookController;
 use App\Http\Controllers\Business\BranchScheduleController;
 use App\Http\Controllers\Business\SpaBranchController;
 use App\Http\Controllers\Business\AccountController;
+use App\Http\Controllers\Business\AttendanceController;
 use App\Http\Controllers\Business\StaffController;
+use App\Http\Controllers\Business\StaffScheduleController;
 use App\Http\Controllers\Business\FacilityController;
 use App\Http\Controllers\Business\ServiceController;
 use App\Http\Controllers\Business\PackageController;
@@ -33,6 +35,8 @@ use App\Http\Controllers\Business\QueueController;
 use App\Http\Controllers\Business\BillingController;
 use App\Http\Controllers\Business\PaymentController;
 use App\Http\Controllers\Business\FrontOfficeLookupController;
+use App\Http\Controllers\Business\FrontOfficeDashboardController;
+use App\Http\Controllers\Business\FrontOfficeAttendanceController;
 
 // authentication part
 Route::post('/auth/login', [AuthController::class, 'login']);
@@ -130,6 +134,27 @@ Route::middleware('auth:sanctum')->group(function () {
             // unaffected here exactly like today.
             Route::middleware(['role:business_owner,manager', 'verified.business', 'subscribed.business'])->group(function () {
                 Route::apiResource('staff', StaffController::class);
+
+                // Mutation + the single-day operational roster stay
+                // manager-only — the Owner gets a separate read-only
+                // analytics report below (attendance/report) instead. Real
+                // enforcement, not just a hidden UI, per the Owner
+                // Attendance Analytics feature.
+                Route::middleware('role:manager')->group(function () {
+                    Route::apiResource('attendance', AttendanceController::class)->only(['index', 'store', 'destroy']);
+                    Route::post('attendance/bulk-mark-present', [AttendanceController::class, 'bulkMarkPresent']);
+                    Route::get('attendance/roster', [AttendanceController::class, 'roster']);
+                });
+                Route::get('attendance/report', [AttendanceController::class, 'report']);
+                // attendance/{uuid} is registered after every literal
+                // attendance/... segment above (roster, report,
+                // bulk-mark-present) so Laravel matches those first instead
+                // of swallowing them as a {uuid}.
+                Route::middleware('role:manager')->group(function () {
+                    Route::get('attendance/{uuid}', [AttendanceController::class, 'show']);
+                    Route::patch('attendance/{uuid}', [AttendanceController::class, 'update'])->middleware('permission:attendance_update');
+                });
+
                 Route::apiResource('branch', SpaBranchController::class)->only(['index', 'show']);
                 Route::apiResource('facility', FacilityController::class);
                 Route::get('dashboard', [DashboardController::class, 'index']);
@@ -164,6 +189,16 @@ Route::middleware('auth:sanctum')->group(function () {
                 // management stays owner/manager-only, unlike the
                 // day-to-day appointment operations below.
                 Route::patch('staff/{uuid}/services', [StaffController::class, 'updateServices']);
+
+                // A staff member's current weekly schedule (working hours,
+                // day-offs, breaks) — whole-set replace, not per-day CRUD, since
+                // staff_schedules has no unique index (effective_from/until stay
+                // reserved for a future versioning feature). Read by
+                // AppointmentAvailabilityService::staffMatchesSchedule() and
+                // AttendanceStatusCalculator for scheduled-hours/late/absent
+                // detection.
+                Route::get('staff/{uuid}/schedule', [StaffScheduleController::class, 'show'])->middleware('permission:staff_view');
+                Route::patch('staff/{uuid}/schedule', [StaffScheduleController::class, 'update'])->middleware('permission:staff_update');
             });
 
             // Day-to-day front-desk operations: appointment creation,
@@ -180,21 +215,31 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::middleware(['role:business_owner,manager,front_officer', 'verified.business', 'subscribed.business'])->group(function () {
                 Route::get('client', [ClientController::class, 'index'])->middleware('permission:client_view');
                 Route::post('client', [ClientController::class, 'store'])->middleware('permission:client_create');
+                Route::get('client/{uuid}', [ClientController::class, 'show'])->middleware('permission:client_view');
+                Route::patch('client/{uuid}', [ClientController::class, 'update'])->middleware('permission:client_update');
+
+                // Standing preferred-therapist preference — gated separately
+                // from client_update so manager can manage this one field
+                // without full client edit rights (business_owner is in this
+                // role group but still 403s, same as it already lacks
+                // client_create/client_update).
+                Route::patch('client/{uuid}/preferred-therapist', [ClientController::class, 'setPreferredTherapist'])
+                    ->middleware('permission:client_therapist_manage');
 
                 Route::get('appointment', [AppointmentController::class, 'index'])->middleware('permission:appointment_view');
                 Route::post('appointment', [AppointmentController::class, 'store'])->middleware('permission:appointment_create');
                 Route::get('appointment/{uuid}', [AppointmentController::class, 'show'])->middleware('permission:appointment_view');
-                Route::post('appointment/{uuid}/confirm', [AppointmentController::class, 'confirm'])->middleware('permission:appointment_confirm');
                 Route::post('appointment/{uuid}/checkin', [AppointmentController::class, 'checkIn'])->middleware('permission:appointment_checkin');
                 Route::post('appointment/{uuid}/cancel', [AppointmentController::class, 'cancel']);
                 Route::post('appointment/{uuid}/no-show', [AppointmentController::class, 'markNoShow']);
+                Route::patch('appointment/{uuid}/reschedule', [AppointmentController::class, 'reschedule']);
                 Route::post('appointment/{uuid}/services', [AppointmentController::class, 'addService']);
                 Route::delete('appointment-service/{uuid}', [AppointmentController::class, 'removeService']);
                 Route::post('appointment/{uuid}/packages', [AppointmentController::class, 'addPackage']);
                 Route::post('appointment/{uuid}/additional-services', [AppointmentServiceController::class, 'addAdditionalService']);
-                Route::post('appointment/{uuid}/queue', [AppointmentController::class, 'addToQueue'])->middleware('permission:queue_create');
                 Route::post('appointment/{uuid}/billing', [AppointmentController::class, 'proceedToBilling'])->middleware('permission:billing_create');
 
+                Route::get('appointment-service/{uuid}/therapist-options', [AppointmentServiceController::class, 'therapistOptions']);
                 Route::post('appointment-service/{uuid}/assignments', [AppointmentServiceController::class, 'assignTherapist']);
                 Route::delete('assignment/{uuid}', [AppointmentServiceController::class, 'cancelAssignment']);
                 Route::patch('assignment/{uuid}/room', [AppointmentServiceController::class, 'assignRoom']);
@@ -202,13 +247,32 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('appointment-service/{uuid}/complete', [AppointmentServiceController::class, 'completeService']);
 
                 Route::get('queue', [QueueController::class, 'index'])->middleware('permission:queue_view');
+                Route::post('appointment/{uuid}/queue/call', [AppointmentController::class, 'callQueue']);
+                Route::post('appointment/{uuid}/queue/skip', [AppointmentController::class, 'skipQueue']);
+                Route::post('appointment/{uuid}/queue/recall', [AppointmentController::class, 'recallQueue']);
 
+                Route::get('billings', [BillingController::class, 'index'])->middleware('permission:billing_view');
                 Route::get('billing/{uuid}', [BillingController::class, 'show'])->middleware('permission:billing_view');
                 Route::post('billing/{uuid}/payments', [PaymentController::class, 'store'])->middleware('permission:payment_create');
 
+                Route::get('frontoffice/dashboard', [FrontOfficeDashboardController::class, 'index']);
+
+                // Front Desk's narrow attendance surface — today only,
+                // check-in/check-out only (no arbitrary status/date). See
+                // FrontOfficeAttendanceService for why this is separate from
+                // the Manager/Owner attendance routes above rather than a
+                // relaxed role gate on those.
+                Route::get('frontoffice/attendance', [FrontOfficeAttendanceController::class, 'index'])->middleware('permission:attendance_view');
+                Route::post('frontoffice/attendance/check-in', [FrontOfficeAttendanceController::class, 'checkIn'])->middleware('permission:attendance_checkin');
+                Route::post('frontoffice/attendance/check-out', [FrontOfficeAttendanceController::class, 'checkOut'])->middleware('permission:attendance_checkin');
+
                 Route::get('frontoffice/therapists', [FrontOfficeLookupController::class, 'therapists']);
+                Route::get('frontoffice/therapists/{uuid}', [FrontOfficeLookupController::class, 'therapist']);
                 Route::get('frontoffice/facilities', [FrontOfficeLookupController::class, 'facilities']);
                 Route::get('frontoffice/services', [FrontOfficeLookupController::class, 'services']);
+                Route::get('frontoffice/packages', [FrontOfficeLookupController::class, 'packages']);
+                Route::get('frontoffice/schedule', [FrontOfficeLookupController::class, 'schedule']);
+                Route::get('frontoffice/booked-times', [FrontOfficeLookupController::class, 'busyTimes']);
             });
 
             Route::middleware('role:business_owner')->group(function () {

@@ -39,4 +39,16 @@ class AuditLogRepository
     {
         return AuditLog::with('user')->latest()->limit($limit)->get();
     }
+
+    // Full change history for one record (e.g. an attendance row's "History"
+    // section) — newest first, same limit-without-pagination shape as recent().
+    public function forRecord(string $tableName, int $recordId, int $limit = 20)
+    {
+        return AuditLog::with('user.staff')
+            ->where('table_name', $tableName)
+            ->where('record_id', $recordId)
+            ->latest()
+            ->limit($limit)
+            ->get();
+    }
 }

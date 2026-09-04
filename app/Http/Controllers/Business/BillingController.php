@@ -15,6 +15,12 @@ class BillingController extends Controller
         $this->appointmentService = $appointmentService;
     }
 
+    public function index(Request $request)
+    {
+        $filters = $request->only(['status', 'payment_method', 'date_from', 'date_to', 'search']);
+        return $this->appointmentService->listBillings($request->user(), $filters, $request->input('per_page', 15));
+    }
+
     public function show(Request $request, string $uuid)
     {
         return $this->appointmentService->getBilling($request->user(), $uuid);

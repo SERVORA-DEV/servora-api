@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Repository\Business\AppointmentServiceRepository;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 
@@ -44,6 +45,26 @@ class AppointmentServiceItem extends Model
             'discount_amount' => 'decimal:2',
             'subtotal' => 'decimal:2',
         ];
+    }
+
+    // Safety net, not the primary mechanism — every service-mutating method
+    // in AppointmentService already calls recalculateAppointmentTotals()
+    // explicitly (kept as-is; harmless if this also fires). This exists so
+    // the appointment header's subtotal/total_amount can never silently
+    // drift from its actual services again, regardless of which method (or
+    // a future one) touches a row — only individual model save()/delete()
+    // calls fire these events, not bulk query-builder ->update() (see
+    // AppointmentService::cancelAppointment(), which still needs its own
+    // explicit call for exactly that reason).
+    protected static function booted(): void
+    {
+        $recalculate = function (self $item) {
+            if ($item->appointment) {
+                app(AppointmentServiceRepository::class)->recalculateAppointmentTotals($item->appointment);
+            }
+        };
+        static::saved($recalculate);
+        static::deleted($recalculate);
     }
 
     public function uniqueIds()

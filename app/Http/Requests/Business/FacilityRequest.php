@@ -28,13 +28,20 @@ class FacilityRequest extends FormRequest
                     ->ignore($this->route('facility'), 'uuid'),
             ],
             'description' => 'nullable|string',
-            'type' => ['sometimes', Rule::in(['Room', 'Suite', 'Couples Room', 'VIP Room'])],
-            'capacity' => [$isCreate ? 'required' : 'sometimes', 'integer', 'min:1'],
-            'status' => ['sometimes', Rule::in(['Available', 'Occupied', 'Under Maintenance'])],
+            'category' => ['sometimes', Rule::in([
+                'Massage', 'Facial', 'Body Treatment', 'Hair', 'Nails', 'Waxing',
+                'Lash & Brow', 'Makeup', 'Couples', 'VIP', 'Wellness',
+            ])],
+            // 'Occupied' is computed live from active appointment
+            // assignments (see FacilityResource) — never accepted here.
+            'status' => ['sometimes', Rule::in(['Available', 'Maintenance'])],
             'is_available' => 'sometimes|boolean',
 
             'amenities' => 'sometimes|array',
             'amenities.*' => 'string|max:50',
+
+            'service_ids' => 'sometimes|array',
+            'service_ids.*' => 'uuid|exists:services,uuid',
 
             'spa_branch_uuid' => [$isCreate ? 'required' : 'sometimes', 'uuid', 'exists:spa_branches,uuid'],
         ];

@@ -15,6 +15,7 @@ class LookupServiceResource extends JsonResource
         return [
             'uuid' => $this->serviceVariant->uuid,
             'name' => $this->serviceVariant->service?->name,
+            'description' => $this->serviceVariant->service?->description,
             'duration_minutes' => $this->serviceVariant->duration_minutes,
             'price' => (float) ($this->custom_price ?? $this->serviceVariant->price),
         ];

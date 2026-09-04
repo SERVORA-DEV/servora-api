@@ -7,6 +7,7 @@ use App\Http\Requests\Business\AppointmentPackageRequest;
 use App\Http\Requests\Business\AppointmentRequest;
 use App\Http\Requests\Business\AppointmentServiceRequest;
 use App\Http\Requests\Business\CancelAppointmentRequest;
+use App\Http\Requests\Business\RescheduleAppointmentRequest;
 use App\Service\Business\AppointmentService;
 use Illuminate\Http\Request;
 
@@ -35,11 +36,6 @@ class AppointmentController extends Controller
         return $this->appointmentService->getAppointment($request->user(), $uuid);
     }
 
-    public function confirm(Request $request, string $uuid)
-    {
-        return $this->appointmentService->confirmAppointment($request->user(), $uuid);
-    }
-
     public function checkIn(Request $request, string $uuid)
     {
         return $this->appointmentService->checkIn($request->user(), $uuid);
@@ -55,6 +51,26 @@ class AppointmentController extends Controller
         return $this->appointmentService->markNoShow($request->user(), $uuid);
     }
 
+    public function callQueue(Request $request, string $uuid)
+    {
+        return $this->appointmentService->callQueue($request->user(), $uuid);
+    }
+
+    public function skipQueue(Request $request, string $uuid)
+    {
+        return $this->appointmentService->skipQueue($request->user(), $uuid);
+    }
+
+    public function recallQueue(Request $request, string $uuid)
+    {
+        return $this->appointmentService->recallQueue($request->user(), $uuid);
+    }
+
+    public function reschedule(RescheduleAppointmentRequest $request, string $uuid)
+    {
+        return $this->appointmentService->rescheduleAppointment($request->user(), $uuid, $request->validated());
+    }
+
     public function addService(AppointmentServiceRequest $request, string $uuid)
     {
         return $this->appointmentService->addService($request->user(), $uuid, $request->validated());
@@ -68,11 +84,6 @@ class AppointmentController extends Controller
     public function addPackage(AppointmentPackageRequest $request, string $uuid)
     {
         return $this->appointmentService->addPackage($request->user(), $uuid, $request->validated());
-    }
-
-    public function addToQueue(Request $request, string $uuid)
-    {
-        return $this->appointmentService->addToQueue($request->user(), $uuid);
     }
 
     public function proceedToBilling(Request $request, string $uuid)

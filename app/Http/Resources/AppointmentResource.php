@@ -2,7 +2,7 @@
 
 namespace App\Http\Resources;
 
-use App\Support\AppointmentEffectiveStatus;
+use App\Service\Business\AppointmentAvailabilityService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -18,9 +18,6 @@ class AppointmentResource extends JsonResource
             'appointment_type' => $this->appointment_type,
             'source' => $this->source,
             'status' => $this->status,
-            // Derived, not stored — see AppointmentEffectiveStatus. Requires
-            // `services` to be loaded (falls back to a lazy load otherwise).
-            'effective_status' => AppointmentEffectiveStatus::compute($this->resource),
             'check_in_at' => optional($this->check_in_at)->toIso8601String(),
             'completed_at' => optional($this->completed_at)->toIso8601String(),
             'cancelled_at' => optional($this->cancelled_at)->toIso8601String(),
@@ -29,6 +26,21 @@ class AppointmentResource extends JsonResource
             'subtotal' => (float) $this->subtotal,
             'discount_amount' => (float) $this->discount_amount,
             'total_amount' => (float) $this->total_amount,
+            // Reuses AppointmentAvailabilityService's own overlap-checking
+            // math (sum of non-cancelled services' variant durations) so
+            // this figure never drifts from what booking conflicts are
+            // actually checked against.
+            'total_duration_minutes' => $this->when(
+                $this->relationLoaded('services'),
+                fn () => app(AppointmentAvailabilityService::class)->estimatedDurationMinutes($this->resource)
+            ),
+            // Narrower sibling of total_duration_minutes — only services
+            // still Pending/In Progress, for "how much is actually left"
+            // displays (see AppointmentAvailabilityService::remainingDurationMinutes).
+            'remaining_duration_minutes' => $this->when(
+                $this->relationLoaded('services'),
+                fn () => app(AppointmentAvailabilityService::class)->remainingDurationMinutes($this->resource)
+            ),
 
             'client' => new ClientResource($this->whenLoaded('client')),
             'branch_uuid' => $this->whenLoaded('branch', fn () => $this->branch?->uuid),

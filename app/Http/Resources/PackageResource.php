@@ -48,6 +48,7 @@ class PackageResource extends JsonResource
                 'branch_name' => $bp->branch?->branch_name,
                 'is_available' => (bool) $bp->is_available,
                 'custom_price' => $bp->custom_price !== null ? (float) $bp->custom_price : null,
+                'custom_commission' => $bp->custom_commission !== null ? (float) $bp->custom_commission : null,
             ])),
 
             'created_at' => $this->created_at,

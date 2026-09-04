@@ -4,9 +4,9 @@ namespace App\Http\Requests\Business;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-// Validates POST /business/client (register a new client). Also reused as
-// the shape of the nested "client" object inside AppointmentRequest when
-// creating an appointment for a walk-in that doesn't exist yet.
+// Validates POST/PATCH /business/client (register/update a client). Also
+// reused as the shape of the nested "client" object inside AppointmentRequest
+// when creating an appointment for a walk-in that doesn't exist yet.
 // Deliberately minimal — clients only stores simple operational attributes;
 // an account holder's fuller profile lives on `users` instead (see
 // ClientResource's `account` block), so there's nothing to collect here
@@ -20,9 +20,11 @@ class ClientRequest extends FormRequest
 
     public function rules(): array
     {
+        $isCreate = $this->isMethod('post');
+
         return [
-            'first_name' => 'required|string|max:100',
-            'last_name' => 'required|string|max:100',
+            'first_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100'],
+            'last_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100'],
             'phone_number' => 'nullable|string|max:20',
             'email' => 'nullable|email|max:255',
             'notes' => 'nullable|string',

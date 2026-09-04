@@ -8,8 +8,8 @@ use Illuminate\Database\Eloquent\Model;
 // Front-desk queue ticket for an appointment — one-to-one (an appointment
 // only ever has one place in line at a time). spa_branch_id/appointment_date
 // are denormalized off the appointment at insert time (see
-// AppointmentService::addToQueue) so "today's queue for my branch" never
-// needs a join.
+// AppointmentService::addToQueueInternal) so "today's queue for my branch"
+// never needs a join.
 class Queue extends Model
 {
     use HasUuids;

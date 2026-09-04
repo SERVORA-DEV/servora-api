@@ -252,8 +252,7 @@ class UserService
         // every environment — mail is configured with a real Mailtrap
         // sandbox account, so the email actually sends; view it at
         // mailtrap.io and click the link.
-        // $verified = app()->environment('local');
-        $verified = false;
+        $verified = app()->environment('local');
 
         if ($verified) {
             $user->markEmailAsVerified();
@@ -289,8 +288,7 @@ class UserService
         // every environment — mail is configured with a real Mailtrap
         // sandbox account, so the email actually sends; view it at
         // mailtrap.io and click the link.
-        // $verified = app()->environment('local');
-        $verified = false;
+        $verified = app()->environment('local');
 
         if ($verified) {
             $user->markEmailAsVerified();

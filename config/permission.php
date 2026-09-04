@@ -71,14 +71,10 @@ return [
         'facility_delete',
 
         'client_view',
-        'client_create',
-        'client_update',
-        'client_delete',
 
         'appointment_view',
         'appointment_create',
         'appointment_update',
-        'appointment_confirm',
         'appointment_checkin',
         'appointment_complete',
         'appointment_cancel',
@@ -147,13 +143,11 @@ return [
         'facility_update',
 
         'client_view',
-        'client_create',
-        'client_update',
+        'client_therapist_manage',
 
         'appointment_view',
         'appointment_create',
         'appointment_update',
-        'appointment_confirm',
         'appointment_checkin',
         'appointment_complete',
         'appointment_cancel',
@@ -184,6 +178,9 @@ return [
     'front_officer' => [
         'dashboard_view',
 
+        'attendance_view',
+        'attendance_checkin',
+
         'queue_view',
         'queue_create',
         'queue_update',
@@ -191,10 +188,10 @@ return [
         'client_view',
         'client_create',
         'client_update',
+        'client_therapist_manage',
 
         'appointment_view',
         'appointment_create',
-        'appointment_confirm',
         'appointment_checkin',
 
         'billing_view',

@@ -24,6 +24,12 @@ class BranchAvailabilityRequest extends FormRequest
             'branches.*.branch_uuid' => 'required|uuid|exists:spa_branches,uuid',
             'branches.*.is_available' => 'required|boolean',
             'branches.*.custom_price' => 'nullable|numeric|min:0',
+            // Services-only override (parallels custom_price). Validated here
+            // regardless of caller since this request is shared with
+            // /business/package/{uuid}/branches — PackageService simply never
+            // reads this key, so it's a harmless no-op for packages even
+            // though the frontend sends it (as null) on that path too.
+            'branches.*.custom_commission' => 'nullable|numeric|min:0',
         ];
     }
 }

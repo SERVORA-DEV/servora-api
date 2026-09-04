@@ -31,6 +31,7 @@ class ServiceVariantResource extends JsonResource
                 'branch_name' => $bs->branch?->branch_name,
                 'is_available' => (bool) $bs->is_available,
                 'custom_price' => $bs->custom_price !== null ? (float) $bs->custom_price : null,
+                'custom_commission' => $bs->custom_commission !== null ? (float) $bs->custom_commission : null,
             ])),
         ];
     }

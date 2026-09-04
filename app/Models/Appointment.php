@@ -12,6 +12,57 @@ class Appointment extends Model
 
     protected $table = 'appointments';
 
+    public const STATUS_SCHEDULED = 'scheduled';
+    public const STATUS_CHECKED_IN = 'checked_in';
+    public const STATUS_IN_SERVICE = 'in_service';
+    public const STATUS_COMPLETED = 'completed';
+    public const STATUS_CANCELLED = 'cancelled';
+    public const STATUS_NO_SHOW = 'no_show';
+
+    public const STATUSES = [
+        self::STATUS_SCHEDULED,
+        self::STATUS_CHECKED_IN,
+        self::STATUS_IN_SERVICE,
+        self::STATUS_COMPLETED,
+        self::STATUS_CANCELLED,
+        self::STATUS_NO_SHOW,
+    ];
+
+    // Single source of truth for "what can this appointment become next" —
+    // mirrors the required workflow exactly: Scheduled -> Checked In -> In
+    // Service -> Completed, with Cancelled/No Show as the only alternate
+    // branches off Scheduled (Cancelled also reachable from Checked In, so
+    // a client who leaves before service starts can still be cancelled).
+    // Terminal states have no outgoing transitions. No client-confirmation
+    // status exists in this workflow at all.
+    public const ALLOWED_TRANSITIONS = [
+        self::STATUS_SCHEDULED => [self::STATUS_CHECKED_IN, self::STATUS_CANCELLED, self::STATUS_NO_SHOW],
+        self::STATUS_CHECKED_IN => [self::STATUS_IN_SERVICE, self::STATUS_CANCELLED],
+        self::STATUS_IN_SERVICE => [self::STATUS_COMPLETED],
+        self::STATUS_COMPLETED => [],
+        self::STATUS_CANCELLED => [],
+        self::STATUS_NO_SHOW => [],
+    ];
+
+    public function canTransitionTo(string $next): bool
+    {
+        return in_array($next, self::ALLOWED_TRANSITIONS[$this->status] ?? [], true);
+    }
+
+    // True once every service on the visit is done (Completed or
+    // Cancelled) — the appointment's own `status` column stays 'in_service'
+    // through this point and only becomes STATUS_COMPLETED after payment
+    // (see AppointmentService::recordPayment()), so this is the actual
+    // signal for "nothing left to do here but bill it." Mirrors the
+    // frontend's own `allServicesResolved` computed
+    // (app/pages/frontoffice/appointments/[uuid].vue) exactly — both sides
+    // must agree on this or the UI and the API guards it enforces drift.
+    public function allServicesResolved(): bool
+    {
+        return $this->services->isNotEmpty()
+            && $this->services->every(fn (AppointmentServiceItem $s) => in_array($s->status, ['Completed', 'Cancelled'], true));
+    }
+
     protected $fillable = [
         'uuid',
         'spa_branch_id',

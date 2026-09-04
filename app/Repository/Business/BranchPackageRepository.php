@@ -17,6 +17,16 @@ class BranchPackageRepository
             ->get();
     }
 
+    // Flat bookable-and-priced list for the front-office package picker —
+    // mirrors BranchServiceRepository::listBookableForBranches.
+    public function listBookableForBranches(array $spaBranchIds)
+    {
+        return BranchPackage::with('package')
+            ->whereIn('spa_branch_id', $spaBranchIds)
+            ->where('is_available', true)
+            ->get();
+    }
+
     // Wholesale-replace idiom (same as PackageService::syncPackageServices)
     // but upsert rather than delete+recreate — mirrors
     // BranchServiceRepository::syncForService.
@@ -25,7 +35,11 @@ class BranchPackageRepository
         foreach ($rows as $row) {
             BranchPackage::updateOrCreate(
                 ['package_id' => $packageId, 'spa_branch_id' => $row['spa_branch_id']],
-                ['is_available' => $row['is_available'], 'custom_price' => $row['custom_price'] ?? null]
+                [
+                    'is_available' => $row['is_available'],
+                    'custom_price' => $row['custom_price'] ?? null,
+                    'custom_commission' => $row['custom_commission'] ?? null,
+                ]
             );
         }
     }

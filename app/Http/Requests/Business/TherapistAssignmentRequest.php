@@ -14,10 +14,12 @@ class TherapistAssignmentRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'staff_uuid' => 'required|uuid|exists:staff,uuid',
-            // Optional — a therapist may be assigned before a room is
-            // picked (rule 7: room assignment is independent).
-            'facility_uuid' => 'nullable|uuid|exists:facilities,uuid',
+            // A therapist may be assigned before a room is picked, or a room
+            // reserved before a therapist is picked (rule 7: room and staff
+            // assignment are independent) — but at least one of the two must
+            // be present.
+            'staff_uuid' => 'nullable|required_without:facility_uuid|uuid|exists:staff,uuid',
+            'facility_uuid' => 'nullable|required_without:staff_uuid|uuid|exists:facilities,uuid',
         ];
     }
 }

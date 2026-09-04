@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Models\Service;
 use App\Models\User;
 use App\Repository\Business\FacilityRepository;
 use App\Repository\Business\SpaBranchRepository;
@@ -64,10 +65,18 @@ class FacilityService
 
         $payload['spa_branch_id'] = $branch->id;
         $payload['status'] = $payload['status'] ?? 'Available';
-        unset($payload['spa_branch_uuid']);
+        $serviceUuids = $payload['service_ids'] ?? null;
+        unset($payload['spa_branch_uuid'], $payload['service_ids']);
 
         $model = $this->facilityRepository->create($payload);
-        return new FacilityResource($model);
+        if ($serviceUuids !== null) {
+            $model->services()->sync(Service::whereIn('uuid', $serviceUuids)->pluck('id'));
+        }
+
+        // A brand-new room can't have any live assignments yet, so
+        // is_occupied is left unloaded here (falsy default) rather than
+        // paying for a withExists() query that can only ever come back false.
+        return new FacilityResource($model->load(['branch', 'services']));
     }
 
     public function getFacility(User $user, string $uuid)
@@ -101,10 +110,15 @@ class FacilityService
             $branch = $this->spaBranchRepository->findByUuidForBranches($payload['spa_branch_uuid'], $branchIds);
             $payload['spa_branch_id'] = $branch->id;
         }
-        unset($payload['spa_branch_uuid']);
+        $serviceUuids = $payload['service_ids'] ?? null;
+        unset($payload['spa_branch_uuid'], $payload['service_ids']);
 
         $model = $this->facilityRepository->update($uuid, $payload);
-        return new FacilityResource($model);
+        if ($serviceUuids !== null) {
+            $model->services()->sync(Service::whereIn('uuid', $serviceUuids)->pluck('id'));
+        }
+
+        return new FacilityResource($this->facilityRepository->findByUuidForBranches($uuid, $branchIds));
     }
 
     public function deleteFacility(User $user, string $uuid)

@@ -3,12 +3,13 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Client extends Model
 {
-    use HasUuids, SoftDeletes;
+    use HasFactory, HasUuids, SoftDeletes;
 
     protected $table = 'clients';
 
@@ -21,6 +22,7 @@ class Client extends Model
         'uuid',
         'spa_business_id',
         'user_id',
+        'preferred_staff_id',
         'first_name',
         'last_name',
         'phone_number',
@@ -51,6 +53,15 @@ class Client extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    // The standing "this client requests/favors this therapist" preference —
+    // distinct from the transient requested_therapist_uuid typed in at
+    // booking time (see AppointmentService::createAppointment), which is
+    // never persisted. Single therapist, not a favorites list.
+    public function preferredTherapist()
+    {
+        return $this->belongsTo(Staff::class, 'preferred_staff_id');
     }
 
     public function appointments()

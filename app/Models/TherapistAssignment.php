@@ -8,7 +8,10 @@ use Illuminate\Database\Eloquent\Model;
 // Which staff member (and which room) is handling one booked service. One
 // appointment_service can have many of these — this is what makes
 // multi-therapist-per-service possible. facility_id is nullable since a
-// therapist is typically assigned before a room is picked.
+// therapist is typically assigned before a room is picked, and staff_id is
+// nullable too — a room can be reserved for a service before any therapist
+// is picked ("room-only" row); see
+// TherapistAssignmentRepository::assignRoomOnly()/claim().
 class TherapistAssignment extends Model
 {
     use HasUuids;
