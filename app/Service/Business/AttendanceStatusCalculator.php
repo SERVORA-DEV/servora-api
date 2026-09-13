@@ -73,7 +73,11 @@ class AttendanceStatusCalculator
         // schedule exists for this date.
         if ($checkIn) {
             $lateMinutes = null;
-            $status = 'Present';
+            // A Front Desk fill-in check-in (no matching StaffSchedule row —
+            // see FrontOfficeAttendanceService::checkIn) is stored as 'Fill
+            // In' and must pass through as-is; every other stored status
+            // here is recomputed fresh from the check-in fact.
+            $status = $storedStatus === 'Fill In' ? 'Fill In' : 'Present';
 
             if ($scheduledStart && $checkIn->gt($scheduledStart->copy()->addMinutes(self::LATE_GRACE_MINUTES))) {
                 $lateMinutes = (int) $scheduledStart->diffInMinutes($checkIn);
@@ -106,6 +110,15 @@ class AttendanceStatusCalculator
         }
 
         return $this->result(null, null, null, $scheduledStart, $scheduledEnd, $isDayOff, false, false);
+    }
+
+    // Exposes matchSchedule() to callers that only need a yes/no answer —
+    // FrontOfficeAttendanceService::checkIn uses this to decide 'Present'
+    // vs. 'Fill In' with the exact same matching rule the roster read path
+    // already uses to label a row "No Schedule Today".
+    public function hasScheduleForDate(Collection $staffSchedules, string $date): bool
+    {
+        return $this->matchSchedule($staffSchedules, $date) !== null;
     }
 
     private function matchSchedule(Collection $staffSchedules, string $date): ?StaffSchedule

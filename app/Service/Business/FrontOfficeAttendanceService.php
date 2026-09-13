@@ -125,12 +125,18 @@ class FrontOfficeAttendanceService
         $existing = Attendance::where('staff_id', $staff->id)->where('attendance_date', $date)->first();
         $oldValues = $existing?->only(self::AUDIT_FIELDS);
 
+        // No matching StaffSchedule row today (the same "No Schedule Today"
+        // case the roster read path labels via AttendanceStatusCalculator)
+        // means this is an unscheduled fill-in covering for another
+        // therapist, not a normal scheduled shift.
+        $hasSchedule = $this->statusCalculator->hasScheduleForDate($staff->schedules, $date);
+
         // Only status/check_in_at/created_by/updated_by are set — an
         // existing check_out_at or remarks (unlikely this early, but
         // possible if a manager already touched today's row) are left
         // untouched by upsert()'s fill() semantics.
         $model = $this->attendanceRepository->upsert($staff->id, $date, [
-            'status' => 'Present',
+            'status' => $hasSchedule ? 'Present' : 'Fill In',
             'check_in_at' => now(),
             'created_by' => $existing?->created_by ?? $user->id,
             'updated_by' => $user->id,

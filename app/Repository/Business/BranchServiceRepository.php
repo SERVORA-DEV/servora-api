@@ -28,6 +28,11 @@ class BranchServiceRepository
         return BranchService::with('serviceVariant.service')
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->where('is_available', true)
+            // A branch's own is_available never overrides its parent
+            // Service being deactivated — see ServiceVariantResource for why
+            // this gate lives only in the real bookability query and not in
+            // the branches[] read the "Branch Availability" edit modal uses.
+            ->whereHas('serviceVariant.service', fn ($q) => $q->where('is_active', true))
             ->get();
     }
 

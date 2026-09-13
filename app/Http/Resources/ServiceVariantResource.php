@@ -20,7 +20,11 @@ class ServiceVariantResource extends JsonResource
             'price' => (float) $this->price,
             'commission_amount' => $this->commission_amount !== null ? (float) $this->commission_amount : null,
             'loyalty_points' => $this->loyalty_points !== null ? (int) $this->loyalty_points : null,
-            'is_active' => (bool) $this->is_active,
+            // Not the variant's own concept — a variant is just a duration/
+            // price option of its Service, so its status always mirrors the
+            // parent's is_active (see ServiceResource, which sets this
+            // relation on every variant it loads to avoid an N+1 query here).
+            'is_active' => (bool) $this->service->is_active,
 
             // Per-branch availability/price override — scoped to the
             // requesting user's own accessible branches by the repository's

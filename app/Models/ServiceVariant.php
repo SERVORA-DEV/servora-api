@@ -22,7 +22,6 @@ class ServiceVariant extends Model
         'price',
         'commission_amount',
         'loyalty_points',
-        'is_active',
     ];
 
     protected function casts(): array
@@ -30,7 +29,6 @@ class ServiceVariant extends Model
         return [
             'price' => 'decimal:2',
             'commission_amount' => 'decimal:2',
-            'is_active' => 'boolean',
         ];
     }
 

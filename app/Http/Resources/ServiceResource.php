@@ -27,7 +27,15 @@ class ServiceResource extends JsonResource
             // Each bookable duration/price/commission/points option — see
             // ServiceVariantResource. Always loaded by the repository
             // (unlike its nested `branches`, which stays optional).
-            'variants' => $this->whenLoaded('variants', fn () => ServiceVariantResource::collection($this->variants)),
+            //
+            // setRelation short-circuits ServiceVariantResource's
+            // `$this->service->is_active` lookup to the Service instance
+            // already in hand here, instead of one lazy-loaded query per
+            // variant.
+            'variants' => $this->whenLoaded('variants', function () {
+                $this->variants->each(fn ($variant) => $variant->setRelation('service', $this->resource));
+                return ServiceVariantResource::collection($this->variants);
+            }),
 
             'created_at' => $this->created_at,
         ];

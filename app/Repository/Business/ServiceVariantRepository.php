@@ -25,7 +25,6 @@ class ServiceVariantRepository
                 'price' => $row['price'],
                 'commission_amount' => $row['commission_amount'] ?? null,
                 'loyalty_points' => $row['loyalty_points'] ?? null,
-                'is_active' => $row['is_active'] ?? true,
             ];
 
             if (! empty($row['uuid']) && $existing->has($row['uuid'])) {
@@ -51,7 +50,10 @@ class ServiceVariantRepository
 
     public function findByUuidForBusiness(string $uuid, int $spaBusinessId, ?array $branchIds = null)
     {
-        $query = ServiceVariant::where('uuid', $uuid)
+        // Eager-loaded (not just filtered by whereHas) since
+        // ServiceVariantResource now reads is_active off this relation.
+        $query = ServiceVariant::with('service')
+            ->where('uuid', $uuid)
             ->whereHas('service', fn ($q) => $q->where('spa_business_id', $spaBusinessId));
 
         if ($branchIds !== null) {
