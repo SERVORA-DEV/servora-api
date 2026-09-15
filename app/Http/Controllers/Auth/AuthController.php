@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\ForgetPasswordRequest;
+use App\Http\Requests\Auth\ResendRegistrationOtpRequest;
 use App\Http\Requests\Auth\ResetPasswordRequest;
 use App\Http\Requests\Auth\VerifyPasswordResetOtpRequest;
+use App\Http\Requests\Auth\VerifyRegistrationOtpRequest;
 use App\Service\UserService;
 use Illuminate\Http\Request;
 
@@ -46,5 +48,15 @@ class AuthController extends Controller
     public function resetPassword(ResetPasswordRequest $request)
     {
         return $this->userService->resetPassword($request->validated());
+    }
+
+    public function verifyRegistrationOtp(VerifyRegistrationOtpRequest $request)
+    {
+        return $this->userService->verifyRegistrationOtp($request->validated());
+    }
+
+    public function resendRegistrationOtp(ResendRegistrationOtpRequest $request)
+    {
+        return $this->userService->resendRegistrationOtp($request->validated());
     }
 }

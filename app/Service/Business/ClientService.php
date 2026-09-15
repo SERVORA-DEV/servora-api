@@ -136,4 +136,41 @@ class ClientService
 
         return $this->clientRepository->create($payload);
     }
+
+    // Mobile self-booking: resolves the business-scoped client record for a
+    // logged-in client user. Prefers a row already linked to this user, then
+    // links a front-desk-created row matching their phone/email (so walk-in
+    // history carries over), and only creates a new row as a last resort.
+    // Like findOrCreate, an existing row's name/phone is never overwritten.
+    public function findOrCreateForUser(int $spaBusinessId, User $user, array $details)
+    {
+        $linked = $this->clientRepository->findForUser($spaBusinessId, $user->id);
+        if ($linked) {
+            return $linked;
+        }
+
+        $existing = $this->clientRepository->findByContact(
+            $spaBusinessId,
+            $details['phone_number'] ?? null,
+            $user->email,
+        );
+
+        if ($existing) {
+            if (! $existing->user_id) {
+                $existing->update(['user_id' => $user->id]);
+            }
+
+            return $existing;
+        }
+
+        return $this->clientRepository->create([
+            'spa_business_id' => $spaBusinessId,
+            'user_id' => $user->id,
+            'first_name' => $details['first_name'],
+            'last_name' => $details['last_name'],
+            'phone_number' => $details['phone_number'] ?? null,
+            'email' => $user->email,
+            'is_active' => true,
+        ]);
+    }
 }

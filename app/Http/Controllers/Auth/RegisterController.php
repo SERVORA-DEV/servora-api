@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Service\UserService;
 use App\Http\Requests\Auth\RegisterRequest;
+use App\Http\Requests\Auth\RegisterClientRequest;
 
 class RegisterController extends Controller
 {
@@ -21,7 +22,7 @@ class RegisterController extends Controller
         return $this->userService->registerBusinessUser($request->all());
     }
 
-    public function registerClient(RegisterRequest $request)
+    public function registerClient(RegisterClientRequest $request)
     {
         return $this->userService->registerClientUser($request->validated());
     }

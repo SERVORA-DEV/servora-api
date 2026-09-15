@@ -8,6 +8,8 @@ use App\Repository\SpaBusinessRepository;
 use App\Repository\System\AdminUsersRepository;
 use App\Repository\AuditLogRepository;
 use App\Http\Resources\SpaBranchResource;
+use App\Http\Resources\NearbySpaResource;
+use App\Http\Resources\BranchDetailResource;
 use App\Service\NotificationService;
 use App\Services\DocumentUploadService;
 use App\Services\ImageUploadService;
@@ -40,6 +42,32 @@ class SpaBranchService
         $this->notificationService = $notificationService;
         $this->imageUploadService = $imageUploadService;
         $this->documentUploadService = $documentUploadService;
+    }
+
+    // Backs GET /spas/nearby — public, no auth. radiusKm/limit are clamped
+    // rather than trusted as-is so a caller can't force an unbounded scan
+    // (e.g. radius_km=999999) via query params.
+    public function nearby(float $lat, float $lng, ?float $radiusKm, ?int $limit)
+    {
+        $radiusKm = min(max($radiusKm ?? 15, 1), 100);
+        $limit = min(max($limit ?? 20, 1), 50);
+
+        $branches = $this->spaBranchRepository->nearby($lat, $lng, $radiusKm, $limit);
+        return NearbySpaResource::collection($branches);
+    }
+
+    // Backs GET /spas/{uuid} — public, no auth. publicFindByUuid() 404s for
+    // anything not Verified+Active before we ever look up its services/
+    // packages/therapists.
+    public function publicShow(string $uuid)
+    {
+        $branch = $this->spaBranchRepository->publicFindByUuid($uuid);
+
+        $services = $this->spaBranchRepository->publicServicesForBranch($branch->id);
+        $packages = $this->spaBranchRepository->publicPackagesForBranch($branch->id);
+        $therapists = $this->spaBranchRepository->publicTherapistsForBranch($branch->id);
+
+        return new BranchDetailResource($branch, $services, $packages, $therapists);
     }
 
     // Scoped to what this user can see — every branch for business_owner,

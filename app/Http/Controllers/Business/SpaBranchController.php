@@ -25,6 +25,32 @@ class SpaBranchController extends Controller
         return $this->spaBranchService->listSpaBranch($request->user(), $request->input('per_page', 15));
     }
 
+    // Public, unauthenticated — see routes/api.php and NearbySpaResource.
+    public function nearby(Request $request)
+    {
+        $validated = $request->validate([
+            'lat' => 'required|numeric|between:-90,90',
+            'lng' => 'required|numeric|between:-180,180',
+            'radius_km' => 'nullable|numeric|min:1|max:100',
+            'limit' => 'nullable|integer|min:1|max:50',
+        ]);
+
+        return $this->spaBranchService->nearby(
+            (float) $validated['lat'],
+            (float) $validated['lng'],
+            isset($validated['radius_km']) ? (float) $validated['radius_km'] : null,
+            isset($validated['limit']) ? (int) $validated['limit'] : null,
+        );
+    }
+
+    // Public, unauthenticated — see routes/api.php (must stay registered
+    // after 'nearby' so this {uuid} wildcard doesn't shadow it) and
+    // BranchDetailResource for what's exposed here.
+    public function publicShow(string $uuid)
+    {
+        return $this->spaBranchService->publicShow($uuid);
+    }
+
     public function store(SpaBranchRequest $request)
     {
         return $this->spaBranchService->createSpaBranch($request->user(), $request->validated());

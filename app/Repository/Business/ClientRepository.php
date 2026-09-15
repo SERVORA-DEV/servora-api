@@ -59,6 +59,13 @@ class ClientRepository
         return $model->load('preferredTherapist');
     }
 
+    public function findForUser(int $spaBusinessId, int $userId)
+    {
+        return Client::where('spa_business_id', $spaBusinessId)
+            ->where('user_id', $userId)
+            ->first();
+    }
+
     // Dedup check before creating a new client — matched on phone or email,
     // whichever is provided, scoped to the business (rule: never duplicate
     // client records). See ClientService::findOrCreate.

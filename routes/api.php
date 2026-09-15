@@ -37,6 +37,7 @@ use App\Http\Controllers\Business\PaymentController;
 use App\Http\Controllers\Business\FrontOfficeLookupController;
 use App\Http\Controllers\Business\FrontOfficeDashboardController;
 use App\Http\Controllers\Business\FrontOfficeAttendanceController;
+use App\Http\Controllers\Client\ClientAppointmentController;
 
 // authentication part
 Route::post('/auth/login', [AuthController::class, 'login']);
@@ -45,6 +46,10 @@ Route::post('/auth/forget-password', [AuthController::class, 'forgetPassword']);
 Route::post('/auth/forget-password/verify-otp', [AuthController::class, 'verifyForgetPasswordOtp']);
 Route::post('/auth/reset-password', [AuthController::class, 'resetPassword']);
 Route::post('/auth/resend-verification', [EmailVerificationController::class, 'resend'])
+    ->middleware('throttle:6,1');
+Route::post('/auth/verify-registration-otp', [AuthController::class, 'verifyRegistrationOtp'])
+    ->middleware('throttle:10,1');
+Route::post('/auth/resend-registration-otp', [AuthController::class, 'resendRegistrationOtp'])
     ->middleware('throttle:6,1');
 Route::post('/business/administrator/register', [RegisterController::class, 'register']);
 
@@ -57,6 +62,15 @@ Route::get('/active-subscription-plans', [SubscriptionPlanController::class, 'di
 // for what's exposed here).
 Route::get('/business/{uuid}/public', [SpaBusinessController::class, 'publicShow']);
 
+// Public, unauthenticated "spas near me" lookup for the client mobile app's
+// Home screen — see NearbySpaResource for what's exposed here.
+Route::get('/spas/nearby', [SpaBranchController::class, 'nearby']);
+
+// Public, unauthenticated branch detail lookup — must stay registered
+// AFTER /spas/nearby above, otherwise this {uuid} wildcard would shadow it.
+// See BranchDetailResource for what's exposed here.
+Route::get('/spas/{uuid}', [SpaBranchController::class, 'publicShow']);
+
 
 // Private verification documents (government ID front/back, face-scan
 // frames, business registration document) are served directly by
@@ -68,6 +82,13 @@ Route::get('/business/{uuid}/public', [SpaBusinessController::class, 'publicShow
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/auth/me', [AuthController::class, 'getUser']);
     Route::delete('/auth/logout', [AuthController::class, 'logout']);
+
+    // mobile client (end customer) routes
+    Route::prefix('client')
+        ->middleware('role:client')
+        ->group(function () {
+            Route::post('appointments', [ClientAppointmentController::class, 'store']);
+        });
 
 
     // system administrator access route

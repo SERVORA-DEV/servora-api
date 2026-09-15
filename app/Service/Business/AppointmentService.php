@@ -191,17 +191,7 @@ class AppointmentService
                 $service = $this->addServiceInternal($appointment, $branch->id, $item, null, $index + 1);
 
                 if (! empty($payload['requested_therapist_uuid'])) {
-                    $staff = $this->resolveStaffForBranch($payload['requested_therapist_uuid'], $branch->id);
-
-                    if (! $staff) {
-                        $warnings[] = 'Requested therapist not found or inactive at this branch.';
-                    } else {
-                        $service->load('serviceVariant');
-                        $result = $this->assignTherapistInternal($service, $appointment, $staff);
-                        if (! $result['ok']) {
-                            $warnings[] = $result['reason'];
-                        }
-                    }
+                    $this->applyRequestedTherapist($appointment, $branch->id, $service, $payload['requested_therapist_uuid'], $warnings);
                 }
             }
 
@@ -212,6 +202,79 @@ class AppointmentService
             }
 
             $resource = new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));
+
+            return $warnings ? $resource->additional(['warnings' => $warnings]) : $resource;
+        });
+    }
+
+    // Mobile self-booking by a logged-in client (role=client). Unlike
+    // createAppointment(), the branch comes from the public branch uuid (not
+    // a staff user's own branches), the client record is the caller's own
+    // (see ClientService::findOrCreateForUser), and the type/source/status
+    // are fixed server-side — nothing price- or workflow-related is taken
+    // from the request. Same branch-hours gate and requested-therapist
+    // warning behaviour as the front-desk path.
+    public function createClientAppointment(User $user, array $payload)
+    {
+        $branch = $this->spaBranchRepository->publicFindByUuid($payload['spa_branch_uuid']);
+
+        $startsAt = Carbon::parse("{$payload['appointment_date']} {$payload['appointment_time']}");
+        if ($startsAt->lt(now())) {
+            return response()->json(['message' => 'Please choose a future time.'], 422);
+        }
+
+        $scheduleCheck = $this->availabilityService->branchIsOpen($branch->id, $payload['appointment_date'], $payload['appointment_time']);
+        if (! $scheduleCheck['ok']) {
+            return response()->json(['message' => $scheduleCheck['reason']], 422);
+        }
+
+        return DB::transaction(function () use ($user, $branch, $payload) {
+            $client = $this->clientService->findOrCreateForUser($branch->spa_business_id, $user, $payload['client']);
+
+            $appointment = $this->appointmentRepository->create([
+                'spa_branch_id' => $branch->id,
+                'client_id' => $client->id,
+                'appointment_number' => $this->appointmentRepository->generateAppointmentNumber(),
+                'appointment_date' => $payload['appointment_date'],
+                'appointment_time' => $payload['appointment_time'],
+                'appointment_type' => 'Reservation',
+                'source' => 'Mobile',
+                'status' => Appointment::STATUS_SCHEDULED,
+                'remarks' => $payload['remarks'] ?? null,
+            ]);
+
+            $serviceItems = [];
+
+            foreach (array_values($payload['services'] ?? []) as $index => $item) {
+                $serviceItems[] = $this->addServiceInternal(
+                    $appointment,
+                    $branch->id,
+                    ['service_variant_uuid' => $item['service_variant_uuid']],
+                    null,
+                    $index + 1,
+                );
+            }
+
+            if (! empty($payload['package_uuid'])) {
+                $appointmentPackage = $this->addPackageInternal($appointment, $branch->spa_business_id, $payload['package_uuid'], 1);
+                $serviceItems = array_merge(
+                    $serviceItems,
+                    $appointment->services()->where('source_appointment_package_id', $appointmentPackage->id)->get()->all(),
+                );
+            }
+
+            $warnings = [];
+
+            if (! empty($payload['requested_therapist_uuid'])) {
+                foreach ($serviceItems as $service) {
+                    $this->applyRequestedTherapist($appointment, $branch->id, $service, $payload['requested_therapist_uuid'], $warnings);
+                }
+            }
+
+            $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
+
+            $resource = new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));
+            $warnings = array_values(array_unique($warnings));
 
             return $warnings ? $resource->additional(['warnings' => $warnings]) : $resource;
         });
@@ -542,60 +605,7 @@ class AppointmentService
                 return response()->json(['message' => 'All services are completed — proceed to billing instead of adding more packages.'], 422);
             }
 
-            $package = Package::where('uuid', $payload['package_uuid'])
-                ->where('spa_business_id', $business->id)
-                ->with('packageServiceItems.serviceVariant')
-                ->firstOrFail();
-
-            $branchPackage = BranchPackage::where('package_id', $package->id)
-                ->where('spa_branch_id', $appointment->spa_branch_id)
-                ->where('is_available', true)
-                ->first();
-
-            if (! $branchPackage) {
-                return response()->json(['message' => 'This package is not available at this branch.'], 422);
-            }
-
-            $quantity = $payload['quantity'] ?? 1;
-            $price = (float) ($branchPackage->custom_price ?? $package->default_price);
-
-            $appointmentPackage = AppointmentPackage::create([
-                'appointment_id' => $appointment->id,
-                'package_id' => $package->id,
-                'quantity' => $quantity,
-                'unit_price' => $price,
-                'subtotal' => $price * $quantity,
-            ]);
-
-            $nextSort = (int) ($appointment->services()->max('sort_order') ?? 0);
-
-            foreach ($package->packageServiceItems as $index => $item) {
-                $variant = $item->serviceVariant;
-
-                // A package's component may not itself be individually sold
-                // standalone at this branch — fall back to the variant's own
-                // price so the package can still be exploded/billed
-                // correctly; that's a separate concern from this branch's
-                // own bookability.
-                $branchService = BranchService::where('service_variant_id', $variant->id)
-                    ->where('spa_branch_id', $appointment->spa_branch_id)
-                    ->where('is_available', true)
-                    ->first();
-
-                $componentPrice = (float) ($branchService?->custom_price ?? $variant->price);
-                $componentQty = ($item->quantity ?? 1) * $quantity;
-
-                $this->appointmentServiceRepository->create([
-                    'appointment_id' => $appointment->id,
-                    'source_appointment_package_id' => $appointmentPackage->id,
-                    'service_variant_id' => $variant->id,
-                    'quantity' => $componentQty,
-                    'sort_order' => $nextSort + $index + 1,
-                    'unit_price' => $componentPrice,
-                    'subtotal' => $componentPrice * $componentQty,
-                    'points_earned' => ($variant->loyalty_points ?? 0) * $componentQty,
-                ]);
-            }
+            $this->addPackageInternal($appointment, $business->id, $payload['package_uuid'], $payload['quantity'] ?? 1);
 
             $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
 
@@ -1141,6 +1151,87 @@ class AppointmentService
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────
+
+    // Aborts the surrounding transaction (422) if the package isn't bookable
+    // at the appointment's branch — same hard-integrity stance as
+    // addServiceInternal(). See addPackage() for why packages explode into
+    // per-component service lines.
+    private function addPackageInternal(Appointment $appointment, int $businessId, string $packageUuid, int $quantity): AppointmentPackage
+    {
+        $package = Package::where('uuid', $packageUuid)
+            ->where('spa_business_id', $businessId)
+            ->with('packageServiceItems.serviceVariant')
+            ->firstOrFail();
+
+        $branchPackage = BranchPackage::where('package_id', $package->id)
+            ->where('spa_branch_id', $appointment->spa_branch_id)
+            ->where('is_available', true)
+            ->first();
+
+        if (! $branchPackage) {
+            abort(422, 'This package is not available at this branch.');
+        }
+
+        $price = (float) ($branchPackage->custom_price ?? $package->default_price);
+
+        $appointmentPackage = AppointmentPackage::create([
+            'appointment_id' => $appointment->id,
+            'package_id' => $package->id,
+            'quantity' => $quantity,
+            'unit_price' => $price,
+            'subtotal' => $price * $quantity,
+        ]);
+
+        $nextSort = (int) ($appointment->services()->max('sort_order') ?? 0);
+
+        foreach ($package->packageServiceItems as $index => $item) {
+            $variant = $item->serviceVariant;
+
+            // A package's component may not itself be individually sold
+            // standalone at this branch — fall back to the variant's own
+            // price so the package can still be exploded/billed
+            // correctly; that's a separate concern from this branch's
+            // own bookability.
+            $branchService = BranchService::where('service_variant_id', $variant->id)
+                ->where('spa_branch_id', $appointment->spa_branch_id)
+                ->where('is_available', true)
+                ->first();
+
+            $componentPrice = (float) ($branchService?->custom_price ?? $variant->price);
+            $componentQty = ($item->quantity ?? 1) * $quantity;
+
+            $this->appointmentServiceRepository->create([
+                'appointment_id' => $appointment->id,
+                'source_appointment_package_id' => $appointmentPackage->id,
+                'service_variant_id' => $variant->id,
+                'quantity' => $componentQty,
+                'sort_order' => $nextSort + $index + 1,
+                'unit_price' => $componentPrice,
+                'subtotal' => $componentPrice * $componentQty,
+                'points_earned' => ($variant->loyalty_points ?? 0) * $componentQty,
+            ]);
+        }
+
+        return $appointmentPackage;
+    }
+
+    // A failed requested-therapist assignment never fails the booking — it's
+    // collected as a warning instead (see createAppointment()'s doc comment).
+    private function applyRequestedTherapist(Appointment $appointment, int $branchId, AppointmentServiceItem $service, string $staffUuid, array &$warnings): void
+    {
+        $staff = $this->resolveStaffForBranch($staffUuid, $branchId);
+
+        if (! $staff) {
+            $warnings[] = 'Requested therapist not found or inactive at this branch.';
+            return;
+        }
+
+        $service->load('serviceVariant');
+        $result = $this->assignTherapistInternal($service, $appointment, $staff);
+        if (! $result['ok']) {
+            $warnings[] = $result['reason'];
+        }
+    }
 
     private function resolveStaffForBranch(string $staffUuid, int $branchId): ?Staff
     {

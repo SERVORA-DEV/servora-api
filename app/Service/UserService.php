@@ -4,6 +4,7 @@ namespace App\Service;
 
 use App\Http\Resources\UserResource;
 use App\Mail\PasswordResetOtpMail;
+use App\Mail\RegistrationOtpMail;
 use App\Repository\UserRepository;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -276,34 +277,124 @@ class UserService
 
     public function registerClientUser(array $payload)
     {
-        $payload['role'] = 'client';
+        $existing = $this->userRepository->findByField('email', $payload['email']);
 
-        // No permission grant here (unlike registerBusinessUser) — client
-        // isn't a key in config/permission.php, and clients don't manage a
-        // business — so a single create() call needs no transaction wrapper.
-        $user = $this->userRepository->create($payload);
-
-        // Local dev previously auto-verified accounts instantly to skip email
-        // delivery. Commented out so verification behaves identically in
-        // every environment — mail is configured with a real Mailtrap
-        // sandbox account, so the email actually sends; view it at
-        // mailtrap.io and click the link.
-        $verified = app()->environment('local');
-
-        if ($verified) {
-            $user->markEmailAsVerified();
-            $user->account_status = 'Active';
-            $user->save();
+        if ($existing) {
+            // RegisterClientRequest only lets a duplicate email through when
+            // the existing account is still unverified, so reaching here
+            // means this is a resend (their first OTP expired or never
+            // arrived), not a real collision — refresh their password and
+            // issue a fresh code for the same pending account instead of
+            // creating a duplicate.
+            $user = $this->userRepository->update($existing, [
+                'password' => $payload['password'],
+            ]);
         } else {
-            $user->sendEmailVerificationNotification();
+            $user = $this->userRepository->create(array_merge($payload, ['role' => 'client']));
         }
+
+        // Client (mobile) registration always requires OTP email
+        // verification, in every environment — unlike registerBusinessUser,
+        // there is no local-env auto-verify shortcut here: the mobile app
+        // has a real OTP screen that needs a real code to test against.
+        $this->issueRegistrationOtp($user);
 
         return response()->json([
             'success' => true,
-            'verified' => $verified,
-            'message' => $verified
-                ? 'Registration successful. You can sign in now.'
-                : 'Registration successful. Please check your email to verify your account.',
+            'message' => 'Registration successful. Please check your email for a verification code.',
         ], 201);
+    }
+
+    public function resendRegistrationOtp(array $payload)
+    {
+        $user = $this->userRepository->findByField('email', $payload['email']);
+
+        if (! $user) {
+            return response()->json([
+                'message' => 'No account found with this email.'
+            ], 404);
+        }
+
+        if ($user->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'Email already verified. You can log in now.'
+            ], 200);
+        }
+
+        $this->issueRegistrationOtp($user);
+
+        return response()->json([
+            'message' => 'A new verification code has been sent to your email.'
+        ], 200);
+    }
+
+    /**
+     * Generates a fresh 6-digit code, stores its hash (overwriting any
+     * previous one for this email), and emails it — shared by
+     * registerClientUser (first send) and resendRegistrationOtp (resend),
+     * so there's exactly one place that issues a registration OTP.
+     */
+    private function issueRegistrationOtp(\App\Models\User $user): void
+    {
+        $otp = (string) random_int(100000, 999999);
+
+        DB::table('email_verification_otps')->updateOrInsert(
+            ['email' => $user->email],
+            [
+                'otp' => Hash::make($otp),
+                'created_at' => now(),
+            ]
+        );
+
+        Mail::to($user->email)->send(new RegistrationOtpMail($otp, self::OTP_EXPIRY_MINUTES));
+    }
+
+    public function verifyRegistrationOtp(array $payload)
+    {
+        $user = $this->userRepository->findByField('email', $payload['email']);
+
+        if (! $user) {
+            return response()->json([
+                'message' => 'No account found with this email.'
+            ], 404);
+        }
+
+        if ($user->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'Email already verified. You can log in now.'
+            ], 200);
+        }
+
+        $record = DB::table('email_verification_otps')->where('email', $user->email)->first();
+
+        if (! $record) {
+            return response()->json([
+                'message' => 'No verification request found for this email.'
+            ], 404);
+        }
+
+        if (Carbon::parse($record->created_at)->addMinutes(self::OTP_EXPIRY_MINUTES)->isPast()) {
+            DB::table('email_verification_otps')->where('email', $user->email)->delete();
+
+            return response()->json([
+                'message' => 'This code has expired. Please register again to receive a new one.'
+            ], 410);
+        }
+
+        if (! Hash::check($payload['otp'], $record->otp)) {
+            return response()->json([
+                'message' => 'Invalid code.'
+            ], 422);
+        }
+
+        $user->markEmailAsVerified();
+        $user->account_status = 'Active';
+        $user->save();
+
+        DB::table('email_verification_otps')->where('email', $user->email)->delete();
+
+        return response()->json([
+            'message' => 'Email verified successfully. You can now log in.'
+        ], 200);
     }
 }
