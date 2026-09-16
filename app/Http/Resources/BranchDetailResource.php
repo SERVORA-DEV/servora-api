@@ -15,7 +15,9 @@ use Illuminate\Http\Resources\Json\JsonResource;
 // Verified+Active $branch (with 'business' and 'schedules' eager-loaded)
 // plus the separately-queried $services/$packages/$therapists collections,
 // since those need their own availability filtering the branch model alone
-// doesn't express.
+// doesn't express. $services arrives as flat BranchService rows (one per
+// variant per branch) and is grouped by parent service here — see the
+// 'services' key below.
 class BranchDetailResource extends JsonResource
 {
     public function __construct(
@@ -46,12 +48,44 @@ class BranchDetailResource extends JsonResource
 
             'hours' => BranchHoursCalculator::resolve($this->schedules, Carbon::now()),
 
-            'services' => $this->services->map(fn ($bs) => [
-                'service_variant_uuid' => $bs->serviceVariant->uuid,
-                'name' => $bs->serviceVariant->service->name,
-                'duration_minutes' => $bs->serviceVariant->duration_minutes,
-                'price' => (float) ($bs->custom_price ?? $bs->serviceVariant->price),
-            ])->values(),
+            // One entry per parent Service, with its bookable durations nested
+            // underneath — the mobile app renders a single card per service with
+            // a duration dropdown, not one card per duration.
+            //
+            // Grouped from the branch_services rows rather than walking
+            // $service->variants: a business can switch an individual variant off
+            // for one branch (BranchService.is_available), so the relation would
+            // advertise durations this branch doesn't actually offer. Same reason
+            // custom_price is still read per row.
+            'services' => $this->services
+                ->filter(fn ($bs) => $bs->serviceVariant?->service !== null)
+                ->groupBy(fn ($bs) => $bs->serviceVariant->service_id)
+                ->map(function ($rows) {
+                    $service = $rows->first()->serviceVariant->service;
+
+                    return [
+                        'service_uuid' => $service->uuid,
+                        'name' => $service->name,
+                        'description' => $service->description,
+                        // Ascending by duration: that is the axis the app's
+                        // dropdown labels, and sorting by price instead would let
+                        // a custom_price override reorder it in a way that reads
+                        // as a bug.
+                        'variants' => $rows
+                            ->sortBy(fn ($bs) => $bs->serviceVariant->duration_minutes)
+                            ->map(fn ($bs) => [
+                                'service_variant_uuid' => $bs->serviceVariant->uuid,
+                                'duration_minutes' => (int) $bs->serviceVariant->duration_minutes,
+                                'price' => (float) ($bs->custom_price ?? $bs->serviceVariant->price),
+                            ])
+                            ->values(),
+                    ];
+                })
+                ->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)
+                // Load-bearing: groupBy keys by service_id and map/sortBy preserve
+                // keys, so without this the JSON encodes as an object instead of
+                // an array and the client parses no services at all.
+                ->values(),
 
             'packages' => $this->packages->map(fn ($bp) => [
                 'package_uuid' => $bp->package->uuid,

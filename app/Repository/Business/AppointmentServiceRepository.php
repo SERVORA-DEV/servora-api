@@ -48,8 +48,13 @@ class AppointmentServiceRepository
         $services = $appointment->services()->where('status', '!=', 'Cancelled')->get();
         $packages = $appointment->packages()->where('status', '!=', 'Cancelled')->get();
 
-        $subtotal = $services->sum('subtotal') + $packages->sum('subtotal');
-        $discount = $services->sum('discount_amount') + $packages->sum('discount_amount');
+        // Package-exploded lines exist for execution (therapist/room per
+        // component) — the package row's own price is what's charged, so
+        // counting both would bill a package twice.
+        $standaloneServices = $services->whereNull('source_appointment_package_id');
+
+        $subtotal = $standaloneServices->sum('subtotal') + $packages->sum('subtotal');
+        $discount = $standaloneServices->sum('discount_amount') + $packages->sum('discount_amount');
 
         $appointment->update([
             'subtotal' => $subtotal,

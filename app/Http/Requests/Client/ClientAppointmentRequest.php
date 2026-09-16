@@ -34,6 +34,19 @@ class ClientAppointmentRequest extends FormRequest
         ];
     }
 
+    // Shown to the mobile user as-is, so avoid dotted field paths like
+    // "client.phone number" in validation messages.
+    public function attributes(): array
+    {
+        return [
+            'client.first_name' => 'first name',
+            'client.last_name' => 'last name',
+            'client.phone_number' => 'mobile number',
+            'appointment_date' => 'date',
+            'appointment_time' => 'time',
+        ];
+    }
+
     public function messages(): array
     {
         return [

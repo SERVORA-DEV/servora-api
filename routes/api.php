@@ -38,6 +38,7 @@ use App\Http\Controllers\Business\FrontOfficeLookupController;
 use App\Http\Controllers\Business\FrontOfficeDashboardController;
 use App\Http\Controllers\Business\FrontOfficeAttendanceController;
 use App\Http\Controllers\Client\ClientAppointmentController;
+use App\Http\Controllers\Client\ClientProfileController;
 
 // authentication part
 Route::post('/auth/login', [AuthController::class, 'login']);
@@ -87,6 +88,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('client')
         ->middleware('role:client')
         ->group(function () {
+            Route::patch('profile', [ClientProfileController::class, 'update']);
             Route::post('appointments', [ClientAppointmentController::class, 'store']);
         });
 
