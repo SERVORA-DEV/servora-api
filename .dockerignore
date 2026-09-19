@@ -1,0 +1,42 @@
+# Anything not needed to build or serve the app. `COPY . .` would otherwise
+# bake local secrets (.env), a stale vendor/ built against the host's PHP,
+# and the whole git history into the image.
+.env
+.env.*
+!.env.example
+
+.git
+.gitattributes
+.gitignore
+.github
+
+vendor
+node_modules
+public/build
+public/hot
+public/storage
+
+storage/logs/*
+storage/framework/cache/data/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/app/public/*
+storage/app/private/*
+!storage/**/.gitignore
+
+tests
+phpunit.xml
+.phpunit.result.cache
+.phpunit.cache
+servora_test
+
+*.md
+!README.md
+.editorconfig
+.idea
+.vscode
+.fleet
+.zed
+Dockerfile
+.dockerignore
+render.yaml

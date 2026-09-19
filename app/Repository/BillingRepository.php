@@ -98,11 +98,14 @@ class BillingRepository
             ->when($filters['payment_method'] ?? null, fn ($q, $method) => $q->whereHas('payments', fn ($p) => $p->where('payment_method', $method)))
             ->when($filters['date_from'] ?? null, fn ($q, $date) => $q->whereDate('issued_at', '>=', $date))
             ->when($filters['date_to'] ?? null, fn ($q, $date) => $q->whereDate('issued_at', '<=', $date))
+            // whereLike, not where(..., 'like', ...): it defaults to
+            // case-insensitive and compiles to ilike on PostgreSQL, where a
+            // plain LIKE would make "ana cruz" stop matching "Ana Cruz".
             ->when($filters['search'] ?? null, fn ($q, $search) => $q->where(fn ($qq) => $qq
-                ->where('billing_number', 'like', "%{$search}%")
-                ->orWhereHas('appointment', fn ($a) => $a->where('appointment_number', 'like', "%{$search}%"))
-                ->orWhereHas('appointment.client', fn ($c) => $c->where('first_name', 'like', "%{$search}%")
-                    ->orWhere('last_name', 'like', "%{$search}%"))))
+                ->whereLike('billing_number', "%{$search}%")
+                ->orWhereHas('appointment', fn ($a) => $a->whereLike('appointment_number', "%{$search}%"))
+                ->orWhereHas('appointment.client', fn ($c) => $c->whereLike('first_name', "%{$search}%")
+                    ->orWhereLike('last_name', "%{$search}%"))))
             ->orderByDesc('issued_at')
             ->paginate($perPage);
     }

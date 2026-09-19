@@ -46,7 +46,11 @@ return [
             'username' => env('MAIL_USERNAME'),
             'password' => env('MAIL_PASSWORD'),
             'encryption' => env('MAIL_ENCRYPTION'),
-            'timeout' => null,
+            // Capped rather than left open-ended: the Flutter client gives up
+            // after 12s (auth_api.dart), so an SMTP connection that hangs past
+            // that leaves the app showing a timeout while the request is still
+            // running. 10s keeps the failure catchable in UserService::deliver().
+            'timeout' => env('MAIL_TIMEOUT', 10),
             'local_domain' => env('MAIL_EHLO_DOMAIN', parse_url((string) env('APP_URL', 'http://localhost'), PHP_URL_HOST)),
         ],
 

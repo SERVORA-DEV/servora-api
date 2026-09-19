@@ -1,0 +1,110 @@
+# Render Blueprint. Import with Render Dashboard -> New -> Blueprint, then
+# fill in every value marked `sync: false` (Render prompts for them once and
+# stores them as secrets — they are never committed here).
+services:
+  - type: web
+    name: servora-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    # Match this to the Supabase project's region — every request makes at
+    # least one round trip to Postgres, so cross-region adds latency to all
+    # of them.
+    region: singapore
+    # Registered by bootstrap/app.php's `health: '/up'` routing option.
+    healthCheckPath: /up
+    envVars:
+      - key: APP_NAME
+        value: Servora
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: false
+      # php artisan key:generate --show, then paste. Do NOT reuse the key
+      # that was previously committed to .env.example.
+      - key: APP_KEY
+        sync: false
+      # https://<this service>.onrender.com — signed email-verification URLs
+      # are generated against it, so a wrong value silently breaks them.
+      - key: APP_URL
+        sync: false
+
+      # Render captures stdout/stderr. The default `stack`/`single` channel
+      # writes into storage/logs on a filesystem that dies with the instance.
+      - key: LOG_CHANNEL
+        value: stderr
+      - key: LOG_LEVEL
+        value: warning
+
+      # Supabase: Dashboard -> Connect -> Session pooler (port 5432).
+      # Not the direct db.<ref>.supabase.co host (IPv6-only without the paid
+      # IPv4 add-on) and not port 6543 (transaction mode has no prepared
+      # statement support, which PDO relies on).
+      - key: DB_CONNECTION
+        value: pgsql
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: 5432
+      - key: DB_DATABASE
+        value: postgres
+      # Dotted form: postgres.<project-ref>
+      - key: DB_USERNAME
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_SSLMODE
+        value: require
+
+      # Both DB-backed on purpose: Render's disk is ephemeral, and
+      # SubscriptionService caches a pending-business reference for a day
+      # that must survive a restart.
+      - key: CACHE_STORE
+        value: database
+      - key: SESSION_DRIVER
+        value: database
+      - key: QUEUE_CONNECTION
+        value: sync
+
+      # cloudinary://<api_key>:<api_secret>@<cloud_name>
+      - key: CLOUDINARY_URL
+        sync: false
+      - key: UPLOAD_MAX_SIZE_KB
+        value: 5120
+      - key: UPLOAD_DOCUMENT_MAX_SIZE_KB
+        value: 8192
+
+      - key: XENDIT_SECRET_KEY
+        sync: false
+      - key: XENDIT_BASE_URL
+        value: https://api.xendit.co
+      - key: XENDIT_WEBHOOK_TOKEN
+        sync: false
+
+      # Drives config/cors.php's allow-list and the post-verification
+      # redirect in bootstrap/app.php.
+      - key: FRONTEND_URL
+        sync: false
+
+      # Gmail SMTP. NOTE: Render's free tier blocks outbound ports 25/465/587,
+      # so this needs a paid instance or an HTTP-API provider. See DEPLOYMENT.md.
+      - key: MAIL_MAILER
+        value: smtp
+      - key: MAIL_HOST
+        value: smtp.gmail.com
+      - key: MAIL_PORT
+        value: 587
+      - key: MAIL_SCHEME
+        value: smtp
+      # The sending Gmail address; MAIL_FROM_ADDRESS must match it exactly.
+      - key: MAIL_USERNAME
+        sync: false
+      # 16-character App Password, no spaces.
+      - key: MAIL_PASSWORD
+        sync: false
+      - key: MAIL_FROM_ADDRESS
+        sync: false
+      - key: MAIL_FROM_NAME
+        value: Servora
+      - key: MAIL_TIMEOUT
+        value: 10

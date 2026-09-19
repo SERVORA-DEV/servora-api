@@ -140,10 +140,10 @@ return new class extends Migration
             $table->dropColumn('service_id');
         });
 
-        // ->change() hits the same doctrine/dbal-dependent legacy path as
-        // renameColumn on MariaDB — a raw MODIFY sidesteps it. Safe to run
-        // after the data pass above already populated every row.
-        DB::statement('ALTER TABLE branch_services MODIFY service_variant_id BIGINT UNSIGNED NOT NULL');
+        // Safe to run now that the data pass above has populated every row.
+        Schema::table('branch_services', function (Blueprint $table) {
+            $table->unsignedBigInteger('service_variant_id')->nullable(false)->change();
+        });
     }
 
     private function retargetPackageServices(): void
@@ -175,7 +175,9 @@ return new class extends Migration
             $table->dropColumn('service_id');
         });
 
-        DB::statement('ALTER TABLE package_services MODIFY service_variant_id BIGINT UNSIGNED NOT NULL');
+        Schema::table('package_services', function (Blueprint $table) {
+            $table->unsignedBigInteger('service_variant_id')->nullable(false)->change();
+        });
     }
 
     private function dropVariantColumnsFromServices(): void
@@ -202,8 +204,8 @@ return new class extends Migration
         // Same "keep a spa_branch_id-prefixed index in place at all times"
         // ordering as up() — the new (spa_branch_id, service_id) unique goes
         // in before the old (spa_branch_id, service_variant_id) one is
-        // dropped, or MariaDB refuses the drop as still needed by the
-        // spa_branch_id FK.
+        // dropped, so the spa_branch_id FK never loses its supporting
+        // index.
         Schema::table('branch_services', function (Blueprint $table) {
             $table->dropForeign(['service_variant_id']);
         });
@@ -211,7 +213,9 @@ return new class extends Migration
             $table->unsignedBigInteger('service_id')->nullable()->after('service_variant_id');
         });
         DB::statement('UPDATE branch_services SET service_id = service_variant_id');
-        DB::statement('ALTER TABLE branch_services MODIFY service_id BIGINT UNSIGNED NOT NULL');
+        Schema::table('branch_services', function (Blueprint $table) {
+            $table->unsignedBigInteger('service_id')->nullable(false)->change();
+        });
         // FK to services is deliberately not restored here — the copied
         // service_id values are former service_variants.id values, which
         // won't validate against services.id. Best-effort structural
@@ -233,7 +237,9 @@ return new class extends Migration
             $table->unsignedBigInteger('service_id')->nullable()->after('service_variant_id');
         });
         DB::statement('UPDATE package_services SET service_id = service_variant_id');
-        DB::statement('ALTER TABLE package_services MODIFY service_id BIGINT UNSIGNED NOT NULL');
+        Schema::table('package_services', function (Blueprint $table) {
+            $table->unsignedBigInteger('service_id')->nullable(false)->change();
+        });
         Schema::table('package_services', function (Blueprint $table) {
             $table->unique(['package_id', 'service_id']);
         });

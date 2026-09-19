@@ -73,8 +73,10 @@ return [
     |
     */
 
-    'links' => [
-        public_path('storage') => storage_path('app/public'),
-    ],
+    // Empty on purpose: every uploaded asset lives in Cloudinary (see
+    // App\Services\ImageUploadService / DocumentUploadService), so nothing
+    // is ever served out of storage/app/public and `storage:link` has
+    // nothing to wire up.
+    'links' => [],
 
 ];

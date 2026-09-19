@@ -11,10 +11,11 @@
 | so a treatment and the room it's performed in speak one vocabulary and can
 | be matched to each other later.
 |
-| Kept here rather than as a DB enum: the facilities column is a raw MySQL
-| "ALTER TABLE ... MODIFY ... ENUM", which is exactly why several existing
-| migrations can't run against the SQLite test suite. services.category is a
-| plain string validated with Rule::in(config('service_categories')), so
+| Kept here rather than as a DB enum: an enum column on PostgreSQL is a
+| varchar behind a CHECK constraint, so widening one means a migration that
+| drops and re-adds that constraint (see App\Support\PostgresSchema, and
+| the facilities.category column it maintains). services.category is a plain
+| string validated with Rule::in(config('service_categories')) instead, so
 | adding a category is a one-line change here with no migration at all.
 |
 | Mirrored on the web app in app/utils/service-categories.ts — keep the two

@@ -70,15 +70,15 @@ class ImageUploadService
 
     /**
      * Builds the public Cloudinary CDN URL for the given public_id — no
-     * signing needed, these assets are public by design. Static (and builds
-     * its own lightweight Cloudinary instance rather than using DI) so API
-     * Resources, which aren't container-resolved, can call it directly —
-     * same reasoning this method already used for Storage::disk() before
-     * the Cloudinary switch.
+     * signing needed, these assets are public by design, and it resolves
+     * locally without an API call. Static so API Resources, which aren't
+     * container-resolved, can call it directly; it pulls the shared instance
+     * out of the container rather than constructing its own so it can't
+     * drift from the credentials everything else is using.
      */
     public static function url(?string $publicId): ?string
     {
-        return $publicId ? (string) (new Cloudinary())->image($publicId)->toUrl() : null;
+        return $publicId ? (string) app(Cloudinary::class)->image($publicId)->toUrl() : null;
     }
 
     /**

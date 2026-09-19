@@ -17,7 +17,10 @@ return [
     |
     */
 
-    'default' => env('DB_CONNECTION', 'sqlite'),
+    // pgsql, not Laravel's stock 'sqlite' fallback: this app runs on
+    // PostgreSQL everywhere (Supabase in production, a local Postgres in
+    // development) and several migrations emit Postgres-specific DDL.
+    'default' => env('DB_CONNECTION', 'pgsql'),
 
     /*
     |--------------------------------------------------------------------------

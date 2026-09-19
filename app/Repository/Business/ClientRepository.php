@@ -3,6 +3,7 @@
 namespace App\Repository\Business;
 
 use App\Models\Client;
+use Illuminate\Support\Facades\DB;
 
 class ClientRepository
 {
@@ -15,12 +16,15 @@ class ClientRepository
             ->where('spa_business_id', $spaBusinessId)
             ->where('is_active', true)
             ->when($query, function ($q) use ($query) {
+                // whereLike, not where(..., 'like', ...): it defaults to
+                // case-insensitive and compiles to ilike on PostgreSQL, where
+                // a plain LIKE would make "maria" stop matching "Maria".
                 $q->where(function ($inner) use ($query) {
-                    $inner->where('first_name', 'like', "%{$query}%")
-                        ->orWhere('last_name', 'like', "%{$query}%")
-                        ->orWhere('phone_number', 'like', "%{$query}%")
-                        ->orWhere('email', 'like', "%{$query}%")
-                        ->orWhereRaw("CONCAT(first_name, ' ', last_name) like ?", ["%{$query}%"]);
+                    $inner->whereLike('first_name', "%{$query}%")
+                        ->orWhereLike('last_name', "%{$query}%")
+                        ->orWhereLike('phone_number', "%{$query}%")
+                        ->orWhereLike('email', "%{$query}%")
+                        ->orWhereLike(DB::raw("concat(first_name, ' ', last_name)"), "%{$query}%");
                 });
             })
             ->orderBy('first_name')

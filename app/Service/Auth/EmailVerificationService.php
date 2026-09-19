@@ -6,6 +6,7 @@ use App\Http\Resources\UserResource;
 use App\Repository\UserRepository;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Log;
 
 class EmailVerificationService
 {
@@ -58,7 +59,21 @@ class EmailVerificationService
             ]);
         }
 
-        $user->sendEmailVerificationNotification();
+        // An explicit user request for an email, so a failed send is reported
+        // rather than papered over — see UserService::resendRegistrationOtp
+        // for the same reasoning on the OTP side.
+        try {
+            $user->sendEmailVerificationNotification();
+        } catch (\Throwable $e) {
+            Log::error('Failed to resend email verification link', [
+                'email' => $user->email,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'We could not send the verification email right now. Please try again in a moment.'
+            ], 503);
+        }
 
         return response()->json([
             'message' => 'Verification email sent. Please check your inbox.'

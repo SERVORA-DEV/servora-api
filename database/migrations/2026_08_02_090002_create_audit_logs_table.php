@@ -57,8 +57,8 @@ return new class extends Migration
                 'Deactivate',
             ]);
 
-            $table->json('old_values')->nullable();
-            $table->json('new_values')->nullable();
+            $table->jsonb('old_values')->nullable();
+            $table->jsonb('new_values')->nullable();
 
             $table->string('ip_address', 45)->nullable();
             $table->text('user_agent')->nullable();

@@ -33,7 +33,7 @@ return new class extends Migration
             // Free-form tags (e.g. "Shower", "Sound System") — small enough
             // per room that a json column is simpler than a join table, same
             // reasoning as amenities lists elsewhere in the app.
-            $table->json('amenities')->nullable();
+            $table->jsonb('amenities')->nullable();
 
             $table->timestamps();
             $table->softDeletes();

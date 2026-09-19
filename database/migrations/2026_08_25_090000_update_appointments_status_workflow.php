@@ -1,5 +1,6 @@
 <?php
 
+use App\Support\PostgresSchema;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 
@@ -9,16 +10,15 @@ return new class extends Migration
     // appointment status workflow and gives "in service" a real stored
     // status instead of the derived checked_in_in_service label that used
     // to live in AppointmentEffectiveStatus. Widen -> backfill -> narrow so
-    // existing rows survive the enum swap (MySQL can't alter an enum's
-    // values and its data in one statement).
+    // existing rows survive the enum swap: the new CHECK constraint can only
+    // go on once every row already holds one of the new labels.
     public function up(): void
     {
-        // MySQL rejects an ENUM definition with two labels that differ only
-        // by case (e.g. 'Completed' and 'completed' as separate members) as
-        // a "duplicated value" — widen through a plain VARCHAR instead of a
-        // combined old+new ENUM so the case-only-different old/new labels
-        // can coexist during the backfill.
-        DB::statement('ALTER TABLE appointments MODIFY status VARCHAR(20) NOT NULL DEFAULT \'scheduled\'');
+        // Drop the CHECK entirely for the backfill rather than widening it to
+        // the union of both value sets: the old and new labels differ only by
+        // case ('Completed' vs 'completed'), so an unconstrained varchar is
+        // the clearer way to let them coexist for the few statements below.
+        PostgresSchema::relaxEnum('appointments', 'status', default: 'scheduled', length: 20);
 
         DB::table('appointments')->whereIn('status', ['Pending', 'Confirmed'])->update(['status' => 'scheduled']);
 
@@ -38,12 +38,14 @@ return new class extends Migration
         DB::table('appointments')->where('status', 'Cancelled')->update(['status' => 'cancelled']);
         DB::table('appointments')->where('status', 'No Show')->update(['status' => 'no_show']);
 
-        DB::statement("ALTER TABLE appointments MODIFY status ENUM('scheduled','checked_in','in_service','completed','cancelled','no_show') NOT NULL DEFAULT 'scheduled'");
+        PostgresSchema::redefineEnum('appointments', 'status', [
+            'scheduled', 'checked_in', 'in_service', 'completed', 'cancelled', 'no_show',
+        ], default: 'scheduled');
     }
 
     public function down(): void
     {
-        DB::statement('ALTER TABLE appointments MODIFY status VARCHAR(20) NOT NULL DEFAULT \'Pending\'');
+        PostgresSchema::relaxEnum('appointments', 'status', default: 'Pending', length: 20);
 
         DB::table('appointments')->where('status', 'scheduled')->update(['status' => 'Pending']);
         // in_service has no pre-existing counterpart — collapses back into
@@ -54,6 +56,8 @@ return new class extends Migration
         DB::table('appointments')->where('status', 'cancelled')->update(['status' => 'Cancelled']);
         DB::table('appointments')->where('status', 'no_show')->update(['status' => 'No Show']);
 
-        DB::statement("ALTER TABLE appointments MODIFY status ENUM('Pending','Confirmed','Checked In','Completed','Cancelled','No Show') NOT NULL DEFAULT 'Pending'");
+        PostgresSchema::redefineEnum('appointments', 'status', [
+            'Pending', 'Confirmed', 'Checked In', 'Completed', 'Cancelled', 'No Show',
+        ], default: 'Pending');
     }
 };

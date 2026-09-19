@@ -1,5 +1,6 @@
 <?php
 
+use App\Support\PostgresSchema;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -7,6 +8,8 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
+    private const STATUSES = ['Unregistered', 'Pending', 'Verified', 'Rejected', 'Suspended'];
+
     public function up(): void
     {
         Schema::table('spa_businesses', function (Blueprint $table) {
@@ -45,17 +48,13 @@ return new class extends Migration
         //
         // Done in two steps: widen the enum while it's still nullable and
         // backfill existing NULL rows first, THEN tighten to NOT NULL
-        // DEFAULT — doing it in one ALTER fails under strict SQL mode
-        // (existing NULL rows can't be coerced into a NOT NULL column in
-        // the same statement that adds the constraint).
-        DB::statement("ALTER TABLE spa_businesses MODIFY verification_status
-            ENUM('Unregistered','Pending','Verified','Rejected','Suspended') NULL");
+        // DEFAULT — SET NOT NULL is rejected outright while any row in the
+        // column is still NULL, so the backfill has to land in between.
+        PostgresSchema::redefineEnum('spa_businesses', 'verification_status', self::STATUSES, nullable: true);
 
         DB::table('spa_businesses')->whereNull('verification_status')->update(['verification_status' => 'Unregistered']);
 
-        DB::statement("ALTER TABLE spa_businesses MODIFY verification_status
-            ENUM('Unregistered','Pending','Verified','Rejected','Suspended')
-            NOT NULL DEFAULT 'Unregistered'");
+        PostgresSchema::redefineEnum('spa_businesses', 'verification_status', self::STATUSES, default: 'Unregistered');
     }
 
     public function down(): void
@@ -72,7 +71,11 @@ return new class extends Migration
             ]);
         });
 
-        DB::statement("ALTER TABLE spa_businesses MODIFY verification_status
-            ENUM('Pending','Verified','Rejected','Suspended') NULL");
+        PostgresSchema::redefineEnum(
+            'spa_businesses',
+            'verification_status',
+            ['Pending', 'Verified', 'Rejected', 'Suspended'],
+            nullable: true,
+        );
     }
 };

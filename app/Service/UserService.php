@@ -7,8 +7,10 @@ use App\Mail\PasswordResetOtpMail;
 use App\Mail\RegistrationOtpMail;
 use App\Repository\UserRepository;
 use Carbon\Carbon;
+use Illuminate\Mail\Mailable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Illuminate\Http\JsonResponse;
@@ -141,7 +143,17 @@ class UserService
             ]
         );
 
-        Mail::to($user->email)->send(new PasswordResetOtpMail($otp, self::OTP_EXPIRY_MINUTES));
+        $sent = $this->deliver(
+            $user->email,
+            new PasswordResetOtpMail($otp, self::OTP_EXPIRY_MINUTES),
+            'password reset OTP',
+        );
+
+        if (! $sent) {
+            return response()->json([
+                'message' => 'We could not send the reset code right now. Please try again in a moment.'
+            ], 503);
+        }
 
         return response()->json([
             'message' => 'A one-time password has been sent to your email.'
@@ -248,30 +260,37 @@ class UserService
             return $user;
         });
 
-        // Local dev previously auto-verified accounts instantly to skip email
-        // delivery. Commented out so verification behaves identically in
-        // every environment — mail is configured with a real Mailtrap
-        // sandbox account, so the email actually sends; view it at
-        // mailtrap.io and click the link.
-        $verified = app()->environment('local');
+        // Local dev used to auto-verify owner accounts to skip email delivery,
+        // which meant the verification link was never exercised anywhere.
+        // Mail now goes out over real Gmail SMTP, so verification behaves
+        // identically in every environment and the link gets tested by use.
+        //
+        // Same reasoning as deliver(): the user and their permission rows are
+        // already committed, so a failed send must not become a 500.
+        // /auth/resend-verification is the recovery path.
+        $sent = true;
 
-        if ($verified) {
-            $user->markEmailAsVerified();
-            $user->account_status = 'Active';
-            $user->save();
-        } else {
+        try {
             $user->sendEmailVerificationNotification();
+        } catch (\Throwable $e) {
+            $sent = false;
+
+            Log::error('Failed to send email verification link', [
+                'email' => $user->email,
+                'exception' => $e->getMessage(),
+            ]);
         }
 
         return response()->json([
             'success' => true,
             // Explicit flag rather than making the frontend pattern-match the
             // message string — see RegisterForm.vue, which branches its
-            // success screen on this.
-            'verified' => $verified,
-            'message' => $verified
-                ? 'Registration successful. You can sign in now.'
-                : 'Registration successful. Please check your email to verify your account.',
+            // success screen on this. Always false now that nothing
+            // auto-verifies; kept so that contract doesn't change.
+            'verified' => false,
+            'message' => $sent
+                ? 'Registration successful. Please check your email to verify your account.'
+                : 'Registration successful, but we could not send your verification email. Please use the resend option to try again.',
         ], 201);
     }
 
@@ -297,11 +316,18 @@ class UserService
         // verification, in every environment — unlike registerBusinessUser,
         // there is no local-env auto-verify shortcut here: the mobile app
         // has a real OTP screen that needs a real code to test against.
-        $this->issueRegistrationOtp($user);
+        $sent = $this->issueRegistrationOtp($user);
 
+        // Always 201, even when the email didn't go out: the account row is
+        // already committed, and the mobile app treats anything other than
+        // 201 as a hard signup failure (auth_api.dart), which would strand
+        // the user on an account they can't get back to. The resend endpoint
+        // is the recovery path, so the message points at it.
         return response()->json([
             'success' => true,
-            'message' => 'Registration successful. Please check your email for a verification code.',
+            'message' => $sent
+                ? 'Registration successful. Please check your email for a verification code.'
+                : 'Registration successful, but we could not send your verification code. Please tap Resend to try again.',
         ], 201);
     }
 
@@ -321,7 +347,14 @@ class UserService
             ], 200);
         }
 
-        $this->issueRegistrationOtp($user);
+        if (! $this->issueRegistrationOtp($user)) {
+            // Unlike registration, this is the user explicitly asking for an
+            // email — reporting success when nothing was sent just makes them
+            // wait for a code that will never arrive.
+            return response()->json([
+                'message' => 'We could not send the code right now. Please try again in a moment.'
+            ], 503);
+        }
 
         return response()->json([
             'message' => 'A new verification code has been sent to your email.'
@@ -334,7 +367,7 @@ class UserService
      * registerClientUser (first send) and resendRegistrationOtp (resend),
      * so there's exactly one place that issues a registration OTP.
      */
-    private function issueRegistrationOtp(\App\Models\User $user): void
+    private function issueRegistrationOtp(\App\Models\User $user): bool
     {
         $otp = (string) random_int(100000, 999999);
 
@@ -346,7 +379,41 @@ class UserService
             ]
         );
 
-        Mail::to($user->email)->send(new RegistrationOtpMail($otp, self::OTP_EXPIRY_MINUTES));
+        // The row is written before the send and left in place even if the
+        // send fails, so a code that did go out (slow SMTP, delayed inbox)
+        // still verifies. Callers decide how to surface a failed send.
+        return $this->deliver(
+            $user->email,
+            new RegistrationOtpMail($otp, self::OTP_EXPIRY_MINUTES),
+            'registration OTP',
+        );
+    }
+
+    /**
+     * Single place every outbound mail goes through. SMTP is a network call
+     * to a third party that can fail for reasons that have nothing to do with
+     * the caller — a wrong app password, Gmail's daily cap, a dropped
+     * connection — and none of those should surface as a 500 on a request
+     * whose database work already succeeded.
+     *
+     * Never logs the mailable's contents: these carry live OTPs, and
+     * storage/logs is not where those belong.
+     */
+    private function deliver(string $email, Mailable $mail, string $context): bool
+    {
+        try {
+            Mail::to($email)->send($mail);
+
+            return true;
+        } catch (\Throwable $e) {
+            Log::error("Failed to send {$context} email", [
+                'email' => $email,
+                'mailable' => $mail::class,
+                'exception' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
     }
 
     public function verifyRegistrationOtp(array $payload)

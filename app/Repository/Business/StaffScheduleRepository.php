@@ -3,6 +3,7 @@
 namespace App\Repository\Business;
 
 use App\Models\StaffSchedule;
+use App\Support\DayOfWeek;
 
 // Only ever touches "current" rows — effective_from/effective_until left
 // NULL, per StaffScheduleService's decision to not build a versioning UI yet.
@@ -14,7 +15,7 @@ class StaffScheduleRepository
         return StaffSchedule::where('staff_id', $staffId)
             ->whereNull('effective_from')
             ->whereNull('effective_until')
-            ->orderByRaw("FIELD(day_of_week, 'Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday')")
+            ->orderByRaw(DayOfWeek::calendarOrder(), DayOfWeek::ORDER)
             ->get();
     }
 

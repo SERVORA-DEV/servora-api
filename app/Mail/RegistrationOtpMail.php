@@ -3,11 +3,13 @@
 namespace App\Mail;
 
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
 use Illuminate\Queue\SerializesModels;
 
-class RegistrationOtpMail extends Mailable implements ShouldQueue
+// Deliberately NOT ShouldQueue: there is no queue worker, and with
+// QUEUE_CONNECTION=sync a queued mailable runs inline anyway. Sending
+// directly keeps the SMTP failure where UserService::deliver() can catch it.
+class RegistrationOtpMail extends Mailable
 {
     use Queueable, SerializesModels;
 

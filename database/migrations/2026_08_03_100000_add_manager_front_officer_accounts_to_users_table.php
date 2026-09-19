@@ -1,8 +1,8 @@
 <?php
 
+use App\Support\PostgresSchema;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -28,8 +28,7 @@ return new class extends Migration
 
     public function up(): void
     {
-        $values = implode(',', array_map(fn ($v) => "'{$v}'", $this->newRoles));
-        DB::statement("ALTER TABLE users MODIFY role ENUM({$values}) NOT NULL");
+        PostgresSchema::redefineEnum('users', 'role', $this->newRoles);
 
         Schema::table('users', function (Blueprint $table) {
             // Which branch this Manager/Front Officer account works at —
@@ -55,7 +54,6 @@ return new class extends Migration
             $table->dropColumn('spa_branch_id');
         });
 
-        $values = implode(',', array_map(fn ($v) => "'{$v}'", $this->oldRoles));
-        DB::statement("ALTER TABLE users MODIFY role ENUM({$values}) NOT NULL");
+        PostgresSchema::redefineEnum('users', 'role', $this->oldRoles);
     }
 };

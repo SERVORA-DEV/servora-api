@@ -3,13 +3,8 @@
 namespace App\Repository\Business;
 
 use App\Models\BranchSchedule;
+use App\Support\DayOfWeek;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
-
-// Day order matches BranchSchedule's day_of_week enum — used to sort a
-// branch's week into calendar order rather than insertion/creation order.
-const DAY_OF_WEEK_ORDER = [
-    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
-];
 
 class BranchScheduleRepository
 {
@@ -24,7 +19,7 @@ class BranchScheduleRepository
     public function allForBranch(int $spaBranchId)
     {
         return BranchSchedule::where('spa_branch_id', $spaBranchId)
-            ->orderByRaw('FIELD(day_of_week, "' . implode('","', DAY_OF_WEEK_ORDER) . '")')
+            ->orderByRaw(DayOfWeek::calendarOrder(), DayOfWeek::ORDER)
             ->get();
     }
 

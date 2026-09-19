@@ -1,7 +1,7 @@
 <?php
 
+use App\Support\PostgresSchema;
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
@@ -35,13 +35,11 @@ return new class extends Migration
 
     public function up(): void
     {
-        $values = implode(',', array_map(fn ($v) => "'{$v}'", $this->newActions));
-        DB::statement("ALTER TABLE audit_logs MODIFY action ENUM({$values}) NOT NULL");
+        PostgresSchema::redefineEnum('audit_logs', 'action', $this->newActions);
     }
 
     public function down(): void
     {
-        $values = implode(',', array_map(fn ($v) => "'{$v}'", $this->oldActions));
-        DB::statement("ALTER TABLE audit_logs MODIFY action ENUM({$values}) NOT NULL");
+        PostgresSchema::redefineEnum('audit_logs', 'action', $this->oldActions);
     }
 };

@@ -31,12 +31,12 @@ return new class extends Migration
             $table->string('id_document_path')->nullable();
 
             // Ordered array of captured live-scan frame paths, private disk.
-            $table->json('face_scan_paths')->nullable();
+            $table->jsonb('face_scan_paths')->nullable();
 
             // The guided-capture step sequence actually completed, e.g.
             // ["center","look_left","look_right","blink"] — flow metadata,
             // not biometric data.
-            $table->json('liveness_sequence')->nullable();
+            $table->jsonb('liveness_sequence')->nullable();
 
             // "Passed" means the client-side guided sequence was completed —
             // a completion flag, not a cryptographic liveness proof. Actual

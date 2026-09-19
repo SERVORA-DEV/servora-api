@@ -1,5 +1,8 @@
 FROM php:8.3-apache
 
+# pdo_pgsql for Supabase; no pdo_mysql — this app is Postgres-only now.
+# opcache matters more than usual here: Render's free tier spins instances
+# down, so every wake-up re-compiles the whole framework otherwise.
 RUN apt-get update && apt-get install -y \
     git \
     unzip \
@@ -14,18 +17,41 @@ RUN apt-get update && apt-get install -y \
     bcmath \
     zip \
     exif \
+    opcache \
     && a2enmod rewrite \
     && rm -rf /var/lib/apt/lists/*
+
+RUN { \
+    echo 'opcache.enable=1'; \
+    echo 'opcache.enable_cli=0'; \
+    echo 'opcache.memory_consumption=128'; \
+    echo 'opcache.interned_strings_buffer=16'; \
+    echo 'opcache.max_accelerated_files=20000'; \
+    # The code never changes inside a running container, so skip the stat()
+    # per include. A deploy builds a new image, so this can't serve stale code.
+    echo 'opcache.validate_timestamps=0'; \
+    } > /usr/local/etc/php/conf.d/opcache.ini
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www/html
 
+# Dependencies first, in their own layer: composer.json/lock change far less
+# often than app code, so image rebuilds skip the install most of the time.
+# --no-scripts because artisan isn't copied in yet.
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist --no-scripts
+
 COPY . .
 
-RUN composer install --no-dev --optimize-autoloader --no-interaction
+RUN composer dump-autoload --optimize --no-dev --no-interaction \
+    && php artisan package:discover --ansi
 
-RUN chown -R www-data:www-data storage bootstrap/cache
+# .dockerignore strips these out of the build context, so recreate the ones
+# the framework writes into at runtime.
+RUN mkdir -p storage/framework/cache/data storage/framework/sessions \
+    storage/framework/views storage/logs bootstrap/cache \
+    && chown -R www-data:www-data storage bootstrap/cache
 
 RUN sed -i 's|DocumentRoot /var/www/html|DocumentRoot /var/www/html/public|' \
     /etc/apache2/sites-available/000-default.conf
@@ -39,4 +65,7 @@ RUN printf '%s\n' \
 
 EXPOSE 10000
 
-CMD ["sh", "-c", "php artisan migrate:fresh --seed --force && php artisan db:seed --class=SubscriptionPlanSeeder --force && apache2-foreground"]
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+CMD ["/usr/local/bin/entrypoint.sh"]

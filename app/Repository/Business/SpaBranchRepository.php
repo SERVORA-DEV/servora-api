@@ -19,11 +19,14 @@ class SpaBranchRepository
     // Backs GET /spas/nearby — only branches a client should ever be able to
     // browse to (Verified + Active, with a pin actually set). Distance is
     // computed in SQL via the Haversine formula so ordering/filtering by it
-    // doesn't require pulling every branch into PHP first; `having` (not
-    // `where`) is required since distance_km is a computed select alias.
+    // doesn't require pulling every branch into PHP first.
+    //
+    // The radius filter has to happen one level up, in a subquery wrapper:
+    // distance_km is a select alias, and PostgreSQL only resolves output
+    // aliases in GROUP BY and ORDER BY — never in WHERE or HAVING.
     public function nearby(float $lat, float $lng, float $radiusKm, int $limit): Collection
     {
-        return SpaBranch::query()
+        $withDistance = SpaBranch::query()
             ->select('spa_branches.*')
             ->selectRaw(
                 '(6371 * acos(least(1, greatest(-1,
@@ -35,9 +38,12 @@ class SpaBranchRepository
             ->where('verification_status', 'Verified')
             ->where('operating_status', 'Active')
             ->whereNotNull('latitude')
-            ->whereNotNull('longitude')
+            ->whereNotNull('longitude');
+
+        return SpaBranch::query()
+            ->fromSub($withDistance, 'spa_branches')
+            ->where('distance_km', '<=', $radiusKm)
             ->with('business')
-            ->having('distance_km', '<=', $radiusKm)
             ->orderBy('distance_km')
             ->limit($limit)
             ->get();
