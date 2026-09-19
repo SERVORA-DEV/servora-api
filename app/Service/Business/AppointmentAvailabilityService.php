@@ -20,11 +20,15 @@ use Illuminate\Support\Collection;
 // walk-in/queue-driven spa, not a fixed-slot scheduler: real availability
 // depends on when the current service actually finishes and where a client
 // sits in the queue, neither of which a projected time-window can predict.
-// So isStaffAvailable() (below) is NOT used to gate reservations anywhere —
-// AppointmentService's assign*/reschedule methods let staff reserve a
-// therapist ahead of time unconditionally. Its only remaining consumer is
-// suggestTherapists(), where an estimated overlap is just a soft ranking
-// signal, never a hard block. Rooms are the one exception: a physical room
+// So isStaffAvailable() (below) does NOT gate reservations made by staff —
+// AppointmentService's assign*/reschedule methods let them reserve a
+// therapist ahead of time unconditionally, and suggestTherapists() treats
+// an estimated overlap as a soft ranking signal. Client self-booking is the
+// one exception on the staff side: createClientAppointment() hard-rejects a
+// requested therapist this method says is busy, because the mobile app's
+// therapist picker was filtered by the very same check (see
+// SpaBranchService::publicTherapistAvailability) and a client has no way to
+// renegotiate a shift the way a front officer does. Rooms are the other: a physical room
 // genuinely can't hold two appointments at once, so isFacilityAvailable()
 // (below) IS enforced as a hard gate in AppointmentService's room-assignment
 // methods, unlike its staff counterpart. Beyond that, the one real
@@ -184,8 +188,9 @@ class AppointmentAvailabilityService
         return ['ok' => true, 'reason' => null];
     }
 
-    // Soft signal only — used by suggestTherapists() to rank booking-time
-    // candidates, never to block a reservation (see the class doc comment).
+    // Soft signal for staff-made bookings (suggestTherapists() ranks
+    // candidates with it and assign*() ignores it), but a hard gate for
+    // client self-booking — see the class doc comment.
     public function isStaffAvailable(int $staffId, string $date, string $startTime, int $durationMinutes): array
     {
         $start = Carbon::parse("{$date} {$startTime}");

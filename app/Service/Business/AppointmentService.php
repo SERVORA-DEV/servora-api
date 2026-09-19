@@ -54,6 +54,7 @@ class AppointmentService
     private BillingRepository $billingRepository;
     private PaymentRepository $paymentRepository;
     private AttendanceStatusCalculator $attendanceStatusCalculator;
+    private TherapistQueueCalculator $therapistQueueCalculator;
 
     public function __construct(
         AppointmentRepository $appointmentRepository,
@@ -68,6 +69,7 @@ class AppointmentService
         BillingRepository $billingRepository,
         PaymentRepository $paymentRepository,
         AttendanceStatusCalculator $attendanceStatusCalculator,
+        TherapistQueueCalculator $therapistQueueCalculator,
     ) {
         $this->appointmentRepository = $appointmentRepository;
         $this->appointmentServiceRepository = $appointmentServiceRepository;
@@ -81,6 +83,7 @@ class AppointmentService
         $this->billingRepository = $billingRepository;
         $this->paymentRepository = $paymentRepository;
         $this->attendanceStatusCalculator = $attendanceStatusCalculator;
+        $this->therapistQueueCalculator = $therapistQueueCalculator;
     }
 
     private function branchIds(User $user): array
@@ -266,6 +269,22 @@ class AppointmentService
             $warnings = [];
 
             if (! empty($payload['requested_therapist_uuid'])) {
+                // Unlike the front-desk path, a client's requested therapist
+                // is a hard gate rather than a warning: the app filtered the
+                // picker by this exact pair of checks (see
+                // SpaBranchService::publicTherapistAvailability), so anything
+                // reaching here is a stale list or a direct call, and silently
+                // booking someone who isn't working would only surface as a
+                // problem on the day. A front officer can renegotiate a shift;
+                // a client on a phone can't, so they get told now.
+                $this->assertRequestedTherapistIsFree(
+                    $appointment,
+                    $branch->id,
+                    $payload['requested_therapist_uuid'],
+                    $payload['appointment_date'],
+                    $payload['appointment_time'],
+                );
+
                 foreach ($serviceItems as $service) {
                     $this->applyRequestedTherapist($appointment, $branch->id, $service, $payload['requested_therapist_uuid'], $warnings);
                 }
@@ -278,6 +297,50 @@ class AppointmentService
 
             return $warnings ? $resource->additional(['warnings' => $warnings]) : $resource;
         });
+    }
+
+    // Client self-booking only. Runs the same schedule-then-booked checks,
+    // in the same order, as the availability endpoint the app's therapist
+    // picker was filtered by, and abort()s the surrounding transaction the
+    // way addServiceInternal() does for an unbookable service — so a
+    // rejection leaves no half-built appointment behind.
+    //
+    // Called once per appointment rather than per service: every service on
+    // an appointment shares its one appointment_date/appointment_time, so
+    // the window being checked is the same for all of them. The duration is
+    // read off the already-added services, which is why this runs after
+    // they're attached.
+    private function assertRequestedTherapistIsFree(
+        Appointment $appointment,
+        int $branchId,
+        string $staffUuid,
+        string $date,
+        string $time,
+    ): void {
+        $staff = $this->resolveStaffForBranch($staffUuid, $branchId);
+
+        // Left to applyRequestedTherapist's existing warning: an unknown or
+        // inactive therapist isn't a scheduling conflict, and the booking is
+        // still perfectly servable by whoever the branch assigns instead.
+        if (! $staff) {
+            return;
+        }
+
+        $appointment->load('services.serviceVariant');
+        // Same 30-minute floor busyWindowsForBranch() applies: an
+        // appointment whose services carry no duration would otherwise
+        // collapse to a zero-width window that can never overlap anything.
+        $duration = max($this->availabilityService->estimatedDurationMinutes($appointment), 30);
+
+        $schedule = $this->availabilityService->staffMatchesSchedule($staff->id, $date, $time, $duration);
+        if (! $schedule['ok']) {
+            abort(422, $schedule['reason']);
+        }
+
+        $booked = $this->availabilityService->isStaffAvailable($staff->id, $date, $time, $duration);
+        if (! $booked['ok']) {
+            abort(422, $booked['reason']);
+        }
     }
 
     // ── Status transitions ──────────────────────────────────────────────
@@ -615,26 +678,37 @@ class AppointmentService
 
     // ── Therapist / room assignment ─────────────────────────────────────
 
-    // Every active therapist at this service's branch (unfiltered by
-    // qualification — the front-desk picker shows the whole roster, not
-    // just who's qualified), each combined with today's attendance
-    // check-in and their schedule for this exact appointment slot. Reuses
+    // Every active therapist at this service's branch — the picker still
+    // shows the whole roster rather than hiding anyone, but each row now
+    // carries whether they're qualified for THIS service so the front desk
+    // sees the reason up front instead of discovering it as a 422 from
+    // assignTherapist(). Combined with today's attendance check-in and
+    // their schedule for this exact appointment slot. Reuses
     // AttendanceStatusCalculator::resolve() (same status/shift-window logic
     // the Attendance pages already use) and
-    // AppointmentAvailabilityService::staffMatchesSchedule() (the exact
-    // check assignTherapistInternal() already gates on) rather than
-    // reimplementing either. `pickable` is check-in only — a therapist
-    // working outside their scheduled shift is still pickable, just
-    // flagged 'checked_in_off_schedule', since attendance (not schedule)
-    // is the real-world fact that matters for "can they actually do this
-    // right now."
+    // AppointmentAvailabilityService::staffMatchesSchedule()/isStaffQualified()
+    // (the exact checks assignTherapistInternal() already gates on) rather
+    // than reimplementing any of them.
+    //
+    // `pickable` is check-in AND qualification — deliberately the same pair
+    // assignTherapistInternal() enforces. A therapist working outside their
+    // scheduled shift is still pickable, just flagged
+    // 'checked_in_off_schedule', since attendance (not schedule) is the
+    // real-world fact that matters for "can they actually do this right
+    // now"; qualification, by contrast, is a hard skill requirement that is
+    // never bypassed.
+    //
+    // `qualified` is returned alongside `state` rather than folded into it:
+    // the six states describe presence/schedule, and qualification is
+    // orthogonal to all of them (an off-schedule therapist can be qualified,
+    // a checked-in one can be unqualified).
     public function therapistOptions(User $user, string $appointmentServiceUuid)
     {
         $branchIds = $this->branchIds($user);
 
         $service = AppointmentServiceItem::whereHas('appointment', fn ($q) => $q->whereIn('spa_branch_id', $branchIds))
             ->where('uuid', $appointmentServiceUuid)
-            ->with('serviceVariant', 'appointment')
+            ->with('serviceVariant', 'appointment', 'therapistAssignments')
             ->firstOrFail();
 
         $appointment = $service->appointment;
@@ -642,6 +716,12 @@ class AppointmentService
         $time = $appointment->appointment_time;
         $duration = $service->serviceVariant?->duration_minutes ?? 30;
         $dayOfWeek = Carbon::parse($date)->format('l');
+
+        // Qualification is tracked at the Service level, not per variant —
+        // qualified for "Swedish Massage" covers every duration of it — so
+        // this hops variant -> service, exactly as assignTherapistInternal()
+        // does.
+        $serviceId = $service->serviceVariant?->service_id;
 
         $therapists = Staff::where('spa_branch_id', $appointment->spa_branch_id)
             ->where('role', 'therapist')
@@ -659,10 +739,37 @@ class AppointmentService
             ->where('day_of_week', $dayOfWeek)
             ->first();
 
-        $options = $therapists->map(function (Staff $staff) use ($attendanceByStaffId, $date, $time, $duration, $branchSchedule) {
+        // The branch's turn order for this date, keyed by staff id. Shares one
+        // calculator with the front-desk queue board so the two screens can
+        // never disagree about whose turn it is.
+        $rotationByStaffId = $this->therapistQueueCalculator
+            ->forBranch($appointment->spa_branch_id, $date, $therapists)
+            ->keyBy('staff_id');
+
+        // Anyone already holding this service is out of the running for it —
+        // the picker filters them out of the list, so naming one of them as
+        // "next up" would point at a row that isn't on screen.
+        $heldStaffIds = $service->therapistAssignments
+            ->whereIn('assignment_status', ['Assigned', 'In Progress'])
+            ->pluck('staff_id')
+            ->filter()
+            ->all();
+        $alreadyOnThisServiceUuids = $therapists
+            ->whereIn('id', $heldStaffIds)
+            ->pluck('uuid')
+            ->all();
+
+        $options = $therapists->map(function (Staff $staff) use ($attendanceByStaffId, $date, $time, $duration, $branchSchedule, $serviceId, $rotationByStaffId) {
             $attendance = $attendanceByStaffId->get($staff->id);
             $resolved = $this->attendanceStatusCalculator->resolve($staff, $attendance, $date, $staff->schedules, $branchSchedule);
             $scheduleCheck = $this->availabilityService->staffMatchesSchedule($staff->id, $date, $time, $duration);
+
+            // No resolvable service (a variant that's since been deleted)
+            // leaves everyone qualified rather than blocking the whole
+            // picker — assignTherapistInternal() would surface the real
+            // problem on submit.
+            $qualified = $serviceId === null
+                || $this->availabilityService->isStaffQualified($staff->id, $serviceId)['ok'];
 
             $checkedIn = (bool) $attendance?->check_in_at;
             $matchesWindow = $scheduleCheck['ok'];
@@ -676,23 +783,62 @@ class AppointmentService
                 default => 'not_scheduled',
             };
 
+            $rotation = $rotationByStaffId->get($staff->id);
+
             return [
                 'uuid' => $staff->uuid,
                 'name' => trim("{$staff->first_name} {$staff->last_name}"),
                 'state' => $state,
-                // Checked in is the only gate — a real, in-person fact
-                // always overrides a static schedule (day off included);
-                // see assignTherapistInternal(), which skips the schedule
-                // check entirely once checked in, matching this exactly.
-                'pickable' => $checkedIn,
+                'qualified' => $qualified,
+                // Turn order — see TherapistQueueCalculator. Null position
+                // means they aren't on the floor (never timed in, or already
+                // timed out), which is a different thing from being last.
+                'queue_position' => $rotation['position'] ?? null,
+                'in_queue' => (bool) ($rotation['in_queue'] ?? false),
+                'rotation_status' => $rotation['rotation_status'] ?? 'free',
+                'last_completed_at' => $rotation['last_completed_at']?->format('H:i'),
+                // Set below, once the whole list exists — it's a property of
+                // the list, not of any single therapist.
+                'is_next_up' => false,
+                // Checked in plus qualified — a real, in-person fact always
+                // overrides a static schedule (day off included), but never
+                // a missing skill; see assignTherapistInternal(), which
+                // skips the schedule check entirely once checked in while
+                // always running the qualification check, matching this
+                // exactly.
+                'pickable' => $checkedIn && $qualified,
                 'checked_in_at' => $attendance?->check_in_at?->format('H:i'),
                 'is_day_off' => $resolved['is_day_off'],
                 'scheduled_start' => $resolved['scheduled_start'],
                 'scheduled_end' => $resolved['scheduled_end'],
             ];
-        })->values();
+        })
+            // Turn order, with everyone who can't take this booking pushed
+            // below: on the floor first, then off it, and within each group
+            // the unqualified last. Nobody is dropped — the front desk should
+            // be able to see why someone isn't an option.
+            ->sortBy([
+                fn (array $a, array $b) => ($b['qualified'] <=> $a['qualified']),
+                fn (array $a, array $b) => ($b['in_queue'] <=> $a['in_queue']),
+                fn (array $a, array $b) => ($a['queue_position'] ?? PHP_INT_MAX) <=> ($b['queue_position'] ?? PHP_INT_MAX),
+            ])
+            ->values();
 
-        return response()->json(['data' => $options]);
+        // "Next up" for THIS booking, which is narrower than the branch-wide
+        // rotation: the first therapist who is on the floor, free, qualified
+        // for this service, and not already assigned to it. A #1 who can't
+        // perform this service isn't actually next here, and saying otherwise
+        // sends the front desk down a dead end.
+        $nextUpIndex = $options->search(fn (array $row) => $row['in_queue']
+            && $row['rotation_status'] === 'free'
+            && $row['qualified']
+            && ! in_array($row['uuid'], $alreadyOnThisServiceUuids, true));
+
+        if ($nextUpIndex !== false) {
+            $options = $options->replace([$nextUpIndex => array_merge($options[$nextUpIndex], ['is_next_up' => true])]);
+        }
+
+        return response()->json(['data' => $options->values()]);
     }
 
     public function assignTherapist(User $user, string $appointmentServiceUuid, array $payload)

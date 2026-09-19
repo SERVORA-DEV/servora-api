@@ -81,12 +81,18 @@ class SpaBranchRepository
 
     // Name + role only — Staff has no public resource yet and profile_photo
     // isn't exposed anywhere in the app, so a browse card can't show one.
+    //
+    // `id` rides along unemitted: it never reaches a response (both consuming
+    // resources list their keys explicitly), but
+    // SpaBranchService::publicTherapistAvailability needs it to look each
+    // therapist's shifts and bookings up, and a partial select leaves it null
+    // rather than erroring.
     public function publicTherapistsForBranch(int $branchId): Collection
     {
         return Staff::where('spa_branch_id', $branchId)
             ->where('role', 'therapist')
             ->where('status', 'active')
-            ->get(['uuid', 'first_name', 'last_name', 'role']);
+            ->get(['id', 'uuid', 'first_name', 'last_name', 'role']);
     }
 
     // Scoped listing for the owner's own "Branches" page — paginate() above

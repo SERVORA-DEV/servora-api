@@ -43,6 +43,11 @@ class StaffController extends Controller
         return response()->json(['message' => 'Deleted successfully'], 200);
     }
 
+    public function services(Request $request, string $uuid)
+    {
+        return $this->staffService->services($request->user(), $uuid);
+    }
+
     public function updateServices(StaffServiceRequest $request, string $uuid)
     {
         return $this->staffService->updateServices($request->user(), $uuid, $request->validated()['service_uuids'] ?? []);

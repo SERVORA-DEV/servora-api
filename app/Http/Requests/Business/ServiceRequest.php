@@ -21,10 +21,15 @@ class ServiceRequest extends FormRequest
             // index — checked here so a duplicate 422s cleanly instead of a
             // raw SQL error, same convention as FacilityRequest's
             // name-uniqueness rule.
+            // whereNotNull('spa_business_id') keeps this off the admin service
+            // templates, which are rows in this same table with a NULL business
+            // id — without it, a resolvedBusinessId() of null would make an
+            // owner's name collide with the global catalog.
             'name' => [
                 $isCreate ? 'required' : 'sometimes', 'string', 'max:150',
                 Rule::unique('services', 'name')
                     ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
+                    ->whereNotNull('spa_business_id')
                     ->ignore($this->route('service'), 'uuid'),
             ],
             // Business-scoped like `name` above — identifies the service
@@ -33,8 +38,25 @@ class ServiceRequest extends FormRequest
                 'nullable', 'string', 'max:20',
                 Rule::unique('services', 'code')
                     ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
+                    ->whereNotNull('spa_business_id')
                     ->ignore($this->route('service'), 'uuid'),
             ],
+            // Optional here, unlike on a template (see ServiceTemplateRequest,
+            // where it's required because it's how owners browse the catalog).
+            'category' => ['nullable', Rule::in(config('service_categories'))],
+
+            // Provenance for a service started from an admin template.
+            // Constrained to actual template rows so it can't be pointed at
+            // another business's service; resolved to source_template_id in
+            // ServiceService::createService. Never a sync link — the copy is
+            // independent from the moment it's saved.
+            'source_template_uuid' => [
+                'nullable', 'uuid',
+                Rule::exists('services', 'uuid')
+                    ->where('is_template', true)
+                    ->whereNull('deleted_at'),
+            ],
+
             'description' => 'nullable|string',
             'is_active' => 'sometimes|boolean',
 

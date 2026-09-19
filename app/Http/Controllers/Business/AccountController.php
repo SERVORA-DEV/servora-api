@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Business\AccountRequest;
+use App\Http\Requests\Business\AccountSuggestionRequest;
 use App\Service\Business\AccountService;
 use Illuminate\Http\Request;
 
@@ -24,6 +25,15 @@ class AccountController extends Controller
     public function store(AccountRequest $request)
     {
         return $this->accountService->createAccount($request->user(), $request->validated());
+    }
+
+    // Read-only preview of the username/email a generated account would get -
+    // see AccountService::suggestCredentials. Registered ahead of this
+    // controller's apiResource in routes/api.php so "suggest" isn't swallowed
+    // by show()'s {account} wildcard.
+    public function suggest(AccountSuggestionRequest $request)
+    {
+        return $this->accountService->suggestCredentials($request->user(), $request->validated());
     }
 
     public function show(Request $request, string $uuid)

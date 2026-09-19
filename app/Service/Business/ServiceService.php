@@ -3,6 +3,7 @@
 namespace App\Service\Business;
 
 use App\Models\BranchService;
+use App\Models\Service;
 use App\Models\User;
 use App\Repository\Business\BranchServiceRepository;
 use App\Repository\Business\ServiceRepository;
@@ -82,9 +83,21 @@ class ServiceService
         }
         unset($payload['image']);
 
+        // Started from an admin template: record which one, then forget it.
+        // The values being saved are whatever the owner edited in the form, not
+        // the template's — so an admin changing that template later can never
+        // move this business's live prices. ServiceRequest already constrained
+        // the uuid to a real template row.
+        $sourceTemplateUuid = $payload['source_template_uuid'] ?? null;
+        unset($payload['source_template_uuid']);
+        $payload['source_template_id'] = $sourceTemplateUuid
+            ? Service::where('uuid', $sourceTemplateUuid)->where('is_template', true)->value('id')
+            : null;
+
         $payload['spa_business_id'] = $business->id;
         $payload['created_by'] = $user->id;
         $payload['is_active'] = $payload['is_active'] ?? true;
+        $payload['is_template'] = false;
 
         $service = $this->serviceRepository->create($payload);
         $this->serviceVariantRepository->syncForService($service->id, $variants);

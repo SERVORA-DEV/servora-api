@@ -14,6 +14,11 @@ class LookupServiceResource extends JsonResource
     {
         return [
             'uuid' => $this->serviceVariant->uuid,
+            // The parent Service's uuid, alongside the variant's above:
+            // therapist qualifications are held at the Service level, so the
+            // picker needs this to match a chosen variant against
+            // LookupTherapistResource's qualified_service_uuids.
+            'service_uuid' => $this->serviceVariant->service?->uuid,
             'name' => $this->serviceVariant->service?->name,
             'description' => $this->serviceVariant->service?->description,
             'duration_minutes' => $this->serviceVariant->duration_minutes,

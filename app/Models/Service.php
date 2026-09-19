@@ -19,17 +19,19 @@ class Service extends Model
         'created_by',
         'name',
         'code',
+        'category',
         'description',
         'image_path',
-        'is_default',
         'is_active',
+        'is_template',
+        'source_template_id',
     ];
 
     protected function casts(): array
     {
         return [
-            'is_default' => 'boolean',
             'is_active' => 'boolean',
+            'is_template' => 'boolean',
         ];
     }
 
@@ -51,5 +53,20 @@ class Service extends Model
     public function facilities()
     {
         return $this->belongsToMany(Facility::class, 'facility_services');
+    }
+
+    // The admin-authored template this service was copied from, if any.
+    // Provenance only — the copy is fully independent, so nothing here is ever
+    // read back to update it (see ServiceService::createService).
+    public function sourceTemplate()
+    {
+        return $this->belongsTo(Service::class, 'source_template_id');
+    }
+
+    // Every business service copied from this template — powers the admin
+    // catalog's "adopted by N" counter via withCount('adoptions').
+    public function adoptions()
+    {
+        return $this->hasMany(Service::class, 'source_template_id');
     }
 }

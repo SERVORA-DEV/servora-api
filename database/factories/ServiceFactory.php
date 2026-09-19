@@ -15,7 +15,7 @@ class ServiceFactory extends Factory
         return [
             'spa_business_id' => SpaBusiness::factory(),
             'name' => fake()->unique()->words(3, true) . ' Massage',
-            'is_default' => false,
+            'category' => fake()->randomElement(config('service_categories')),
             'is_active' => true,
         ];
     }

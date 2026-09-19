@@ -137,6 +137,28 @@ class StaffService
         return new StaffResource($model);
     }
 
+    // Read-back for the manager's "Services They Can Perform" card. Kept as
+    // its own sub-resource rather than a field on StaffResource for the same
+    // reason the weekly schedule is one: the staff list would otherwise pay
+    // for a join nothing on that screen renders.
+    //
+    // An empty array here means "no restrictions configured" — NOT "can
+    // perform nothing". See StaffServiceRepository::isQualified for the
+    // opt-in-if-configured semantics the whole feature rests on; the UI has
+    // to say so out loud, since the two readings are opposites.
+    public function services(User $user, string $uuid)
+    {
+        $staff = $this->staffRepository->findByUuidForBranches($uuid, $this->branchIds($user));
+
+        return [
+            'data' => $staff->qualifiedServices()->orderBy('name')->get()->map(fn (Service $service) => [
+                'uuid' => $service->uuid,
+                'name' => $service->name,
+                'category' => $service->category,
+            ]),
+        ];
+    }
+
     // Replaces this staff member's service qualifications wholesale — see
     // StaffServiceRepository::sync / isQualified for the opt-in-if-configured
     // semantics AppointmentAvailabilityService relies on. Stays in the

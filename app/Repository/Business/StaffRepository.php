@@ -41,6 +41,10 @@ class StaffRepository
         return Staff::whereIn('spa_branch_id', $spaBranchIds)
             ->where('role', 'therapist')
             ->where('status', 'active')
+            // LookupTherapistResource exposes qualified_service_uuids for the
+            // appointment modal's eligibility filter — eager-loaded so a
+            // roster of N therapists stays one extra query, not N.
+            ->with('qualifiedServices')
             ->orderBy('first_name')
             ->get();
     }

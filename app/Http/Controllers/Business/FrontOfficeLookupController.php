@@ -25,6 +25,11 @@ class FrontOfficeLookupController extends Controller
         return $this->frontOfficeLookupService->therapist($request->user(), $uuid);
     }
 
+    public function therapistQueue(Request $request)
+    {
+        return $this->frontOfficeLookupService->therapistQueue($request->user(), $request->query('date'));
+    }
+
     public function facilities(Request $request)
     {
         return $this->frontOfficeLookupService->facilities(

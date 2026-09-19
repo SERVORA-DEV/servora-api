@@ -10,6 +10,7 @@ use App\Repository\AuditLogRepository;
 use App\Http\Resources\SpaBranchResource;
 use App\Http\Resources\NearbySpaResource;
 use App\Http\Resources\BranchDetailResource;
+use App\Http\Resources\PublicTherapistAvailabilityResource;
 use App\Service\NotificationService;
 use App\Services\DocumentUploadService;
 use App\Services\ImageUploadService;
@@ -25,6 +26,7 @@ class SpaBranchService
     private NotificationService $notificationService;
     private ImageUploadService $imageUploadService;
     private DocumentUploadService $documentUploadService;
+    private AppointmentAvailabilityService $availabilityService;
 
     public function __construct(
         SpaBranchRepository $spaBranchRepository,
@@ -33,7 +35,8 @@ class SpaBranchService
         AuditLogRepository $auditLogRepository,
         NotificationService $notificationService,
         ImageUploadService $imageUploadService,
-        DocumentUploadService $documentUploadService
+        DocumentUploadService $documentUploadService,
+        AppointmentAvailabilityService $availabilityService
     ) {
         $this->spaBranchRepository = $spaBranchRepository;
         $this->spaBusinessRepository = $spaBusinessRepository;
@@ -42,6 +45,7 @@ class SpaBranchService
         $this->notificationService = $notificationService;
         $this->imageUploadService = $imageUploadService;
         $this->documentUploadService = $documentUploadService;
+        $this->availabilityService = $availabilityService;
     }
 
     // Backs GET /spas/nearby — public, no auth. radiusKm/limit are clamped
@@ -68,6 +72,47 @@ class SpaBranchService
         $therapists = $this->spaBranchRepository->publicTherapistsForBranch($branch->id);
 
         return new BranchDetailResource($branch, $services, $packages, $therapists);
+    }
+
+    // Backs GET /spas/{uuid}/therapists — public, no auth. Answers "which
+    // of this branch's therapists can actually take a booking at this
+    // date/time", which GET /spas/{uuid} can't: its 'therapists' key is
+    // every active therapist, unconditionally, because it has no requested
+    // window to judge them against.
+    //
+    // No new availability logic lives here — the two checks are the same
+    // ones AppointmentService runs when assigning a therapist, in the same
+    // order, so what the client is shown and what the booking endpoint
+    // will accept can't drift apart. Schedule first: "not working then" is
+    // a more useful thing to tell someone than "already booked", and a
+    // therapist who isn't rostered can't be booked either way.
+    public function publicTherapistAvailability(string $uuid, array $query)
+    {
+        $branch = $this->spaBranchRepository->publicFindByUuid($uuid);
+
+        $date = $query['date'];
+        $time = $query['time'];
+        $duration = (int) ($query['duration_minutes'] ?? 60);
+
+        $therapists = $this->spaBranchRepository->publicTherapistsForBranch($branch->id);
+
+        $rows = $therapists->map(function ($staff) use ($date, $time, $duration) {
+            $schedule = $this->availabilityService->staffMatchesSchedule($staff->id, $date, $time, $duration);
+
+            if (! $schedule['ok']) {
+                return ['staff' => $staff, 'available' => false, 'reason' => $schedule['reason']];
+            }
+
+            $booked = $this->availabilityService->isStaffAvailable($staff->id, $date, $time, $duration);
+
+            if (! $booked['ok']) {
+                return ['staff' => $staff, 'available' => false, 'reason' => $booked['reason']];
+            }
+
+            return ['staff' => $staff, 'available' => true, 'reason' => null];
+        })->values();
+
+        return PublicTherapistAvailabilityResource::collection($rows);
     }
 
     // Scoped to what this user can see — every branch for business_owner,

@@ -32,6 +32,7 @@ class FrontOfficeLookupService
     private SpaBusinessRepository $spaBusinessRepository;
     private BranchScheduleRepository $branchScheduleRepository;
     private AppointmentAvailabilityService $availabilityService;
+    private TherapistQueueCalculator $therapistQueueCalculator;
 
     public function __construct(
         StaffRepository $staffRepository,
@@ -41,6 +42,7 @@ class FrontOfficeLookupService
         SpaBusinessRepository $spaBusinessRepository,
         BranchScheduleRepository $branchScheduleRepository,
         AppointmentAvailabilityService $availabilityService,
+        TherapistQueueCalculator $therapistQueueCalculator,
     ) {
         $this->staffRepository = $staffRepository;
         $this->facilityRepository = $facilityRepository;
@@ -49,6 +51,7 @@ class FrontOfficeLookupService
         $this->spaBusinessRepository = $spaBusinessRepository;
         $this->branchScheduleRepository = $branchScheduleRepository;
         $this->availabilityService = $availabilityService;
+        $this->therapistQueueCalculator = $therapistQueueCalculator;
     }
 
     private function branchIds(User $user): array
@@ -85,6 +88,44 @@ class FrontOfficeLookupService
                 'uuid' => $service->uuid,
                 'name' => $service->name,
             ]),
+        ];
+    }
+
+    // The branch's therapist rotation for today — who is next in line to take
+    // a client. Shares TherapistQueueCalculator with
+    // AppointmentService::therapistOptions(), so the queue board and the
+    // assignment picker can never disagree about turn order.
+    //
+    // `is_next_up` here is simply the first free therapist on the floor: with
+    // no service in context there's no qualification to narrow it by, unlike
+    // the picker's service-aware version.
+    //
+    // Same auto-resolved single-branch assumption as schedule()/busyTimes()
+    // below — this lookup has no per-branch selector.
+    public function therapistQueue(User $user, ?string $date = null)
+    {
+        $branchIds = $this->branchIds($user);
+        $branchId = $branchIds[0] ?? null;
+
+        if (! $branchId) {
+            return response()->json(['message' => 'No branch found for this account.'], 422);
+        }
+
+        $date = $date ?: now()->format('Y-m-d');
+        $rows = $this->therapistQueueCalculator->forBranch($branchId, $date);
+        $nextUpUuid = $this->therapistQueueCalculator->nextUp($rows)['uuid'] ?? null;
+
+        return [
+            'data' => $rows->map(fn (array $row) => [
+                'uuid' => $row['uuid'],
+                'name' => $row['name'],
+                'position' => $row['position'],
+                'in_queue' => $row['in_queue'],
+                'rotation_status' => $row['rotation_status'],
+                'checked_in_at' => $row['checked_in_at']?->format('H:i'),
+                'last_completed_at' => $row['last_completed_at']?->format('H:i'),
+                'is_next_up' => $row['uuid'] === $nextUpUuid,
+            ])->values(),
         ];
     }
 

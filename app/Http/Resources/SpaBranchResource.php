@@ -29,6 +29,7 @@ class SpaBranchResource extends JsonResource
             'spa_business_id' => $this->spa_business_id,
 
             'branch_name' => $this->branch_name,
+            'code' => $this->code,
             'email' => $this->email,
             'phone_number' => $this->phone_number,
             'description' => $this->description,

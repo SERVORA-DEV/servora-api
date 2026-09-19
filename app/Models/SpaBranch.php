@@ -16,6 +16,7 @@ class SpaBranch extends Model
         'spa_business_id',
 
         'branch_name',
+        'code',
 
         'email',
         'phone_number',

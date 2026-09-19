@@ -43,6 +43,42 @@ class AccountRepository
             ->firstOrFail();
     }
 
+    // Finds the first free username/email pair for a generated base, bumping
+    // a numeric suffix on collision (manager.mandug -> manager.mandug2 -> ...).
+    // Both advance together so the two halves of an account's identity never
+    // drift apart.
+    //
+    // A plain query is the right scope here: users carries a deleted_at column
+    // but the User model has no SoftDeletes trait, so revoke() hard-deletes and
+    // every surviving row is visible to both this probe and AccountRequest's
+    // Rule::unique. The two have to agree, or a suggestion would 422 the moment
+    // it's submitted.
+    //
+    // Capped rather than looping forever: 100 collisions on one base means
+    // something is wrong upstream, and handing back a taken value lets
+    // AccountRequest produce the real error instead of hanging the request.
+    public function nextAvailableIdentity(string $base, string $domain): array
+    {
+        $identity = [];
+
+        for ($suffix = 1; $suffix <= 100; $suffix++) {
+            $username = $suffix === 1 ? $base : $base . $suffix;
+            $identity = ['username' => $username, 'email' => $username . '@' . $domain];
+
+            $taken = User::query()
+                ->where(fn ($query) => $query
+                    ->where('username', $identity['username'])
+                    ->orWhere('email', $identity['email']))
+                ->exists();
+
+            if (! $taken) {
+                break;
+            }
+        }
+
+        return $identity;
+    }
+
     public function createUser(array $payload): User
     {
         return User::create($payload);

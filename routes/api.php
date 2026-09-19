@@ -7,6 +7,7 @@ use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\System\SubscriptionPlanController;
+use App\Http\Controllers\System\ServiceTemplateController;
 use App\Http\Controllers\System\AdminUsersController;
 use App\Http\Controllers\System\TransactionController;
 use App\Http\Controllers\System\BranchController;
@@ -72,6 +73,14 @@ Route::get('/spas/nearby', [SpaBranchController::class, 'nearby']);
 // See BranchDetailResource for what's exposed here.
 Route::get('/spas/{uuid}', [SpaBranchController::class, 'publicShow']);
 
+// Public, unauthenticated therapist-availability lookup for the client
+// mobile booking flow: which of this branch's therapists can take a
+// booking at a given date/time/duration. Separate from /spas/{uuid}
+// because that endpoint has no requested window to judge them against.
+// The literal '/therapists' segment keeps this out of the {uuid} wildcard
+// above's way either order, but it's kept after it for consistency.
+Route::get('/spas/{uuid}/therapists', [SpaBranchController::class, 'publicTherapistAvailability']);
+
 
 // Private verification documents (government ID front/back, face-scan
 // frames, business registration document) are served directly by
@@ -101,6 +110,12 @@ Route::middleware('auth:sanctum')->group(function () {
                 'subscription-plans' => SubscriptionPlanController::class,
                 'admin/user-management' => AdminUsersController::class
             ]);
+
+            // The global service catalog owners start a new service from —
+            // stored as services rows with is_template = true and no owning
+            // business (see ServiceTemplateRepository).
+            Route::apiResource('service-templates', ServiceTemplateController::class)
+                ->parameters(['service-templates' => 'uuid']);
 
             Route::get('dashboard', [SystemDashboardController::class, 'index']);
 
@@ -211,7 +226,14 @@ Route::middleware('auth:sanctum')->group(function () {
                 // AppointmentAvailabilityService::isStaffQualified(). Staff
                 // management stays owner/manager-only, unlike the
                 // day-to-day appointment operations below.
-                Route::patch('staff/{uuid}/services', [StaffController::class, 'updateServices']);
+                //
+                // Whole-set replace on PATCH, same idiom as the schedule pair
+                // below — and permission-gated the same way now that there's a
+                // manager UI reading and writing this (both business_owner and
+                // manager already hold staff_view/staff_update in
+                // config/permission.php, so this narrows nothing).
+                Route::get('staff/{uuid}/services', [StaffController::class, 'services'])->middleware('permission:staff_view');
+                Route::patch('staff/{uuid}/services', [StaffController::class, 'updateServices'])->middleware('permission:staff_update');
 
                 // A staff member's current weekly schedule (working hours,
                 // day-offs, breaks) — whole-set replace, not per-day CRUD, since
@@ -291,6 +313,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
                 Route::get('frontoffice/therapists', [FrontOfficeLookupController::class, 'therapists']);
                 Route::get('frontoffice/therapists/{uuid}', [FrontOfficeLookupController::class, 'therapist']);
+                // Today's therapist rotation (who's next in line) — a read of
+                // attendance + completed assignments, no state of its own.
+                // Role-gated only, like its sibling lookups above.
+                Route::get('frontoffice/therapist-queue', [FrontOfficeLookupController::class, 'therapistQueue']);
                 Route::get('frontoffice/facilities', [FrontOfficeLookupController::class, 'facilities']);
                 Route::get('frontoffice/services', [FrontOfficeLookupController::class, 'services']);
                 Route::get('frontoffice/packages', [FrontOfficeLookupController::class, 'packages']);
@@ -319,11 +345,22 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('submit', [BusinessOwnerVerificationController::class, 'submit']);
                 });
 
+                // Ahead of the apiResource below on purpose: that registers
+                // GET account/{account} with an unconstrained wildcard, so
+                // declaring this afterwards would route /account/suggest into
+                // show() with "suggest" as the uuid.
+                Route::get('account/suggest', [AccountController::class, 'suggest']);
+
                 Route::apiResources([
                     'subscription' => SubscriptionController::class,
                     'account' => AccountController::class,
                 ]);
                 Route::apiResource('branch', SpaBranchController::class)->except(['index', 'show']);
+                // Read-only view of the admin's catalog, shown when the owner
+                // clicks Add Service. Adopting one is just the normal
+                // POST service below carrying source_template_uuid — there is
+                // no separate adopt endpoint.
+                Route::get('service-templates', [ServiceController::class, 'templates']);
                 Route::apiResource('service', ServiceController::class)->only(['store', 'destroy']);
                 Route::apiResource('package', PackageController::class)->only(['store', 'destroy']);
 

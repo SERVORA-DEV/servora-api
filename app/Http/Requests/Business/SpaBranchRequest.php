@@ -4,6 +4,7 @@ namespace App\Http\Requests\Business;
 
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class SpaBranchRequest extends FormRequest
 {
@@ -32,6 +33,19 @@ class SpaBranchRequest extends FormRequest
         return [
             'branch_name' => 'required|string|max:150',
 
+            // The short area/locality label for this branch ("Mandug") —
+            // business-scoped like services.code, matching the
+            // unique(spa_business_id, code) index so a duplicate 422s cleanly
+            // instead of surfacing a raw SQL error. whereNull('deleted_at')
+            // because spa_branches soft-deletes: a deleted branch must not
+            // keep its code reserved forever.
+            'code' => [
+                'nullable', 'string', 'max:50',
+                Rule::unique('spa_branches', 'code')
+                    ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
+                    ->whereNull('deleted_at'),
+            ],
+
             'email' => 'nullable|email|max:255',
             'phone_number' => 'nullable|string|max:20',
 
@@ -41,5 +55,45 @@ class SpaBranchRequest extends FormRequest
             // evidence (see PermitStep/SpaBranchPermitRequest for that).
             'cover_photo' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:'.(int) config('uploads.max_size_kb', 5120),
         ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'code.unique' => 'You already have a branch using that code.',
+        ];
+    }
+
+    /**
+     * A blank code must land in the column as NULL, not '' — the unique index
+     * treats multiple NULLs as distinct but would reject a second ''. Guarded
+     * on has() so a payload that never mentions `code` stays untouched.
+     */
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('code')) {
+            $this->merge(['code' => trim((string) $this->input('code')) ?: null]);
+        }
+    }
+
+    /**
+     * The authenticated user's business id — scopes the code uniqueness check.
+     * Same helper as ServiceRequest/PackageRequest.
+     */
+    private function resolvedBusinessId(): ?int
+    {
+        $user = $this->user();
+        if (! $user) {
+            return null;
+        }
+
+        if ($user->role === 'business_owner') {
+            return \App\Models\SpaBusiness::where('owner_id', $user->id)->value('id');
+        }
+
+        return $user->staff?->branch?->business?->id;
     }
 }

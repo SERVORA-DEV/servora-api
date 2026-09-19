@@ -35,6 +35,11 @@ class BranchHoursCalculator
                 'closed' => $closed,
                 'open' => $closed ? null : self::formatTime($schedule?->opening_time),
                 'close' => $closed ? null : self::formatTime($schedule?->closing_time),
+                // Emitted so a client can mirror branchIsOpen()'s break
+                // rejection locally instead of only discovering it as a 422
+                // at the end of a booking flow.
+                'break_start' => $closed ? null : self::formatTime($schedule?->break_start),
+                'break_end' => $closed ? null : self::formatTime($schedule?->break_end),
             ];
         })->all();
 

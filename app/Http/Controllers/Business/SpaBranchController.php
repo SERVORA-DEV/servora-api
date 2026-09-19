@@ -7,6 +7,7 @@ use App\Http\Requests\Business\SpaBranchRequest;
 use App\Http\Requests\Business\SpaBranchUpdateRequest;
 use App\Http\Requests\Business\SpaBranchLocationRequest;
 use App\Http\Requests\Business\SpaBranchPermitRequest;
+use App\Http\Requests\Client\PublicTherapistAvailabilityRequest;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -49,6 +50,14 @@ class SpaBranchController extends Controller
     public function publicShow(string $uuid)
     {
         return $this->spaBranchService->publicShow($uuid);
+    }
+
+    // Public, unauthenticated — the client booking flow's therapist step
+    // calls this once it knows the date/time, since publicShow()'s
+    // 'therapists' key can't say who is actually free then.
+    public function publicTherapistAvailability(PublicTherapistAvailabilityRequest $request, string $uuid)
+    {
+        return $this->spaBranchService->publicTherapistAvailability($uuid, $request->validated());
     }
 
     public function store(SpaBranchRequest $request)

@@ -15,6 +15,17 @@ class LookupTherapistResource extends JsonResource
         return [
             'uuid' => $this->uuid,
             'name' => trim("{$this->first_name} {$this->last_name}"),
+
+            // Which services this therapist may perform, so the new-appointment
+            // modal can flag an ineligible "Requested Therapist" while the
+            // front officer is still filling the form instead of leaving it to
+            // a warning on the created appointment. Service-level uuids (not
+            // variant uuids) — see the staff_services migration.
+            //
+            // An EMPTY array means unrestricted, not "can perform nothing"
+            // (StaffServiceRepository::isQualified's opt-in-if-configured
+            // rule). Any consumer filtering on this has to special-case it.
+            'qualified_service_uuids' => $this->qualifiedServices->pluck('uuid'),
         ];
     }
 }
