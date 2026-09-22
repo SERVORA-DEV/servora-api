@@ -194,6 +194,46 @@ class NotificationService
         );
     }
 
+    public function businessSuspended(SpaBusiness $business, User $owner, string $reason): void
+    {
+        $this->notificationRepository->create(
+            $owner->id,
+            'Business Suspended',
+            "\"{$business->business_name}\" has been suspended: {$reason}",
+            'System'
+        );
+    }
+
+    public function businessReactivated(SpaBusiness $business, User $owner): void
+    {
+        $this->notificationRepository->create(
+            $owner->id,
+            'Business Reactivated',
+            "\"{$business->business_name}\" has been reactivated and is no longer suspended.",
+            'System'
+        );
+    }
+
+    public function branchSuspended(SpaBranch $branch, User $owner, string $reason): void
+    {
+        $this->notificationRepository->create(
+            $owner->id,
+            'Branch Suspended',
+            "\"{$branch->branch_name}\" has been suspended: {$reason}",
+            'System'
+        );
+    }
+
+    public function branchReactivated(SpaBranch $branch, User $owner): void
+    {
+        $this->notificationRepository->create(
+            $owner->id,
+            'Branch Reactivated',
+            "\"{$branch->branch_name}\" has been reactivated and is no longer suspended.",
+            'System'
+        );
+    }
+
     // Fired from AdminUsersService::createAdminUsers — notifies every OTHER
     // administrator (the actor already knows; see the ->reject() there).
     public function administratorCreated(User $newAdmin, iterable $admins): void

@@ -136,8 +136,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
             Route::get('branches', [BranchController::class, 'index']);
             Route::get('branches/{uuid}', [BranchController::class, 'show']);
+            Route::post('branches/{uuid}/suspend', [BranchController::class, 'suspend']);
+            Route::post('branches/{uuid}/reactivate', [BranchController::class, 'reactivate']);
             Route::get('businesses', [BusinessController::class, 'index']);
             Route::get('businesses/{uuid}', [BusinessController::class, 'show']);
+            Route::post('businesses/{uuid}/suspend', [BusinessController::class, 'suspend']);
+            Route::post('businesses/{uuid}/reactivate', [BusinessController::class, 'reactivate']);
 
             // No store/update/destroy — a registration is only ever
             // reviewed (approve/reject), never created or edited here.
