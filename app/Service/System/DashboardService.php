@@ -10,6 +10,7 @@ use App\Models\Subscription;
 use App\Repository\AuditLogRepository;
 use App\Repository\BillingRepository;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 
 class DashboardService
 {
@@ -34,27 +35,38 @@ class DashboardService
      */
     public function getOverview(): array
     {
+        // The database is remote, so every query here is a network round
+        // trip. The overview is read-only and tolerates being a few seconds
+        // stale, so repeat loads (page revisits, several admins) within the
+        // window are served from cache.
+        return Cache::remember(self::CACHE_KEY, self::CACHE_TTL_SECONDS, fn () => $this->buildOverview());
+    }
+
+    public const CACHE_KEY = 'system:dashboard:overview';
+
+    private const CACHE_TTL_SECONDS = 30;
+
+    private function buildOverview(): array
+    {
         $now = Carbon::now();
-        $thisMonthStart = $now->copy()->startOfMonth();
         $thisMonthEnd = $now->copy()->endOfMonth();
-        $lastMonthStart = $now->copy()->subMonthNoOverflow()->startOfMonth();
         $lastMonthEnd = $now->copy()->subMonthNoOverflow()->endOfMonth();
 
-        $businessGrowth = $this->monthlySeries(
-            fn (Carbon $start, Carbon $end) => SpaBusiness::whereBetween('created_at', [$start, $end])->count()
-        );
+        $months = $this->trailingMonths();
 
-        $subscriptionGrowth = $this->monthlySeries(
-            fn (Carbon $start, Carbon $end) => $this->activeSubscriptionsDuring($start, $end)->count()
-        );
+        $businessGrowth = $this->businessGrowthSeries($months);
+        $subscriptionGrowth = $this->subscriptionGrowthSeries($months);
+        $revenueTrend = $this->revenueSeries($months);
 
-        $revenueTrend = $this->monthlySeries(
-            fn (Carbon $start, Carbon $end) => (float) Payment::where('payment_status', 'Paid')
-                ->whereBetween('paid_at', [$start, $end])
-                ->sum('amount')
-        );
-
-        $totalBranchesQuery = fn () => SpaBranch::whereIn('verification_status', ['Verified', 'Suspended']);
+        // Total plus the two month-end snapshots used for the trend, in one query.
+        $branchCounts = SpaBranch::whereIn('verification_status', ['Verified', 'Suspended'])
+            ->selectRaw(
+                'count(*) as total,
+                 sum(case when verified_at <= ? then 1 else 0 end) as this_month,
+                 sum(case when verified_at <= ? then 1 else 0 end) as last_month',
+                [$thisMonthEnd, $lastMonthEnd]
+            )
+            ->first();
 
         return [
             'kpis' => [
@@ -63,10 +75,10 @@ class DashboardService
                     'trend_pct' => $this->deltaPct($businessGrowth[5], $businessGrowth[4]),
                 ],
                 'total_branches' => [
-                    'value' => (clone $totalBranchesQuery())->count(),
+                    'value' => (int) $branchCounts->total,
                     'trend_pct' => $this->deltaPct(
-                        (clone $totalBranchesQuery())->where('verified_at', '<=', $thisMonthEnd)->count(),
-                        (clone $totalBranchesQuery())->where('verified_at', '<=', $lastMonthEnd)->count()
+                        (int) $branchCounts->this_month,
+                        (int) $branchCounts->last_month
                     ),
                 ],
                 'active_customers' => null,
@@ -114,22 +126,68 @@ class DashboardService
     }
 
     /**
-     * Runs $metric once per month for the trailing 6 months (oldest first,
-     * current month last), matching Business\DashboardService's day-loop
-     * pattern but at month grain.
+     * The trailing 6 months (oldest first, current month last) as
+     * ['key' => 'YYYY-MM', 'start' => Carbon, 'end' => Carbon].
      */
-    private function monthlySeries(callable $metric): array
+    private function trailingMonths(): array
     {
-        $series = [];
+        $months = [];
 
         for ($i = 5; $i >= 0; $i--) {
-            $monthStart = Carbon::now()->subMonthsNoOverflow($i)->startOfMonth();
-            $monthEnd = Carbon::now()->subMonthsNoOverflow($i)->endOfMonth();
+            $start = Carbon::now()->subMonthsNoOverflow($i)->startOfMonth();
 
-            $series[] = $metric($monthStart, $monthEnd);
+            $months[] = [
+                'key' => $start->format('Y-m'),
+                'start' => $start,
+                'end' => $start->copy()->endOfMonth(),
+            ];
         }
 
-        return $series;
+        return $months;
+    }
+
+    // New businesses per month: one grouped query over the whole window
+    // instead of one count per month. Timestamps are naive app-timezone
+    // values, so to_char buckets them the same way the Carbon bounds do.
+    private function businessGrowthSeries(array $months): array
+    {
+        $counts = SpaBusiness::whereBetween('created_at', [$months[0]['start'], $months[5]['end']])
+            ->selectRaw("to_char(created_at, 'YYYY-MM') as month, count(*) as total")
+            ->groupBy('month')
+            ->pluck('total', 'month');
+
+        return array_map(fn ($m) => (int) ($counts[$m['key']] ?? 0), $months);
+    }
+
+    // Paid revenue per month, one grouped query.
+    private function revenueSeries(array $months): array
+    {
+        $sums = Payment::where('payment_status', 'Paid')
+            ->whereBetween('paid_at', [$months[0]['start'], $months[5]['end']])
+            ->selectRaw("to_char(paid_at, 'YYYY-MM') as month, sum(amount) as total")
+            ->groupBy('month')
+            ->pluck('total', 'month');
+
+        return array_map(fn ($m) => (float) ($sums[$m['key']] ?? 0), $months);
+    }
+
+    // Subscriptions active at any point in each month. A subscription can
+    // span several months, so this can't be a GROUP BY: load the (few)
+    // subscriptions overlapping the window once, then apply the same
+    // predicate as activeSubscriptionsDuring() per month in PHP.
+    private function subscriptionGrowthSeries(array $months): array
+    {
+        $subscriptions = $this->activeSubscriptionsDuring($months[0]['start'], $months[5]['end'])
+            ->get(['starts_at', 'expires_at', 'cancelled_at']);
+
+        return array_map(function ($m) use ($subscriptions) {
+            return $subscriptions->filter(function ($sub) use ($m) {
+                return $sub->starts_at !== null
+                    && $sub->starts_at->lte($m['end'])
+                    && ($sub->expires_at === null || $sub->expires_at->gte($m['start']))
+                    && ($sub->cancelled_at === null || $sub->cancelled_at->gte($m['start']));
+            })->count();
+        }, $months);
     }
 
     // Subscriptions active at any point during [$start, $end], reconstructed
