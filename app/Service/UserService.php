@@ -6,17 +6,17 @@ use App\Http\Resources\UserResource;
 use App\Mail\PasswordResetOtpMail;
 use App\Mail\RegistrationOtpMail;
 use App\Repository\UserRepository;
+use App\Service\Concerns\SendsOtpMail;
 use Carbon\Carbon;
-use Illuminate\Mail\Mailable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Illuminate\Http\JsonResponse;
 
 class UserService
 {
+    use SendsOtpMail;
+
     private UserRepository $userRepository;
 
     private const OTP_EXPIRY_MINUTES = 10;
@@ -33,6 +33,13 @@ class UserService
         return new UserResource($user);
     }
 
+    // NOTE — deliberate scope boundary: this method does NOT check
+    // two_factor_confirmed_at or prompt for a TOTP/recovery code, even for
+    // admins who have enabled 2FA in Settings → Security (SecurityService).
+    // Password + 2FA setup there are real (a genuine TOTP secret is
+    // generated and verified), but not yet ENFORCED at sign-in — that's a
+    // separate, not-yet-built change to this method. Don't assume
+    // "two_factor_enabled: true" means a login is actually gated on it.
     public function login(object $payload)
     {
         if (empty($payload->email) || empty($payload->password)) {
@@ -94,7 +101,13 @@ class UserService
             ], 403);
         }
 
-        $token = $user->createToken($user->email)->plainTextToken;
+        // Named from the User-Agent rather than the email so Settings →
+        // Login Sessions (SecurityService::sessions) can show a meaningful
+        // per-device label. $payload is the raw Request here, so
+        // ->userAgent() is real; truncated because it's client-controlled
+        // input and this is a display label, not parsed/prettified into a
+        // "Chrome on Windows"-style string (no UA-parsing dependency).
+        $token = $user->createToken(Str::limit($payload->userAgent() ?? 'Unknown device', 150, ''))->plainTextToken;
 
         return response()->json([
             'user' => new UserResource($user),
@@ -387,33 +400,6 @@ class UserService
             new RegistrationOtpMail($otp, self::OTP_EXPIRY_MINUTES),
             'registration OTP',
         );
-    }
-
-    /**
-     * Single place every outbound mail goes through. SMTP is a network call
-     * to a third party that can fail for reasons that have nothing to do with
-     * the caller — a wrong app password, Gmail's daily cap, a dropped
-     * connection — and none of those should surface as a 500 on a request
-     * whose database work already succeeded.
-     *
-     * Never logs the mailable's contents: these carry live OTPs, and
-     * storage/logs is not where those belong.
-     */
-    private function deliver(string $email, Mailable $mail, string $context): bool
-    {
-        try {
-            Mail::to($email)->send($mail);
-
-            return true;
-        } catch (\Throwable $e) {
-            Log::error("Failed to send {$context} email", [
-                'email' => $email,
-                'mailable' => $mail::class,
-                'exception' => $e->getMessage(),
-            ]);
-
-            return false;
-        }
     }
 
     public function verifyRegistrationOtp(array $payload)

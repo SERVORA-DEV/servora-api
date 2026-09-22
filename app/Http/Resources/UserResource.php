@@ -34,6 +34,14 @@ class UserResource extends JsonResource
         $data['staff_name'] = null;
         $data['branch_name'] = null;
 
+        // Settings → Security state — computed here rather than left for the
+        // frontend to infer from raw timestamps, same reasoning as the
+        // verification-status fields below (one place owns the business
+        // rule). two_factor_secret/recovery_codes/personal_email_otp_hash
+        // stay $hidden on User — never exposed even indirectly.
+        $data['two_factor_enabled'] = $this->two_factor_confirmed_at !== null;
+        $data['personal_email_verified'] = $this->personal_email_verified_at !== null;
+
         // The login is a User account, but for manager/front_officer roles
         // the "who is this" the dashboard should show is the linked Staff
         // (employee) record, not the User's own name — see User::staff()

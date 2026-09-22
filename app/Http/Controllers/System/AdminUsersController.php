@@ -24,7 +24,7 @@ class AdminUsersController extends Controller
 
     public function store(UserRequest $request)
     {
-        return $this->adminUsersService->createAdminUsers($request->validated());
+        return $this->adminUsersService->createAdminUsers($request->validated(), $request->user());
     }
 
     public function show(string $uuid)

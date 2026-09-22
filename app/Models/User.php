@@ -46,6 +46,9 @@ class User extends Authenticatable implements MustVerifyEmail
 
         'account_status',
         'onboarding_completed_at',
+
+        'personal_email',
+        'personal_email_verified_at',
     ];
 
     protected $hidden = [
@@ -53,6 +56,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'remember_token',
         'two_factor_secret',
         'two_factor_recovery_codes',
+        'personal_email_otp_hash',
     ];
 
     protected function casts(): array
@@ -65,6 +69,12 @@ class User extends Authenticatable implements MustVerifyEmail
             'locked_until' => 'datetime',
             'last_login_at' => 'datetime',
             'password' => 'hashed',
+            // Unlike the OTP-style secrets elsewhere (hashed, one-way), a TOTP
+            // secret must be reversible to generate codes — encrypted-at-rest
+            // (via APP_KEY) is the correct protection here, not a hash.
+            'two_factor_secret' => 'encrypted',
+            'personal_email_verified_at' => 'datetime',
+            'personal_email_otp_created_at' => 'datetime',
         ];
     }
 

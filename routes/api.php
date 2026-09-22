@@ -10,6 +10,9 @@ use App\Http\Controllers\System\SubscriptionPlanController;
 use App\Http\Controllers\System\ServiceTemplateController;
 use App\Http\Controllers\System\AdminUsersController;
 use App\Http\Controllers\System\TransactionController;
+use App\Http\Controllers\System\AuditLogController;
+use App\Http\Controllers\System\SecurityController;
+use App\Http\Controllers\System\NotificationController;
 use App\Http\Controllers\System\BranchController;
 use App\Http\Controllers\System\BusinessController;
 use App\Http\Controllers\System\DashboardController as SystemDashboardController;
@@ -121,6 +124,16 @@ Route::middleware('auth:sanctum')->group(function () {
 
             Route::get('transactions', [TransactionController::class, 'index']);
 
+            Route::get('audit-logs', [AuditLogController::class, 'index']);
+
+            // The signed-in admin's own notification feed (TopBar bell +
+            // Settings > Notifications) — see NotificationController.
+            Route::get('notifications', [NotificationController::class, 'index']);
+            Route::post('notifications/{id}/read', [NotificationController::class, 'markRead']);
+            Route::post('notifications/read-all', [NotificationController::class, 'markAllRead']);
+            // Dashboard Quick Actions > Send Announcement.
+            Route::post('notifications/announce', [NotificationController::class, 'announce']);
+
             Route::get('branches', [BranchController::class, 'index']);
             Route::get('branches/{uuid}', [BranchController::class, 'show']);
             Route::get('businesses', [BusinessController::class, 'index']);
@@ -147,6 +160,31 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('owner-verifications/{uuid}/identity/reject', [SystemOwnerVerificationController::class, 'rejectIdentity']);
             Route::post('owner-verifications/{uuid}/business/approve', [SystemOwnerVerificationController::class, 'approveBusiness']);
             Route::post('owner-verifications/{uuid}/business/reject', [SystemOwnerVerificationController::class, 'rejectBusiness']);
+
+            // Settings → Security: self-service actions on the CALLER'S OWN
+            // account only (change password, 2FA, personal verification
+            // email, login sessions) — see SecurityService. Not to be
+            // confused with admin/user-management above, which manages
+            // OTHER administrators' accounts.
+            Route::prefix('security')->group(function () {
+                Route::post('change-password', [SecurityController::class, 'changePassword']);
+
+                Route::get('two-factor', [SecurityController::class, 'twoFactorStatus']);
+                Route::post('two-factor/enable', [SecurityController::class, 'enableTwoFactor']);
+                Route::post('two-factor/confirm', [SecurityController::class, 'confirmTwoFactor'])->middleware('throttle:10,1');
+                Route::post('two-factor/disable', [SecurityController::class, 'disableTwoFactor']);
+                Route::post('two-factor/recovery-codes', [SecurityController::class, 'regenerateRecoveryCodes']);
+
+                Route::post('personal-email', [SecurityController::class, 'submitPersonalEmail']);
+                Route::post('personal-email/verify', [SecurityController::class, 'verifyPersonalEmail'])->middleware('throttle:10,1');
+                Route::post('personal-email/resend', [SecurityController::class, 'resendPersonalEmailOtp'])->middleware('throttle:6,1');
+
+                Route::get('sessions', [SecurityController::class, 'sessions']);
+                // Plain int, not {uuid} — personal_access_tokens.id is
+                // Sanctum's own auto-increment key, the one deliberate
+                // exception to this app's {uuid} route-param convention.
+                Route::delete('sessions/{id}', [SecurityController::class, 'revokeSession']);
+            });
         });
 
     

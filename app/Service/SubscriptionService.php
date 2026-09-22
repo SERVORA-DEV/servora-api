@@ -8,9 +8,11 @@ use App\Repository\SpaBusinessRepository;
 use App\Repository\BillingRepository;
 use App\Repository\PaymentRepository;
 use App\Repository\Business\AccountRepository;
+use App\Repository\System\AdminUsersRepository;
 use App\Repository\System\SubscriptionPlanRepository;
 use App\Http\Resources\SubscriptionResource;
 use App\Http\Resources\BillingResource;
+use App\Service\NotificationService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -39,6 +41,8 @@ class SubscriptionService
     private PaymentRepository $paymentRepository;
     private AccountRepository $accountRepository;
     private XenditService $xenditService;
+    private AdminUsersRepository $adminUsersRepository;
+    private NotificationService $notificationService;
 
     public function __construct(
         SubscriptionRepository $subscriptionRepository,
@@ -48,6 +52,8 @@ class SubscriptionService
         PaymentRepository $paymentRepository,
         AccountRepository $accountRepository,
         XenditService $xenditService,
+        AdminUsersRepository $adminUsersRepository,
+        NotificationService $notificationService,
     ) {
         $this->subscriptionRepository = $subscriptionRepository;
         $this->businessRepository = $businessRepository;
@@ -56,6 +62,8 @@ class SubscriptionService
         $this->paymentRepository = $paymentRepository;
         $this->accountRepository = $accountRepository;
         $this->xenditService = $xenditService;
+        $this->adminUsersRepository = $adminUsersRepository;
+        $this->notificationService = $notificationService;
     }
 
     public function listSubscription(int $perPage = 15)
@@ -216,7 +224,7 @@ class SubscriptionService
             return false;
         }
 
-        DB::transaction(function () use ($intent, $invoiceId, $paymentMethod, $paymentChannel, $paidAmount, $referenceId) {
+        $subscription = DB::transaction(function () use ($intent, $invoiceId, $paymentMethod, $paymentChannel, $paidAmount, $referenceId) {
             $subscription = $this->subscriptionRepository->create([
                 'spa_business_id' => $intent['spa_business_id'],
                 'subscription_plan_id' => $intent['subscription_plan_id'],
@@ -249,10 +257,21 @@ class SubscriptionService
                 'payment_status' => 'Paid',
                 'paid_at' => now(),
             ]);
+
+            return $subscription;
         });
 
         Cache::forget(self::PENDING_CACHE_PREFIX . $referenceId);
         Cache::forget(self::PENDING_BUSINESS_CACHE_PREFIX . $intent['spa_business_id']);
+
+        // Admin-facing notifications for a real, webhook-confirmed payment —
+        // one subscription-started fact and one payment-received fact.
+        $subscription->loadMissing(['business', 'plan']);
+        if ($subscription->business && $subscription->plan) {
+            $admins = $this->adminUsersRepository->allAdministrators();
+            $this->notificationService->subscriptionActivated($subscription->business, $subscription->plan, $subscription->billing_cycle, $admins);
+            $this->notificationService->paymentReceived($subscription->business, $paidAmount, $admins);
+        }
 
         return true;
     }

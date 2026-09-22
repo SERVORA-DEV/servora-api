@@ -2,17 +2,21 @@
 
 namespace App\Service\System;
 
+use App\Models\User;
 use App\Repository\System\AdminUsersRepository;
 use App\Http\Resources\AdminUsersResource;
+use App\Service\NotificationService;
 use Illuminate\Support\Arr;
 
 class AdminUsersService
 {
     private AdminUsersRepository $adminUsersRepository;
+    private NotificationService $notificationService;
 
-    public function __construct(AdminUsersRepository $adminUsersRepository)
+    public function __construct(AdminUsersRepository $adminUsersRepository, NotificationService $notificationService)
     {
         $this->adminUsersRepository = $adminUsersRepository;
+        $this->notificationService = $notificationService;
     }
 
     public function listAdminUsers(int $perPage = 15)
@@ -21,7 +25,7 @@ class AdminUsersService
         return AdminUsersResource::collection($collection);
     }
 
-    public function createAdminUsers(array $payload)
+    public function createAdminUsers(array $payload, ?User $actor = null)
     {
 
         $payload['role'] = 'system_administrator';
@@ -34,6 +38,12 @@ class AdminUsersService
         $this->adminUsersRepository->createPermission($permissionPayload);
 
         $user->markEmailAsVerified();
+
+        // The actor already knows they just did this — notify every OTHER
+        // administrator instead.
+        $recipients = $this->adminUsersRepository->allAdministrators()
+            ->reject(fn (User $admin) => $actor && $admin->id === $actor->id);
+        $this->notificationService->administratorCreated($user, $recipients);
 
         return new AdminUsersResource($user->load('permission'));
     }
