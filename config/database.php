@@ -100,6 +100,10 @@ return [
             'prefix_indexes' => true,
             'search_path' => 'public',
             'sslmode' => env('DB_SSLMODE', 'prefer'),
+            // Opt-in for local dev against the remote Supabase pooler: the
+            // single `php artisan serve` process reuses one connection instead
+            // of paying a fresh TLS + auth handshake (~2s) on every request.
+            'options' => env('DB_PERSISTENT', false) ? [PDO::ATTR_PERSISTENT => true] : [],
         ],
 
         'sqlsrv' => [
