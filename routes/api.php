@@ -10,6 +10,7 @@ use App\Http\Controllers\System\SubscriptionPlanController;
 use App\Http\Controllers\System\ServiceTemplateController;
 use App\Http\Controllers\System\AdminUsersController;
 use App\Http\Controllers\System\TransactionController;
+use App\Http\Controllers\System\SystemSettingController;
 use App\Http\Controllers\System\AuditLogController;
 use App\Http\Controllers\System\SecurityController;
 use App\Http\Controllers\System\NotificationController;
@@ -18,6 +19,7 @@ use App\Http\Controllers\System\BusinessController;
 use App\Http\Controllers\System\DashboardController as SystemDashboardController;
 use App\Http\Controllers\Business\DashboardController;
 use App\Http\Controllers\SubscriptionController;
+use App\Http\Controllers\Business\NotificationController as BusinessNotificationController;
 use App\Http\Controllers\XenditWebhookController;
 use App\Http\Controllers\Business\BranchScheduleController;
 use App\Http\Controllers\Business\SpaBranchController;
@@ -46,6 +48,9 @@ use App\Http\Controllers\Client\ClientProfileController;
 
 // authentication part
 Route::post('/auth/login', [AuthController::class, 'login']);
+// Per-IP throttles on top of UserService's per-challenge attempt cap.
+Route::post('/auth/two-factor/verify', [AuthController::class, 'verifyTwoFactorLogin'])->middleware('throttle:10,1');
+Route::post('/auth/two-factor/request-email-code', [AuthController::class, 'requestTwoFactorEmailCode'])->middleware('throttle:5,1');
 Route::post('/auth/register', [RegisterController::class, 'registerClient']);
 Route::post('/auth/forget-password', [AuthController::class, 'forgetPassword']);
 Route::post('/auth/forget-password/verify-otp', [AuthController::class, 'verifyForgetPasswordOtp']);
@@ -124,6 +129,11 @@ Route::middleware('auth:sanctum')->group(function () {
 
             Route::get('transactions', [TransactionController::class, 'index']);
 
+            // Platform-wide configuration (e.g. the subscription grace
+            // period used to compute the Transaction page's Overdue tile).
+            Route::get('settings', [SystemSettingController::class, 'show']);
+            Route::patch('settings', [SystemSettingController::class, 'update']);
+
             Route::get('audit-logs', [AuditLogController::class, 'index']);
 
             // The signed-in admin's own notification feed (TopBar bell +
@@ -183,7 +193,11 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('personal-email/verify', [SecurityController::class, 'verifyPersonalEmail'])->middleware('throttle:10,1');
                 Route::post('personal-email/resend', [SecurityController::class, 'resendPersonalEmailOtp'])->middleware('throttle:6,1');
 
+                Route::get('login-history', [SecurityController::class, 'loginHistory']);
+
                 Route::get('sessions', [SecurityController::class, 'sessions']);
+                // Every session except the caller's own.
+                Route::delete('sessions', [SecurityController::class, 'revokeOtherSessions']);
                 // Plain int, not {uuid} — personal_access_tokens.id is
                 // Sanctum's own auto-increment key, the one deliberate
                 // exception to this app's {uuid} route-param convention.
@@ -411,6 +425,17 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('branch/{uuid}/submit', [SpaBranchController::class, 'submit']);
 
                 Route::get('subscription/confirm/{referenceId}', [SubscriptionController::class, 'confirm']);
+                // Accept / decline an admin's update to the subscribed plan
+                // (PlanChangeService).
+                Route::post('subscription/plan-change', [SubscriptionController::class, 'respondToPlanChange']);
+
+                // Owner's own notification feed — mirrors the admin's
+                // /system/notifications shape/behavior exactly (same
+                // NotificationService). Owner-only, like billing, not shared
+                // with managers.
+                Route::get('owner/notifications', [BusinessNotificationController::class, 'index']);
+                Route::post('owner/notifications/{id}/read', [BusinessNotificationController::class, 'markRead']);
+                Route::post('owner/notifications/read-all', [BusinessNotificationController::class, 'markAllRead']);
             });
         });
 });

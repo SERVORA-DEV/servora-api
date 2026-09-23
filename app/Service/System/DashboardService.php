@@ -106,6 +106,7 @@ class DashboardService
                     ? trim("{$log->user->first_name} {$log->user->last_name}")
                     : 'System',
                 'action' => $log->action,
+                'summary' => \App\Support\AuditLogDescriber::summary($log),
                 'table_name' => $log->table_name,
                 'record_id' => $log->record_id,
                 'created_at' => optional($log->created_at)->toIso8601String(),

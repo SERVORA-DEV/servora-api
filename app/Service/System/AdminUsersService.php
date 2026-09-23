@@ -3,6 +3,7 @@
 namespace App\Service\System;
 
 use App\Models\User;
+use App\Repository\AuditLogRepository;
 use App\Repository\System\AdminUsersRepository;
 use App\Http\Resources\AdminUsersResource;
 use App\Service\NotificationService;
@@ -12,11 +13,16 @@ class AdminUsersService
 {
     private AdminUsersRepository $adminUsersRepository;
     private NotificationService $notificationService;
+    private AuditLogRepository $auditLogRepository;
 
-    public function __construct(AdminUsersRepository $adminUsersRepository, NotificationService $notificationService)
-    {
+    public function __construct(
+        AdminUsersRepository $adminUsersRepository,
+        NotificationService $notificationService,
+        AuditLogRepository $auditLogRepository,
+    ) {
         $this->adminUsersRepository = $adminUsersRepository;
         $this->notificationService = $notificationService;
+        $this->auditLogRepository = $auditLogRepository;
     }
 
     public function listAdminUsers(int $perPage = 15)
@@ -39,6 +45,12 @@ class AdminUsersService
 
         $user->markEmailAsVerified();
 
+        $this->auditLogRepository->recordAdminAction('users', $user->id, 'Create', null, [
+            'name' => trim("{$user->first_name} {$user->last_name}") ?: $user->email,
+            'email' => $user->email,
+            'role' => 'system_administrator',
+        ]);
+
         // The actor already knows they just did this — notify every OTHER
         // administrator instead.
         $recipients = $this->adminUsersRepository->allAdministrators()
@@ -50,7 +62,20 @@ class AdminUsersService
 
     public function updateAdminUsers(string $uuid, array $payload)
     {
+        $before = $this->adminUsersRepository->findByUuid($uuid);
+        [$old, $new] = $this->auditLogRepository->diff(
+            array_merge($before->getAttributes(), $before->permission?->getAttributes() ?? []),
+            $payload,
+        );
+
         $model = $this->adminUsersRepository->update($uuid, $payload);
+
+        if ($new) {
+            $this->auditLogRepository->recordAdminAction('users', $model->id, 'Update', $old, array_merge($new, [
+                'name' => trim("{$model->first_name} {$model->last_name}") ?: $model->email,
+            ]));
+        }
+
         return new AdminUsersResource($model);
     }
 

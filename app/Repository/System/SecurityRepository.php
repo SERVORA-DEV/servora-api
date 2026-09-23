@@ -3,6 +3,7 @@
 namespace App\Repository\System;
 
 use App\Models\User;
+use Illuminate\Support\Facades\Hash;
 
 // Every method here is scoped through a given User instance (never a bare
 // PersonalAccessToken::find() or User::find()) — these all act on "my own
@@ -34,9 +35,32 @@ class SecurityRepository
         return $user->tokens()->orderByDesc('last_used_at')->orderByDesc('created_at')->get();
     }
 
+    // Every token except the current one — what revokeOtherTokens() is
+    // about to delete, fetched first so each can get a Logout history row.
+    public function otherTokens(User $user, ?int $currentTokenId)
+    {
+        $query = $user->tokens();
+
+        if ($currentTokenId !== null) {
+            $query->where('id', '!=', $currentTokenId);
+        }
+
+        return $query->get();
+    }
+
+    public function findToken(User $user, int $tokenId)
+    {
+        return $user->tokens()->where('id', $tokenId)->first();
+    }
+
     public function revokeToken(User $user, int $tokenId): bool
     {
         return (bool) $user->tokens()->where('id', $tokenId)->delete();
+    }
+
+    public function recoveryCodesRemaining(User $user): int
+    {
+        return count(json_decode($user->two_factor_recovery_codes ?? '[]', true) ?: []);
     }
 
     public function setPendingTwoFactor(User $user, string $secret, array $hashedRecoveryCodes): void
@@ -65,6 +89,24 @@ class SecurityRepository
     public function setRecoveryCodes(User $user, array $hashedRecoveryCodes): void
     {
         $user->forceFill(['two_factor_recovery_codes' => json_encode($hashedRecoveryCodes)])->save();
+    }
+
+    // Recovery codes are single-use — the matched hash is removed so it
+    // can't be replayed. Returns false (leaving the stored list untouched)
+    // when $code doesn't match any stored hash.
+    public function consumeRecoveryCode(User $user, string $code): bool
+    {
+        $hashes = json_decode($user->two_factor_recovery_codes ?? '[]', true) ?: [];
+
+        foreach ($hashes as $i => $hash) {
+            if (Hash::check($code, $hash)) {
+                unset($hashes[$i]);
+                $user->forceFill(['two_factor_recovery_codes' => json_encode(array_values($hashes))])->save();
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function setPendingPersonalEmail(User $user, string $email, string $otpHash): void

@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\ForgetPasswordRequest;
+use App\Http\Requests\Auth\TwoFactorLoginEmailCodeRequest;
+use App\Http\Requests\Auth\TwoFactorLoginVerifyRequest;
 use App\Http\Requests\Auth\ResendRegistrationOtpRequest;
 use App\Http\Requests\Auth\ResetPasswordRequest;
 use App\Http\Requests\Auth\VerifyPasswordResetOtpRequest;
@@ -30,9 +32,19 @@ class AuthController extends Controller
         return $this->userService->login($request);
     }
 
+    public function verifyTwoFactorLogin(TwoFactorLoginVerifyRequest $request)
+    {
+        return $this->userService->verifyTwoFactorLogin($request);
+    }
+
+    public function requestTwoFactorEmailCode(TwoFactorLoginEmailCodeRequest $request)
+    {
+        return $this->userService->requestTwoFactorEmailCode($request);
+    }
+
     public function logout(Request $request)
     {
-        return $this->userService->logoutUser($request->user());
+        return $this->userService->logoutUser($request->user(), $request);
     }
 
     public function forgetPassword(ForgetPasswordRequest $request)

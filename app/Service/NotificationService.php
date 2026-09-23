@@ -5,8 +5,10 @@ namespace App\Service;
 use App\Http\Resources\NotificationResource;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
+use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
 use App\Models\User;
+use App\Repository\AuditLogRepository;
 use App\Repository\NotificationRepository;
 use App\Repository\System\AdminUsersRepository;
 
@@ -17,6 +19,7 @@ class NotificationService
     public function __construct(
         private NotificationRepository $notificationRepository,
         private AdminUsersRepository $adminUsersRepository,
+        private AuditLogRepository $auditLogRepository,
     ) {}
 
     // ── Read side: the signed-in user's own feed (Settings > Notifications /
@@ -67,6 +70,11 @@ class NotificationService
         foreach ($recipients as $admin) {
             $this->notificationRepository->create($admin->id, $payload['title'], $message, 'System');
         }
+
+        $this->auditLogRepository->record($actor->id, 'announcements', null, 'Create', null, [
+            'name' => $payload['title'],
+            'recipients' => $recipients->count(),
+        ], request());
 
         return response()->json([
             'message' => 'Announcement sent.',
@@ -263,6 +271,84 @@ class NotificationService
                 "\"{$business->business_name}\" subscribed to the {$plan->name} plan ({$billingCycle}).",
                 'Subscription'
             );
+        }
+    }
+
+    // Fired from NotifyAlmostDueSubscriptions (the daily scheduled command —
+    // see Console/Commands) for a subscription within the renewal reminder
+    // window. Before expires_at it's a "renews in N days" reminder; after it
+    // (repeat reminders continue through the grace period) it's an overdue
+    // notice with how long access lasts.
+    public function subscriptionAlmostDue(Subscription $subscription, int $graceDays): void
+    {
+        $planName = $subscription->plan->name ?? 'subscription';
+
+        if ($subscription->expires_at->isPast()) {
+            // diffInDays returns a float (fractional days) — round for
+            // whole-day display.
+            $daysLate = (int) round($subscription->expires_at->diffInDays(now()));
+            $daysLeft = max(0, $graceDays - $daysLate);
+            $until = $daysLeft === 0 ? 'today' : ($daysLeft === 1 ? 'within 1 day' : "within {$daysLeft} days");
+
+            $title = 'Subscription Payment Overdue';
+            $message = "Your {$planName} plan expired on {$subscription->expires_at->format('F j, Y')}. Renew {$until} to keep access.";
+        } else {
+            $daysLeft = max(0, (int) round(now()->diffInDays($subscription->expires_at, false)));
+            $when = $daysLeft === 0 ? 'today' : ($daysLeft === 1 ? 'in 1 day' : "in {$daysLeft} days");
+
+            $title = 'Subscription Renewal Reminder';
+            $message = "Your {$planName} plan renews {$when}. Renew soon to avoid losing access.";
+        }
+
+        // Admin changed the plan and the owner hasn't declined — the
+        // renewal will be on the new version (see PlanChangeService).
+        if ($subscription->pendingPlan && in_array($subscription->plan_change_status, ['pending', 'accepted'], true)) {
+            $price = $subscription->billing_cycle === 'Yearly'
+                ? $subscription->pendingPlan->yearly_price
+                : $subscription->pendingPlan->monthly_price;
+            $per = $subscription->billing_cycle === 'Yearly' ? 'year' : 'month';
+
+            $message .= " Your renewal will use the updated {$subscription->pendingPlan->name} plan"
+                . ($price !== null ? ' (₱' . number_format((float) $price, 2) . "/{$per})." : '.');
+        }
+
+        $this->notificationRepository->create($subscription->business->owner->id, $title, $message, 'Subscription');
+    }
+
+    // Fired from PlanChangeService::notifySubscribers — the admin edited the
+    // plan this owner is subscribed to (creating a new version). Their
+    // current terms stay until expires_at; they're asked to accept the new
+    // version for renewal or let the subscription end.
+    public function subscriptionPlanChanged(Subscription $subscription, SubscriptionPlan $newPlan, array $changes): void
+    {
+        $count = count($changes);
+        $summary = $count > 0 ? ' (' . $count . ' ' . ($count === 1 ? 'change' : 'changes') . ')' : '';
+        $until = $subscription->expires_at?->format('F j, Y');
+
+        $this->notificationRepository->create(
+            $subscription->business->owner->id,
+            'Your Plan Has Been Updated',
+            "The {$newPlan->category} plan you're subscribed to has been updated{$summary}. "
+                . ($until ? "Your current plan stays the same until {$until}. " : '')
+                . 'Open your dashboard to accept the updated plan for your renewal, or cancel at the end of your term.',
+            'Subscription'
+        );
+    }
+
+    // Fired from PlanChangeService::respond — tells the admins how an owner
+    // answered the prompt above.
+    public function planChangeResponded(Subscription $subscription, string $decision, iterable $admins): void
+    {
+        $businessName = $subscription->business->business_name ?? 'A business';
+        $planName = $subscription->pendingPlan->name ?? 'updated';
+        $until = $subscription->expires_at?->format('F j, Y');
+
+        $message = $decision === 'accept'
+            ? "\"{$businessName}\" accepted the updated {$planName} plan for their next renewal."
+            : "\"{$businessName}\" declined the updated {$planName} plan — their subscription ends" . ($until ? " on {$until}." : '.');
+
+        foreach ($admins as $admin) {
+            $this->notificationRepository->create($admin->id, 'Plan Change Response', $message, 'Subscription');
         }
     }
 

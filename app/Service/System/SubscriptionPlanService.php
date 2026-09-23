@@ -4,15 +4,24 @@ namespace App\Service\System;
 
 use App\Repository\System\SubscriptionPlanRepository;
 use App\Http\Resources\SubscriptionPlanResource;
+use App\Repository\AuditLogRepository;
+use App\Service\PlanChangeService;
 use Illuminate\Support\Arr;
 
 class SubscriptionPlanService
 {
     private SubscriptionPlanRepository $subscriptionPlanRepository;
+    private PlanChangeService $planChangeService;
+    private AuditLogRepository $auditLogRepository;
 
-    public function __construct(SubscriptionPlanRepository $subscriptionPlanRepository)
-    {
+    public function __construct(
+        SubscriptionPlanRepository $subscriptionPlanRepository,
+        PlanChangeService $planChangeService,
+        AuditLogRepository $auditLogRepository,
+    ) {
         $this->subscriptionPlanRepository = $subscriptionPlanRepository;
+        $this->planChangeService = $planChangeService;
+        $this->auditLogRepository = $auditLogRepository;
     }
 
     public function listSubscriptionPlan(int $perPage = 15)
@@ -49,6 +58,13 @@ class SubscriptionPlanService
         }
 
         $model = $this->subscriptionPlanRepository->create($payload);
+
+        $this->auditLogRepository->recordAdminAction('subscription_plans', $model->id, 'Create', null, [
+            'name' => $model->name,
+            'category' => $model->category,
+            'monthly_price' => $model->monthly_price,
+            'yearly_price' => $model->yearly_price,
+        ]);
 
         return (new SubscriptionPlanResource($model))->additional([
             'meta' => ['versioned' => false],
@@ -87,19 +103,36 @@ class SubscriptionPlanService
     {
         $plan = $this->subscriptionPlanRepository->findByUuid($uuid);
         $payload = Arr::except($payload, ['category']);
+        [$old, $new] = $this->auditLogRepository->diff($plan->only($plan->getFillable()), $payload);
 
         if ($this->subscriptionPlanRepository->hasSubscribers($plan)) {
             $newPlan = $this->subscriptionPlanRepository->archiveAndVersion($plan, $payload);
+
+            // Current subscribers keep the archived terms until their term
+            // ends — ask each owner to accept the new version for renewal
+            // or let the subscription end (PlanChangeService).
+            $notified = $this->planChangeService->notifySubscribers($plan, $newPlan);
+
+            $this->auditLogRepository->recordAdminAction('subscription_plans', $newPlan->id, 'Update', $old, array_merge($new ?? [], [
+                'name' => $newPlan->name,
+                'versioned' => true,
+                'subscribers_notified' => $notified,
+            ]));
 
             return (new SubscriptionPlanResource($newPlan))->additional([
                 'meta' => [
                     'versioned' => true,
                     'archived_plan_uuid' => $plan->uuid,
+                    'subscribers_notified' => $notified,
                 ],
             ]);
         }
 
         $updated = $this->subscriptionPlanRepository->update($uuid, $payload);
+
+        $this->auditLogRepository->recordAdminAction('subscription_plans', $updated->id, 'Update', $old, array_merge($new ?? [], [
+            'name' => $updated->name,
+        ]));
 
         return (new SubscriptionPlanResource($updated))->additional([
             'meta' => ['versioned' => false],
@@ -108,13 +141,20 @@ class SubscriptionPlanService
 
     public function deleteSubscriptionPlan(string $uuid)
     {
+        $plan = $this->subscriptionPlanRepository->findByUuid($uuid);
         $this->subscriptionPlanRepository->delete($uuid);
+
+        $this->auditLogRepository->recordAdminAction('subscription_plans', $plan->id, 'Delete', null, ['name' => $plan->name]);
+
         return true;
     }
 
     public function restoreSubscriptionPlan(string $uuid)
     {
         $model = $this->subscriptionPlanRepository->restore($uuid);
+
+        $this->auditLogRepository->recordAdminAction('subscription_plans', $model->id, 'Restore', null, ['name' => $model->name]);
+
         return new SubscriptionPlanResource($model);
     }
 }

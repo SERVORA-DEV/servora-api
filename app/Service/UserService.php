@@ -5,26 +5,62 @@ namespace App\Service;
 use App\Http\Resources\UserResource;
 use App\Mail\PasswordResetOtpMail;
 use App\Mail\RegistrationOtpMail;
+use App\Mail\TwoFactorLoginOtpMail;
+use App\Models\User;
+use App\Repository\AuditLogRepository;
+use App\Repository\System\SecurityRepository;
 use App\Repository\UserRepository;
 use App\Service\Concerns\SendsOtpMail;
+use App\Support\UserAgentParser;
 use Carbon\Carbon;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Http\JsonResponse;
+use PragmaRX\Google2FA\Google2FA;
 
 class UserService
 {
     use SendsOtpMail;
 
     private UserRepository $userRepository;
+    private AuditLogRepository $auditLogRepository;
+    private SecurityRepository $securityRepository;
+    private Google2FA $google2fa;
 
     private const OTP_EXPIRY_MINUTES = 10;
     private const RESET_TOKEN_EXPIRY_MINUTES = 10;
 
-    public function __construct(UserRepository $userRepository)
-    {
+    // Parked here, between "password verified" and "token issued", exactly
+    // like PENDING_CACHE_PREFIX in SubscriptionService parks a payment
+    // intent between "checkout started" and "webhook confirms it" — nothing
+    // is issued until the second factor is verified.
+    private const TWO_FACTOR_CHALLENGE_PREFIX = 'two_factor_challenge:';
+    private const TWO_FACTOR_CHALLENGE_EXPIRY_MINUTES = 10;
+
+    // Wrong codes allowed per challenge before it's thrown away and the
+    // user has to re-enter their password — on top of the per-IP route
+    // throttle, so a 6-digit code can't be brute-forced within one challenge.
+    private const TWO_FACTOR_MAX_ATTEMPTS = 5;
+    private const TWO_FACTOR_EMAIL_RESEND_SECONDS = 60;
+
+    // Last accepted TOTP timestamp per user — a code that already signed
+    // someone in can't be replayed within its 30-second window.
+    private const TWO_FACTOR_TOTP_LAST_PREFIX = 'two_factor_totp_last:';
+
+    public function __construct(
+        UserRepository $userRepository,
+        AuditLogRepository $auditLogRepository,
+        SecurityRepository $securityRepository,
+        Google2FA $google2fa,
+    ) {
         $this->userRepository = $userRepository;
+        $this->auditLogRepository = $auditLogRepository;
+        $this->securityRepository = $securityRepository;
+        $this->google2fa = $google2fa;
     }
 
     public function getUser(string $uuid)
@@ -33,13 +69,10 @@ class UserService
         return new UserResource($user);
     }
 
-    // NOTE — deliberate scope boundary: this method does NOT check
-    // two_factor_confirmed_at or prompt for a TOTP/recovery code, even for
-    // admins who have enabled 2FA in Settings → Security (SecurityService).
-    // Password + 2FA setup there are real (a genuine TOTP secret is
-    // generated and verified), but not yet ENFORCED at sign-in — that's a
-    // separate, not-yet-built change to this method. Don't assume
-    // "two_factor_enabled: true" means a login is actually gated on it.
+    // 2FA is enforced here: a user with two_factor_confirmed_at set gets a
+    // short-lived challenge instead of a token (see verifyTwoFactorLogin),
+    // same two-step shape as the forget-password flow (email -> OTP ->
+    // short-lived reset_token -> real action).
     public function login(object $payload)
     {
         if (empty($payload->email) || empty($payload->password)) {
@@ -57,6 +90,10 @@ class UserService
         }
 
         if (! Hash::check($payload->password, $user->password)) {
+            $this->auditLogRepository->recordAuthEvent(
+                $user->id, 'Login Failed', ['reason' => 'wrong_password'], $payload->ip(), $payload->userAgent(),
+            );
+
             return response()->json([
                 'message' => 'Invalid password'
             ], 401);
@@ -101,24 +138,242 @@ class UserService
             ], 403);
         }
 
-        // Named from the User-Agent rather than the email so Settings →
-        // Login Sessions (SecurityService::sessions) can show a meaningful
-        // per-device label. $payload is the raw Request here, so
-        // ->userAgent() is real; truncated because it's client-controlled
-        // input and this is a display label, not parsed/prettified into a
-        // "Chrome on Windows"-style string (no UA-parsing dependency).
-        $token = $user->createToken(Str::limit($payload->userAgent() ?? 'Unknown device', 150, ''))->plainTextToken;
+        if ($user->two_factor_confirmed_at !== null) {
+            $challengeToken = Str::random(64);
+
+            Cache::put(
+                self::TWO_FACTOR_CHALLENGE_PREFIX . $challengeToken,
+                ['user_id' => $user->id, 'attempts' => 0],
+                now()->addMinutes(self::TWO_FACTOR_CHALLENGE_EXPIRY_MINUTES),
+            );
+
+            return response()->json([
+                'requires_two_factor' => true,
+                'challenge_token' => $challengeToken,
+                'email' => $user->email,
+                'personal_email_available' => $user->personal_email_verified_at !== null,
+            ], 200);
+        }
 
         return response()->json([
             'user' => new UserResource($user),
-            'token' => $token,
+            'token' => $this->issueLoginToken($user, $payload, 'password'),
         ], 200);
     }
 
-    public function logoutUser(object $user)
+    // The one place a login session is created, for both a plain password
+    // login and a completed 2FA challenge. The token is named with a short
+    // "Browser on OS" label (UserAgentParser) and also keeps the raw
+    // IP/User-Agent, so Settings → Login Sessions (SecurityService::sessions)
+    // can show the device, and a later remote revocation can log that
+    // session's device in Login History rather than the revoker's.
+    // $method (password / authenticator / recovery_code / email_code) is
+    // recorded on the Login history row.
+    private function issueLoginToken(User $user, Request $request, string $method): string
     {
-        if ($user->currentAccessToken()) {
-            $user->currentAccessToken()->delete();
+        $newToken = $user->createToken(UserAgentParser::describe($request->userAgent()));
+
+        $newToken->accessToken->forceFill([
+            'ip_address' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+        ])->save();
+
+        $this->auditLogRepository->recordAuthEvent(
+            $user->id,
+            'Login',
+            ['method' => $method, 'token_id' => $newToken->accessToken->id],
+            $request->ip(),
+            $request->userAgent(),
+        );
+
+        return $newToken->plainTextToken;
+    }
+
+    // Second step of the challenge started above: tries the submitted code
+    // against, in order, a TOTP code (never the same one twice), a recovery
+    // code (single-use — see SecurityRepository::consumeRecoveryCode), then
+    // an emailed OTP if one was requested via requestTwoFactorEmailCode
+    // (stored on the same cache entry). Succeeds exactly like a normal login
+    // once any one matches; TWO_FACTOR_MAX_ATTEMPTS misses kill the challenge.
+    public function verifyTwoFactorLogin(object $payload)
+    {
+        $key = self::TWO_FACTOR_CHALLENGE_PREFIX . $payload->challenge_token;
+        $challenge = Cache::get($key);
+
+        if (! $challenge) {
+            return response()->json([
+                'message' => 'This sign-in attempt has expired. Please log in again.',
+                'challenge_expired' => true,
+            ], 422);
+        }
+
+        $user = $this->userRepository->findByField('id', $challenge['user_id']);
+        $code = trim((string) $payload->code);
+        $method = null;
+
+        // Recovery codes contain a dash; TOTP and emailed codes are 6 digits.
+        // Only a 6-digit code is tried as TOTP, so a recovery code attempt
+        // never burns a TOTP replay slot (and vice versa).
+        $isNumericCode = preg_match('/^\d{6}$/', $code) === 1;
+
+        if ($isNumericCode && $user->two_factor_secret) {
+            $lastKey = self::TWO_FACTOR_TOTP_LAST_PREFIX . $user->id;
+            $timestamp = $this->google2fa->verifyKeyNewer(
+                $user->two_factor_secret,
+                $code,
+                (int) Cache::get($lastKey, 0),
+            );
+
+            if ($timestamp !== false) {
+                Cache::put($lastKey, $timestamp, now()->addMinutes(5));
+                $method = 'authenticator';
+            }
+        }
+
+        if (! $method && ! $isNumericCode && $this->securityRepository->consumeRecoveryCode($user, strtoupper($code))) {
+            $method = 'recovery_code';
+        }
+
+        if (
+            ! $method
+            && $isNumericCode
+            && ! empty($challenge['email_otp_hash'])
+            && ! Carbon::parse($challenge['email_otp_created_at'])->addMinutes(self::OTP_EXPIRY_MINUTES)->isPast()
+            && Hash::check($code, $challenge['email_otp_hash'])
+        ) {
+            $method = 'email_code';
+        }
+
+        if (! $method) {
+            $this->auditLogRepository->recordAuthEvent(
+                $user->id, 'Login Failed', ['reason' => 'invalid_two_factor_code'], $payload->ip(), $payload->userAgent(),
+            );
+
+            $challenge['attempts'] = ($challenge['attempts'] ?? 0) + 1;
+
+            if ($challenge['attempts'] >= self::TWO_FACTOR_MAX_ATTEMPTS) {
+                Cache::forget($key);
+
+                return response()->json([
+                    'message' => 'Too many incorrect codes. Please sign in again.',
+                    'challenge_expired' => true,
+                ], 422);
+            }
+
+            // Cache::put resets the TTL — fine, since attempts are capped.
+            Cache::put($key, $challenge, now()->addMinutes(self::TWO_FACTOR_CHALLENGE_EXPIRY_MINUTES));
+
+            $remaining = self::TWO_FACTOR_MAX_ATTEMPTS - $challenge['attempts'];
+
+            return response()->json([
+                'message' => "Invalid or expired code. {$remaining} " . Str::plural('attempt', $remaining) . ' left.',
+                'attempts_remaining' => $remaining,
+            ], 422);
+        }
+
+        Cache::forget($key);
+
+        $response = [
+            'user' => new UserResource($user),
+            'token' => $this->issueLoginToken($user, $payload, $method),
+        ];
+
+        // Lets the frontend warn "only N recovery codes left" right after
+        // one is spent — they're single-use and easy to run out of.
+        if ($method === 'recovery_code') {
+            $response['recovery_codes_remaining'] = $this->securityRepository->recoveryCodesRemaining($user);
+        }
+
+        return response()->json($response, 200);
+    }
+
+    // Alternative to a TOTP/recovery code during the challenge above — only
+    // available once the account has a VERIFIED personal email
+    // (SecurityService::verifyPersonalEmail). The OTP is stashed on the same
+    // cache entry the challenge_token already points at, not a new one, so
+    // verifyTwoFactorLogin has a single place to check.
+    public function requestTwoFactorEmailCode(object $payload)
+    {
+        $key = self::TWO_FACTOR_CHALLENGE_PREFIX . $payload->challenge_token;
+        $challenge = Cache::get($key);
+
+        if (! $challenge) {
+            return response()->json([
+                'message' => 'This sign-in attempt has expired. Please log in again.',
+                'challenge_expired' => true,
+            ], 422);
+        }
+
+        $user = $this->userRepository->findByField('id', $challenge['user_id']);
+
+        if (! $user->personal_email || $user->personal_email_verified_at === null) {
+            return response()->json([
+                'message' => 'No verified personal email on file for this account.',
+            ], 422);
+        }
+
+        if (! empty($challenge['email_otp_created_at'])) {
+            $waitSeconds = self::TWO_FACTOR_EMAIL_RESEND_SECONDS
+                - (int) Carbon::parse($challenge['email_otp_created_at'])->diffInSeconds(now());
+
+            if ($waitSeconds > 0) {
+                return response()->json([
+                    'message' => "Please wait {$waitSeconds} seconds before requesting another code.",
+                    'retry_after' => $waitSeconds,
+                    'masked_email' => $this->maskEmail($user->personal_email),
+                ], 429);
+            }
+        }
+
+        $otp = (string) random_int(100000, 999999);
+        $challenge['email_otp_hash'] = Hash::make($otp);
+        $challenge['email_otp_created_at'] = now()->toISOString();
+
+        Cache::put($key, $challenge, now()->addMinutes(self::TWO_FACTOR_CHALLENGE_EXPIRY_MINUTES));
+
+        $sent = $this->deliver(
+            $user->personal_email,
+            new TwoFactorLoginOtpMail($otp, self::OTP_EXPIRY_MINUTES),
+            'two-factor login OTP',
+        );
+
+        if (! $sent) {
+            return response()->json([
+                'message' => 'We could not send the code right now. Please try again in a moment.',
+            ], 503);
+        }
+
+        return response()->json([
+            'message' => 'A code has been sent to your personal email.',
+            'masked_email' => $this->maskEmail($user->personal_email),
+            'retry_after' => self::TWO_FACTOR_EMAIL_RESEND_SECONDS,
+        ], 200);
+    }
+
+    // "etnegaled14@gmail.com" -> "et*********@gmail.com" — enough for the
+    // user to recognise which inbox to check, without the unauthenticated
+    // challenge page disclosing the full personal address.
+    private function maskEmail(string $email): string
+    {
+        [$local, $domain] = array_pad(explode('@', $email, 2), 2, '');
+        $visible = mb_substr($local, 0, min(2, mb_strlen($local)));
+
+        return $visible . str_repeat('*', max(mb_strlen($local) - mb_strlen($visible), 3)) . '@' . $domain;
+    }
+
+    public function logoutUser(object $user, ?Request $request = null)
+    {
+        $token = $user->currentAccessToken();
+
+        if ($token) {
+            $this->auditLogRepository->recordAuthEvent(
+                $user->id,
+                'Logout',
+                ['reason' => 'signed_out', 'token_id' => $token->id],
+                $request?->ip(),
+                $request?->userAgent(),
+            );
+            $token->delete();
         }
 
         return response()->json(['message' => 'Logged out successfully'], 200);
@@ -249,6 +504,10 @@ class UserService
         ]);
 
         DB::table('password_reset_tokens')->where('email', $user->email)->delete();
+
+        foreach ($user->tokens as $token) {
+            $this->auditLogRepository->recordSessionEnded($user->id, $token, 'password_reset');
+        }
 
         $user->tokens()->delete();
 

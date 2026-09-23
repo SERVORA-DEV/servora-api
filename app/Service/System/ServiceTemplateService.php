@@ -4,6 +4,7 @@ namespace App\Service\System;
 
 use App\Http\Resources\System\ServiceTemplateResource;
 use App\Models\User;
+use App\Repository\AuditLogRepository;
 use App\Repository\Business\ServiceVariantRepository;
 use App\Repository\System\ServiceTemplateRepository;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -12,18 +13,22 @@ use Illuminate\Support\Facades\DB;
 // Admin CRUD over the global service catalog. A template is stored as a
 // Service row with is_template = true and no spa_business_id, so its
 // duration/price options reuse service_variants unchanged — which is what lets
-// an owner adopt one without any translation step.
+// an owner adopt one without any translation step. Audit-logged under the
+// 'service_templates' module (the rows themselves live in `services`).
 class ServiceTemplateService
 {
     private ServiceTemplateRepository $serviceTemplateRepository;
     private ServiceVariantRepository $serviceVariantRepository;
+    private AuditLogRepository $auditLogRepository;
 
     public function __construct(
         ServiceTemplateRepository $serviceTemplateRepository,
         ServiceVariantRepository $serviceVariantRepository,
+        AuditLogRepository $auditLogRepository,
     ) {
         $this->serviceTemplateRepository = $serviceTemplateRepository;
         $this->serviceVariantRepository = $serviceVariantRepository;
+        $this->auditLogRepository = $auditLogRepository;
     }
 
     public function listTemplates(?string $category = null, int $perPage = 15)
@@ -72,6 +77,11 @@ class ServiceTemplateService
             return $template;
         });
 
+        $this->auditLogRepository->recordAdminAction('service_templates', $template->id, 'Create', null, [
+            'name' => $template->name,
+            'duration_options' => count($variants),
+        ]);
+
         return new ServiceTemplateResource($template->load('variants'));
     }
 
@@ -81,6 +91,7 @@ class ServiceTemplateService
 
         $variants = $payload['variants'] ?? null;
         unset($payload['variants'], $payload['spa_business_id'], $payload['is_template'], $payload['source_template_id']);
+        [$old, $new] = $this->auditLogRepository->diff($template->getAttributes(), $payload);
 
         try {
             DB::transaction(function () use ($template, $payload, $variants) {
@@ -103,17 +114,24 @@ class ServiceTemplateService
             ], 422);
         }
 
+        $updated = $this->serviceTemplateRepository->findByUuid($uuid);
+
+        $this->auditLogRepository->recordAdminAction('service_templates', $updated->id, 'Update', $old, array_merge(
+            $new ?? [],
+            ['name' => $updated->name],
+            $variants !== null ? ['duration_options' => count($variants)] : [],
+        ));
+
         // Editing a template deliberately touches nothing that was adopted from
         // it — source_template_id is provenance, never a sync link.
-        return new ServiceTemplateResource(
-            $this->serviceTemplateRepository->findByUuid($uuid)
-        );
+        return new ServiceTemplateResource($updated);
     }
 
     public function deleteTemplate(string $uuid): void
     {
-        $this->serviceTemplateRepository->delete(
-            $this->serviceTemplateRepository->findByUuid($uuid)
-        );
+        $template = $this->serviceTemplateRepository->findByUuid($uuid);
+        $this->serviceTemplateRepository->delete($template);
+
+        $this->auditLogRepository->recordAdminAction('service_templates', $template->id, 'Delete', null, ['name' => $template->name]);
     }
 }

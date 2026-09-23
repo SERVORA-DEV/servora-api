@@ -69,6 +69,11 @@ class SecurityController extends Controller
         return $this->securityService->verifyPersonalEmail($request->user(), $request->validated());
     }
 
+    public function loginHistory(Request $request)
+    {
+        return $this->securityService->loginHistory($request->user(), $request->user()->currentAccessToken()?->id);
+    }
+
     public function sessions(Request $request)
     {
         return $this->securityService->sessions($request->user(), $request->user()->currentAccessToken()?->id);
@@ -77,5 +82,10 @@ class SecurityController extends Controller
     public function revokeSession(Request $request, int $id)
     {
         return $this->securityService->revokeSession($request->user(), $id, $request->user()->currentAccessToken()?->id);
+    }
+
+    public function revokeOtherSessions(Request $request)
+    {
+        return $this->securityService->revokeOtherSessions($request->user(), $request->user()->currentAccessToken()?->id);
     }
 }

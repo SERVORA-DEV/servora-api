@@ -2,6 +2,7 @@
 
 namespace App\Repository\System;
 
+use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
@@ -49,9 +50,14 @@ class SubscriptionPlanRepository
         ->first();
     }
 
+    // Also counts owners only PENDING a move to this plan (a version created
+    // by an earlier edit — see PlanChangeService): editing it in place would
+    // silently change terms they were already told about or accepted, so it
+    // must be versioned (and they re-asked) too.
     public function hasSubscribers(SubscriptionPlan $plan): bool
     {
-        return $plan->subscriptions()->exists();
+        return $plan->subscriptions()->exists()
+            || Subscription::where('pending_plan_id', $plan->id)->exists();
     }
 
     public function update(string $uuid, array $payload)

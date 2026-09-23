@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Service\SubscriptionService;
 use App\Http\Requests\SubscriptionRequest;
+use App\Http\Requests\PlanChangeDecisionRequest;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -31,6 +32,13 @@ class SubscriptionController extends Controller
         return response()->json(
             $this->subscriptionService->confirmPendingPayment($request->user(), $referenceId)
         );
+    }
+
+    // Owner's answer to an admin plan change: accept the updated plan for
+    // their next renewal, or decline and let the subscription end.
+    public function respondToPlanChange(PlanChangeDecisionRequest $request)
+    {
+        return $this->subscriptionService->respondToPlanChange($request->user(), $request->validated('decision'));
     }
 
     public function show(string $uuid)

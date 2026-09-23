@@ -2,6 +2,7 @@
 
 namespace App\Service;
 
+use App\Models\SystemSetting;
 use App\Models\User;
 use App\Repository\SubscriptionRepository;
 use App\Repository\SpaBusinessRepository;
@@ -54,6 +55,7 @@ class SubscriptionService
         XenditService $xenditService,
         AdminUsersRepository $adminUsersRepository,
         NotificationService $notificationService,
+        private PlanChangeService $planChangeService,
     ) {
         $this->subscriptionRepository = $subscriptionRepository;
         $this->businessRepository = $businessRepository;
@@ -110,6 +112,22 @@ class SubscriptionService
             ], 200);
         }
 
+        // Same grace window EnsureBusinessSubscribed uses to keep the
+        // dashboard reachable past expires_at — surfaced here so the owner
+        // sees they're in it, not just silently kept logged in.
+        $graceDays = SystemSetting::current()->subscription_grace_period_days;
+        // No grace for a subscription the owner chose to let end (declined
+        // an updated plan — see PlanChangeService).
+        $isLapsed = $subscription->status === 'Active'
+            && ! $subscription->isEndingByChoice()
+            && $subscription->expires_at !== null
+            && $subscription->expires_at->isPast();
+        // diffInDays returns a float (fractional days) — round for a clean
+        // whole-day comparison/display.
+        $daysSinceExpiry = $isLapsed ? (int) round($subscription->expires_at->diffInDays(now())) : 0;
+        $inGracePeriod = $isLapsed && $daysSinceExpiry <= $graceDays;
+        $graceDaysRemaining = $inGracePeriod ? max(0, $graceDays - $daysSinceExpiry) : null;
+
         return response()->json([
             'has_subscription' => true,
             'subscription' => new SubscriptionResource($subscription),
@@ -120,7 +138,17 @@ class SubscriptionService
             // mid-cycle.
             'branches_used' => $business->branches()->count(),
             'staff_used' => $this->accountRepository->countForBusiness($business->id),
+            'in_grace_period' => $inGracePeriod,
+            'grace_days_remaining' => $graceDaysRemaining,
+            // Admin updated this subscription's plan — the owner's
+            // accept/cancel prompt (null when there's nothing to answer).
+            'plan_change' => $this->planChangeService->present($subscription),
         ], 200);
+    }
+
+    public function respondToPlanChange(User $user, string $decision)
+    {
+        return $this->planChangeService->respond($user, $decision);
     }
 
     // Does NOT create the subscription — it creates a Xendit invoice for
