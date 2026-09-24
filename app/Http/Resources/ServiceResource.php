@@ -30,7 +30,7 @@ class ServiceResource extends JsonResource
             'image_url' => ImageUploadService::url($this->image_path),
             'is_active' => (bool) $this->is_active,
 
-            // Each bookable duration/price/commission/points option — see
+            // Each bookable duration/price/points option — see
             // ServiceVariantResource. Always loaded by the repository
             // (unlike its nested `branches`, which stays optional).
             //

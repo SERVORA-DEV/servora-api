@@ -65,6 +65,7 @@ class UserPermission extends Model
         'attendance_create',
         'attendance_update',
         'attendance_delete',
+        'attendance_checkin',
 
         'commission_view',
         'commission_update',
@@ -169,6 +170,7 @@ class UserPermission extends Model
             'attendance_create' => 'boolean',
             'attendance_update' => 'boolean',
             'attendance_delete' => 'boolean',
+            'attendance_checkin' => 'boolean',
 
             'commission_view' => 'boolean',
             'commission_update' => 'boolean',

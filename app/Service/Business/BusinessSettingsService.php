@@ -11,6 +11,7 @@ use App\Repository\SpaBusinessRepository;
 use App\Services\ImageUploadService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Arr;
 
 // Backs the owner's Business Settings pages (web /business/settings/business/*).
 // Every write returns the full settings payload so the client can re-hydrate
@@ -102,8 +103,22 @@ class BusinessSettingsService
         }
 
         $settings = $this->settingsFor($business);
-        $current = $settings->section($section);
 
+        // Staff Policies also carries the default permissions per account
+        // role, which live in their own column.
+        $rolePermissions = Arr::pull($fields, 'role_permissions');
+        if (is_array($rolePermissions)) {
+            $stored = $settings->role_permissions ?? [];
+            foreach ($rolePermissions as $role => $flags) {
+                $stored[$role] = array_merge(
+                    $stored[$role] ?? [],
+                    array_map(fn ($v) => filter_var($v, FILTER_VALIDATE_BOOLEAN), (array) $flags),
+                );
+            }
+            $settings->role_permissions = $stored;
+        }
+
+        $current = $settings->section($section);
         $settings->{$section} = $this->castLike(SpaBusinessSetting::DEFAULTS[$section], array_replace_recursive($current, $fields));
         $settings->save();
 

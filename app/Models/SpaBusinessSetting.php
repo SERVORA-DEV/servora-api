@@ -8,6 +8,9 @@ class SpaBusinessSetting extends Model
 {
     public const SECTIONS = ['payments', 'staff_policy', 'booking_defaults', 'notifications'];
 
+    // Roles whose starting permissions the owner sets in Staff Policies.
+    public const ACCOUNT_ROLES = ['manager', 'front_officer'];
+
     // Returned for any key the owner has never saved. Mirrors the starting
     // values the web settings pages used before they were persisted, so an
     // existing business sees the same screen it always did.
@@ -39,12 +42,6 @@ class SpaBusinessSetting extends Model
             'allow_shift_swap' => false,
             'require_manager_approval' => true,
             'allow_overtime' => false,
-
-            'staff_can_view_all_bookings' => false,
-            'staff_can_cancel_bookings' => false,
-            'staff_can_edit_client_info' => true,
-            'staff_can_process_refunds' => false,
-            'staff_can_view_reports' => false,
         ],
 
         'booking_defaults' => [
@@ -121,6 +118,7 @@ class SpaBusinessSetting extends Model
         'staff_policy',
         'booking_defaults',
         'notifications',
+        'role_permissions',
     ];
 
     protected function casts(): array
@@ -130,6 +128,7 @@ class SpaBusinessSetting extends Model
             'staff_policy' => 'array',
             'booking_defaults' => 'array',
             'notifications' => 'array',
+            'role_permissions' => 'array',
         ];
     }
 
@@ -144,6 +143,21 @@ class SpaBusinessSetting extends Model
     public function section(string $name): array
     {
         return self::mergeKnown(self::DEFAULTS[$name], $this->{$name} ?? []);
+    }
+
+    // The permissions a new account of $role starts with: every key in that
+    // role's config/permission.php bundle, on unless the owner turned it off.
+    // Keys outside the bundle can never be granted, whatever is stored.
+    public function rolePermissions(string $role): array
+    {
+        $stored = $this->role_permissions[$role] ?? [];
+        $result = [];
+
+        foreach (config('permission.'.$role, []) as $key) {
+            $result[$key] = array_key_exists($key, $stored) ? (bool) $stored[$key] : true;
+        }
+
+        return $result;
     }
 
     private static function mergeKnown(array $defaults, array $stored): array

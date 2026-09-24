@@ -7,10 +7,11 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-// One bookable duration/price/commission/points combo under a parent
+// One bookable duration/price/points combo under a parent
 // Service (e.g. "30 min / ₱450" vs "60 min / ₱900" under "Swedish
 // Massage"). branch_services and package_services point here, not at
-// services directly, since price/commission/points live at this level.
+// services directly, since price/points live at this level. Commission is
+// never set per item — it comes from Business Settings → Staff Policies.
 class ServiceVariant extends Model
 {
     use HasFactory, HasUuids, SoftDeletes;
@@ -20,7 +21,6 @@ class ServiceVariant extends Model
         'service_id',
         'duration_minutes',
         'price',
-        'commission_amount',
         'loyalty_points',
     ];
 
@@ -28,7 +28,6 @@ class ServiceVariant extends Model
     {
         return [
             'price' => 'decimal:2',
-            'commission_amount' => 'decimal:2',
         ];
     }
 

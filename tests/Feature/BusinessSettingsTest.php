@@ -159,6 +159,43 @@ class BusinessSettingsTest extends TestCase
         ], false))->assertStatus(422)->assertJsonValidationErrors('accept_cash');
     }
 
+    public function test_role_permission_defaults_start_all_on_and_round_trip(): void
+    {
+        $this->getJson('/api/business/settings')
+            ->assertOk()
+            ->assertJsonPath('data.role_permissions.manager.staff_create', true)
+            ->assertJsonPath('data.role_permissions.front_officer.payment_create', true)
+            ->assertJsonMissingPath('data.role_permissions.front_officer.staff_create');
+
+        $this->patchJson('/api/business/settings/staff-policy', [
+            'late_threshold_minutes' => 15,
+            'role_permissions' => [
+                'manager' => ['staff_create' => false],
+                'front_officer' => ['payment_create' => false],
+            ],
+        ])->assertOk()
+            ->assertJsonPath('data.staff_policy.late_threshold_minutes', 15)
+            ->assertJsonPath('data.role_permissions.manager.staff_create', false)
+            ->assertJsonPath('data.role_permissions.manager.staff_view', true)
+            ->assertJsonPath('data.role_permissions.front_officer.payment_create', false);
+
+        // A later partial save keeps earlier choices.
+        $this->patchJson('/api/business/settings/staff-policy', ['role_permissions' => ['manager' => ['staff_view' => false]]])
+            ->assertOk()
+            ->assertJsonPath('data.role_permissions.manager.staff_create', false)
+            ->assertJsonPath('data.role_permissions.manager.staff_view', false);
+    }
+
+    public function test_role_permissions_reject_keys_outside_the_roles_bundle(): void
+    {
+        // Front officers can never manage staff, so it can't be a default.
+        $this->patchJson('/api/business/settings/staff-policy', ['role_permissions' => ['front_officer' => ['staff_create' => true]]])
+            ->assertStatus(422)->assertJsonValidationErrors('role_permissions.front_officer');
+
+        $this->patchJson('/api/business/settings/staff-policy', ['role_permissions' => ['business_owner' => ['staff_view' => true]]])
+            ->assertStatus(422)->assertJsonValidationErrors('role_permissions');
+    }
+
     public function test_managers_cannot_change_business_settings(): void
     {
         Sanctum::actingAs(User::factory()->create(['role' => 'manager']));

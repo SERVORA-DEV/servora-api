@@ -15,7 +15,6 @@ class BranchPackage extends Model
         'spa_branch_id',
         'package_id',
         'custom_price',
-        'custom_commission',
         'is_available',
     ];
 
@@ -23,7 +22,6 @@ class BranchPackage extends Model
     {
         return [
             'custom_price' => 'decimal:2',
-            'custom_commission' => 'decimal:2',
             'is_available' => 'boolean',
         ];
     }

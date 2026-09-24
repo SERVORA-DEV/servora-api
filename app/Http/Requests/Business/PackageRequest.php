@@ -35,7 +35,6 @@ class PackageRequest extends FormRequest
             'description' => 'nullable|string',
             'duration_minutes' => 'nullable|integer|min:1',
             'default_price' => [$isCreate ? 'required' : 'sometimes', 'numeric', 'min:0'],
-            'default_commission_amount' => 'nullable|numeric|min:0',
             'loyalty_points' => 'nullable|integer|min:0',
             'is_active' => 'sometimes|boolean',
 

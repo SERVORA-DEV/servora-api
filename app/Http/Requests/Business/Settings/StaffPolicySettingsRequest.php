@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business\Settings;
 
+use App\Models\SpaBusinessSetting;
 use Illuminate\Foundation\Http\FormRequest;
 
 class StaffPolicySettingsRequest extends FormRequest
@@ -35,12 +36,32 @@ class StaffPolicySettingsRequest extends FormRequest
             'require_manager_approval' => 'sometimes|boolean',
             'allow_overtime' => 'sometimes|boolean',
 
-            'staff_can_view_all_bookings' => 'sometimes|boolean',
-            'staff_can_cancel_bookings' => 'sometimes|boolean',
-            'staff_can_edit_client_info' => 'sometimes|boolean',
-            'staff_can_process_refunds' => 'sometimes|boolean',
-            'staff_can_view_reports' => 'sometimes|boolean',
+            // Default permissions per account role — keys are checked
+            // against each role's bundle in withValidator().
+            'role_permissions' => 'sometimes|array',
+            'role_permissions.manager' => 'sometimes|array',
+            'role_permissions.front_officer' => 'sometimes|array',
+            'role_permissions.*.*' => 'boolean',
         ];
+    }
+
+    public function withValidator($validator): void
+    {
+        $validator->after(function ($validator) {
+            $roles = (array) $this->input('role_permissions', []);
+
+            foreach ($roles as $role => $flags) {
+                if (! in_array($role, SpaBusinessSetting::ACCOUNT_ROLES, true)) {
+                    $validator->errors()->add('role_permissions', "Unknown role: {$role}.");
+                    continue;
+                }
+
+                $unknown = array_diff(array_keys((array) $flags), config('permission.'.$role, []));
+                if ($unknown) {
+                    $validator->errors()->add("role_permissions.{$role}", 'Not a permission this role can have: '.implode(', ', $unknown).'.');
+                }
+            }
+        });
     }
 
     /**

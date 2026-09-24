@@ -23,7 +23,6 @@ class ServiceVariantRepository
             $attrs = [
                 'duration_minutes' => $row['duration_minutes'],
                 'price' => $row['price'],
-                'commission_amount' => $row['commission_amount'] ?? null,
                 'loyalty_points' => $row['loyalty_points'] ?? null,
             ];
 

@@ -17,15 +17,18 @@ class AccountService
     private AccountRepository $accountRepository;
     private StaffRepository $staffRepository;
     private SpaBusinessRepository $spaBusinessRepository;
+    private BusinessSettingsService $businessSettingsService;
 
     public function __construct(
         AccountRepository $accountRepository,
         StaffRepository $staffRepository,
         SpaBusinessRepository $spaBusinessRepository,
+        BusinessSettingsService $businessSettingsService,
     ) {
         $this->accountRepository = $accountRepository;
         $this->staffRepository = $staffRepository;
         $this->spaBusinessRepository = $spaBusinessRepository;
+        $this->businessSettingsService = $businessSettingsService;
     }
 
     public function listAccounts(User $user, int $perPage = 15)
@@ -80,12 +83,13 @@ class AccountService
 
         $this->accountRepository->assignStaff($account, $staff);
 
-        // No granular permission picker on this form — an account gets its
-        // role's full permission bundle by default; individual flags can
-        // be toggled afterward via updateAccount().
-        $roleConfig = config('permission.' . $role, []);
+        // No permission picker on this form — an account starts with the
+        // owner's defaults for its role (Business Settings → Staff Policies,
+        // every key in the role's bundle, on unless turned off there).
+        // Individual flags can be adjusted afterward via updateAccount().
+        $defaults = $this->businessSettingsService->settingsFor($business)->rolePermissions($role);
         $this->accountRepository->createPermission(array_merge(
-            array_fill_keys($roleConfig, true),
+            $defaults,
             ['user_id' => $account->id]
         ));
 

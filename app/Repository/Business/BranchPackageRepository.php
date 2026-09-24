@@ -38,7 +38,6 @@ class BranchPackageRepository
                 [
                     'is_available' => $row['is_available'],
                     'custom_price' => $row['custom_price'] ?? null,
-                    'custom_commission' => $row['custom_commission'] ?? null,
                 ]
             );
         }

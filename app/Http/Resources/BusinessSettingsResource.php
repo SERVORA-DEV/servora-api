@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Models\SpaBusinessSetting;
 use App\Services\ImageUploadService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -47,6 +48,12 @@ class BusinessSettingsResource extends JsonResource
             'staff_policy' => $settings->section('staff_policy'),
             'booking_defaults' => $settings->section('booking_defaults'),
             'notifications' => $settings->section('notifications'),
+
+            // Starting permissions for new Manager / Front Officer accounts.
+            // Every key the role can have is listed, so the UI knows the set.
+            'role_permissions' => collect(SpaBusinessSetting::ACCOUNT_ROLES)
+                ->mapWithKeys(fn ($role) => [$role => $settings->rolePermissions($role)])
+                ->all(),
         ];
     }
 }

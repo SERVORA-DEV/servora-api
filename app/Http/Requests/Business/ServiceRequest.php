@@ -72,7 +72,7 @@ class ServiceRequest extends FormRequest
                 'max:'.config('uploads.max_size_kb', 5120),
             ],
 
-            // Every bookable duration/price/commission/points option for
+            // Every bookable duration/price/points option for
             // this service. `uuid` addresses an existing variant on update
             // (validated for ownership in withValidator below); omitted
             // means "create a new one." Anything not present in the payload
@@ -81,7 +81,6 @@ class ServiceRequest extends FormRequest
             'variants.*.uuid' => 'nullable|uuid',
             'variants.*.duration_minutes' => 'required_with:variants|integer|min:1',
             'variants.*.price' => 'required_with:variants|numeric|min:0',
-            'variants.*.commission_amount' => 'nullable|numeric|min:0',
             'variants.*.loyalty_points' => 'nullable|integer|min:0',
         ];
     }

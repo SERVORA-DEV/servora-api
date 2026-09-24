@@ -21,7 +21,6 @@ class PackageResource extends JsonResource
             'description' => $this->description,
             'duration_minutes' => $this->duration_minutes,
             'default_price' => (float) $this->default_price,
-            'default_commission_amount' => $this->default_commission_amount !== null ? (float) $this->default_commission_amount : null,
             'loyalty_points' => $this->loyalty_points !== null ? (int) $this->loyalty_points : null,
             'is_active' => (bool) $this->is_active,
 
@@ -48,7 +47,6 @@ class PackageResource extends JsonResource
                 'branch_name' => $bp->branch?->branch_name,
                 'is_available' => (bool) $bp->is_available,
                 'custom_price' => $bp->custom_price !== null ? (float) $bp->custom_price : null,
-                'custom_commission' => $bp->custom_commission !== null ? (float) $bp->custom_commission : null,
             ])),
 
             'created_at' => $this->created_at,

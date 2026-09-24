@@ -34,9 +34,9 @@ class ServicePackageSeeder extends Seeder
                 'code' => 'SWM',
                 'description' => 'A gentle full-body massage using long, flowing strokes to ease tension and promote relaxation.',
                 'variants' => [
-                    ['duration_minutes' => 30, 'price' => 450.00, 'commission_amount' => 50.00, 'loyalty_points' => 5],
-                    ['duration_minutes' => 60, 'price' => 800.00, 'commission_amount' => 90.00, 'loyalty_points' => 8],
-                    ['duration_minutes' => 90, 'price' => 1100.00, 'commission_amount' => 120.00, 'loyalty_points' => 11],
+                    ['duration_minutes' => 30, 'price' => 450.00, 'loyalty_points' => 5],
+                    ['duration_minutes' => 60, 'price' => 800.00, 'loyalty_points' => 8],
+                    ['duration_minutes' => 90, 'price' => 1100.00, 'loyalty_points' => 11],
                 ],
             ],
             [
@@ -44,8 +44,8 @@ class ServicePackageSeeder extends Seeder
                 'code' => 'DTM',
                 'description' => 'Firm, targeted pressure to release chronic muscle tension in the deeper layers of tissue.',
                 'variants' => [
-                    ['duration_minutes' => 60, 'price' => 900.00, 'commission_amount' => 100.00, 'loyalty_points' => 9],
-                    ['duration_minutes' => 90, 'price' => 1250.00, 'commission_amount' => 140.00, 'loyalty_points' => 12],
+                    ['duration_minutes' => 60, 'price' => 900.00, 'loyalty_points' => 9],
+                    ['duration_minutes' => 90, 'price' => 1250.00, 'loyalty_points' => 12],
                 ],
             ],
             [
@@ -53,7 +53,7 @@ class ServicePackageSeeder extends Seeder
                 'code' => 'HSM',
                 'description' => 'Heated basalt stones combined with massage to melt away tension and improve circulation.',
                 'variants' => [
-                    ['duration_minutes' => 60, 'price' => 950.00, 'commission_amount' => 105.00, 'loyalty_points' => 9],
+                    ['duration_minutes' => 60, 'price' => 950.00, 'loyalty_points' => 9],
                 ],
             ],
             [
@@ -61,7 +61,7 @@ class ServicePackageSeeder extends Seeder
                 'code' => 'CFC',
                 'description' => 'Cleansing, exfoliation, and hydration for a refreshed, glowing complexion.',
                 'variants' => [
-                    ['duration_minutes' => 45, 'price' => 600.00, 'commission_amount' => 70.00, 'loyalty_points' => 6],
+                    ['duration_minutes' => 45, 'price' => 600.00, 'loyalty_points' => 6],
                 ],
             ],
             [
@@ -69,7 +69,7 @@ class ServicePackageSeeder extends Seeder
                 'code' => 'AAF',
                 'description' => 'A collagen-boosting treatment targeting fine lines and uneven skin tone.',
                 'variants' => [
-                    ['duration_minutes' => 60, 'price' => 1200.00, 'commission_amount' => 130.00, 'loyalty_points' => 12],
+                    ['duration_minutes' => 60, 'price' => 1200.00, 'loyalty_points' => 12],
                 ],
             ],
             [
@@ -77,7 +77,7 @@ class ServicePackageSeeder extends Seeder
                 'code' => 'CMN',
                 'description' => 'Nail shaping, cuticle care, and polish for neat, healthy-looking hands.',
                 'variants' => [
-                    ['duration_minutes' => 30, 'price' => 250.00, 'commission_amount' => 30.00, 'loyalty_points' => 2],
+                    ['duration_minutes' => 30, 'price' => 250.00, 'loyalty_points' => 2],
                 ],
             ],
             [
@@ -85,7 +85,7 @@ class ServicePackageSeeder extends Seeder
                 'code' => 'CPD',
                 'description' => 'A relaxing foot soak with nail shaping, cuticle care, and polish.',
                 'variants' => [
-                    ['duration_minutes' => 45, 'price' => 300.00, 'commission_amount' => 35.00, 'loyalty_points' => 3],
+                    ['duration_minutes' => 45, 'price' => 300.00, 'loyalty_points' => 3],
                 ],
             ],
             [
@@ -93,7 +93,7 @@ class ServicePackageSeeder extends Seeder
                 'code' => 'GMN',
                 'description' => 'Long-lasting, chip-resistant gel polish over a classic manicure.',
                 'variants' => [
-                    ['duration_minutes' => 45, 'price' => 400.00, 'commission_amount' => 45.00, 'loyalty_points' => 4],
+                    ['duration_minutes' => 45, 'price' => 400.00, 'loyalty_points' => 4],
                 ],
             ],
             [
@@ -101,7 +101,7 @@ class ServicePackageSeeder extends Seeder
                 'code' => 'HST',
                 'description' => 'Deep-conditioning scalp massage and treatment to restore shine and strength.',
                 'variants' => [
-                    ['duration_minutes' => 60, 'price' => 700.00, 'commission_amount' => 80.00, 'loyalty_points' => 7],
+                    ['duration_minutes' => 60, 'price' => 700.00, 'loyalty_points' => 7],
                 ],
             ],
             [
@@ -109,7 +109,7 @@ class ServicePackageSeeder extends Seeder
                 'code' => 'BSC',
                 'description' => 'An exfoliating full-body treatment leaving skin smooth and refreshed.',
                 'variants' => [
-                    ['duration_minutes' => 45, 'price' => 650.00, 'commission_amount' => 70.00, 'loyalty_points' => 6],
+                    ['duration_minutes' => 45, 'price' => 650.00, 'loyalty_points' => 6],
                 ],
             ],
         ];
@@ -150,7 +150,6 @@ class ServicePackageSeeder extends Seeder
                 'code' => 'PKG-RR',
                 'description' => 'A Swedish massage paired with a classic facial for full-body relaxation.',
                 'default_price' => 1250.00,
-                'default_commission_amount' => 140.00,
                 'loyalty_points' => 13,
                 'services' => [
                     ['service_variant_uuid' => $variantUuid('Swedish Massage', 60), 'quantity' => 1],
@@ -162,7 +161,6 @@ class ServicePackageSeeder extends Seeder
                 'code' => 'PKG-UP',
                 'description' => 'Deep tissue massage, anti-aging facial, and a classic pedicure in one indulgent session.',
                 'default_price' => 2900.00,
-                'default_commission_amount' => 320.00,
                 'loyalty_points' => 30,
                 'services' => [
                     ['service_variant_uuid' => $variantUuid('Deep Tissue Massage', 90), 'quantity' => 1],
@@ -175,7 +173,6 @@ class ServicePackageSeeder extends Seeder
                 'code' => 'PKG-MP',
                 'description' => 'A classic manicure and pedicure duo for hands and feet in one visit.',
                 'default_price' => 500.00,
-                'default_commission_amount' => 60.00,
                 'loyalty_points' => 5,
                 'services' => [
                     ['service_variant_uuid' => $variantUuid('Classic Manicure', 30), 'quantity' => 1],
@@ -187,7 +184,6 @@ class ServicePackageSeeder extends Seeder
                 'code' => 'PKG-BG',
                 'description' => 'Anti-aging facial, hair spa treatment, and gel manicure to get ready for the big day.',
                 'default_price' => 2100.00,
-                'default_commission_amount' => 230.00,
                 'loyalty_points' => 21,
                 'services' => [
                     ['service_variant_uuid' => $variantUuid('Anti-Aging Facial', 60), 'quantity' => 1],
@@ -200,7 +196,6 @@ class ServicePackageSeeder extends Seeder
                 'code' => 'PKG-CR',
                 'description' => 'Two hot stone massages, side by side — perfect for couples or best friends.',
                 'default_price' => 1800.00,
-                'default_commission_amount' => 200.00,
                 'loyalty_points' => 18,
                 'services' => [
                     ['service_variant_uuid' => $variantUuid('Hot Stone Massage', 60), 'quantity' => 2],

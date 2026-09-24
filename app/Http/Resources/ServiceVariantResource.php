@@ -18,7 +18,6 @@ class ServiceVariantResource extends JsonResource
             'uuid' => $this->uuid,
             'duration_minutes' => $this->duration_minutes,
             'price' => (float) $this->price,
-            'commission_amount' => $this->commission_amount !== null ? (float) $this->commission_amount : null,
             'loyalty_points' => $this->loyalty_points !== null ? (int) $this->loyalty_points : null,
             // Not the variant's own concept — a variant is just a duration/
             // price option of its Service, so its status always mirrors the
@@ -35,7 +34,6 @@ class ServiceVariantResource extends JsonResource
                 'branch_name' => $bs->branch?->branch_name,
                 'is_available' => (bool) $bs->is_available,
                 'custom_price' => $bs->custom_price !== null ? (float) $bs->custom_price : null,
-                'custom_commission' => $bs->custom_commission !== null ? (float) $bs->custom_commission : null,
             ])),
         ];
     }
