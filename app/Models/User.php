@@ -15,9 +15,27 @@ class User extends Authenticatable implements MustVerifyEmail
     /** @use HasFactory<UserFactory> */
     use HasApiTokens, HasFactory, HasUuids, Notifiable;
 
+    public const AUDIENCE_WEB = 'web';
+    public const AUDIENCE_MOBILE = 'mobile';
+
     public function uniqueIds()
     {
         return ['uuid'];
+    }
+
+    // The same email can back one owner-side ('web') account and one client
+    // ('mobile') account, so uniqueness and login lookups are scoped by this.
+    // Always derived from role so the two can't drift apart.
+    protected static function booted(): void
+    {
+        static::saving(function (User $user) {
+            $user->audience = static::audienceForRole($user->role);
+        });
+    }
+
+    public static function audienceForRole(?string $role): string
+    {
+        return $role === 'client' ? self::AUDIENCE_MOBILE : self::AUDIENCE_WEB;
     }
 
     protected $fillable = [

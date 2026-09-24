@@ -18,6 +18,9 @@ class ForgetPasswordRequest extends FormRequest
                 'required',
                 'email',
             ],
+
+            // Which account family the email belongs to; defaults to web.
+            'audience' => ['sometimes', 'in:web,mobile'],
         ];
     }
 }

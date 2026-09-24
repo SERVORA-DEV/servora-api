@@ -40,10 +40,20 @@ class SpaBranchRepository
             ->whereNotNull('latitude')
             ->whereNotNull('longitude');
 
+        // The extra relations feed Explore's filters (open now, category,
+        // starting price) and are constrained exactly like the branch-detail
+        // lookups below, so a browse card can't advertise a service or price
+        // the details screen then doesn't list. Eager-loaded, so a page of up
+        // to 50 branches is still a fixed handful of queries.
         return SpaBranch::query()
             ->fromSub($withDistance, 'spa_branches')
             ->where('distance_km', '<=', $radiusKm)
-            ->with('business')
+            ->with([
+                'business',
+                'schedules',
+                'branchServices' => fn ($q) => self::publicServices($q)->with('serviceVariant.service'),
+                'branchPackages' => fn ($q) => self::publicPackages($q)->with('package'),
+            ])
             ->orderBy('distance_km')
             ->limit($limit)
             ->get();
@@ -67,9 +77,7 @@ class SpaBranchRepository
     // either flag off means a stranger shouldn't see it as bookable here.
     public function publicServicesForBranch(int $branchId): Collection
     {
-        return BranchService::where('spa_branch_id', $branchId)
-            ->where('is_available', true)
-            ->whereHas('serviceVariant.service', fn ($q) => $q->where('is_active', true))
+        return self::publicServices(BranchService::where('spa_branch_id', $branchId))
             ->with('serviceVariant.service')
             ->get();
     }
@@ -78,11 +86,27 @@ class SpaBranchRepository
     // packages.
     public function publicPackagesForBranch(int $branchId): Collection
     {
-        return BranchPackage::where('spa_branch_id', $branchId)
-            ->where('is_available', true)
-            ->whereHas('package', fn ($q) => $q->where('is_active', true))
+        return self::publicPackages(BranchPackage::where('spa_branch_id', $branchId))
             ->with('package')
             ->get();
+    }
+
+    // The "a stranger may see this" rule for branch services and packages,
+    // shared by the branch-detail lookups above and nearby()'s eager loads
+    // so the two can't disagree. Takes and returns a query builder (or a
+    // relation's), since nearby() applies it inside a `with()` constraint.
+    private static function publicServices($query)
+    {
+        return $query
+            ->where('is_available', true)
+            ->whereHas('serviceVariant.service', fn ($q) => $q->where('is_active', true));
+    }
+
+    private static function publicPackages($query)
+    {
+        return $query
+            ->where('is_available', true)
+            ->whereHas('package', fn ($q) => $q->where('is_active', true));
     }
 
     // Name + role only — Staff has no public resource yet and profile_photo

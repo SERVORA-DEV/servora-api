@@ -115,6 +115,33 @@ class SpaBranchService
         return PublicTherapistAvailabilityResource::collection($rows);
     }
 
+    // Backs GET /spas/{uuid}/therapists/{staffUuid}/days-off — public, no
+    // auth. Only dates leave here, never shift times, the same "safe for a
+    // stranger" line PublicTherapistAvailabilityResource draws. The staff
+    // member is looked up within this branch's public roster, so an inactive
+    // therapist or one from another branch is a 404 rather than a leak of
+    // someone else's schedule.
+    public function publicTherapistDaysOff(string $uuid, string $staffUuid, array $query): array
+    {
+        $branch = $this->spaBranchRepository->publicFindByUuid($uuid);
+
+        $staff = $this->spaBranchRepository
+            ->publicTherapistsForBranch($branch->id)
+            ->firstWhere('uuid', $staffUuid);
+
+        abort_if(! $staff, 404, 'Therapist not found.');
+
+        return [
+            'data' => [
+                'days_off' => $this->availabilityService->staffDaysOff(
+                    $staff->id,
+                    $query['from'],
+                    $query['to'],
+                ),
+            ],
+        ];
+    }
+
     // Scoped to what this user can see — every branch for business_owner,
     // only their own assigned branch for manager (see
     // SpaBusinessRepository::branchesForUser). paginateForBusiness() would

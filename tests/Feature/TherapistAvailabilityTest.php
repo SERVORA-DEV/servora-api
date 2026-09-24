@@ -29,12 +29,12 @@ use Tests\TestCase;
 // therapist it can't actually book. Both are exercised through the service
 // layer, the same way BranchDetailResourceTest and AppointmentServiceTest do.
 //
-// Needs MySQL. phpunit.xml points at sqlite :memory:, which cannot build this
-// schema at all — several migrations use raw `ALTER TABLE ... MODIFY ... ENUM`,
-// which is MySQL-only. Run against the existing test database instead:
+// Needs the real database engine: several migrations use engine-specific raw
+// SQL, so sqlite :memory: cannot build this schema. phpunit.xml points at a
+// local Postgres `servora_test` database — never run this against a shared
+// one, since RefreshDatabase drops every table.
 //
-//   DB_CONNECTION=mysql DB_DATABASE=servora_testing DB_URL= \
-//     php artisan test --filter=TherapistAvailabilityTest
+//   php artisan test --filter=TherapistAvailabilityTest
 class TherapistAvailabilityTest extends TestCase
 {
     use RefreshDatabase;
@@ -345,5 +345,105 @@ class TherapistAvailabilityTest extends TestCase
 
         $this->assertNotInstanceOf(JsonResponse::class, $result);
         $this->assertSame(1, Appointment::count());
+    }
+
+    // ── The days-off lookup ──────────────────────────────────────────────
+    //
+    // Feeds the booking calendar once a therapist is picked. It must agree
+    // with staffMatchesSchedule(): a date it lists is one on which no start
+    // time at all would be accepted.
+
+    /** @return list<string> */
+    private function daysOff(string $from = '2027-03-01', string $to = '2027-03-21'): array
+    {
+        return $this->branchService->publicTherapistDaysOff(
+            $this->branch->uuid,
+            $this->therapist->uuid,
+            ['from' => $from, 'to' => $to],
+        )['data']['days_off'];
+    }
+
+    public function test_no_schedule_rows_means_no_days_off(): void
+    {
+        $this->assertSame([], $this->daysOff());
+    }
+
+    public function test_a_weekly_day_off_lists_every_such_date_in_range(): void
+    {
+        $this->schedule(['day_of_week' => 'Sunday', 'is_day_off' => true]);
+        $this->schedule(['start_time' => '09:00:00', 'end_time' => '18:00:00']);
+
+        $this->assertSame(['2027-03-07', '2027-03-14', '2027-03-21'], $this->daysOff());
+    }
+
+    public function test_every_listed_day_off_is_one_the_booking_check_rejects(): void
+    {
+        $this->schedule(['day_of_week' => 'Sunday', 'is_day_off' => true]);
+
+        foreach ($this->daysOff() as $date) {
+            $this->assertFalse(
+                app(\App\Service\Business\AppointmentAvailabilityService::class)
+                    ->staffMatchesSchedule($this->therapist->id, $date, '10:00', 60)['ok'],
+                "{$date} was listed as a day off but would be bookable",
+            );
+        }
+    }
+
+    public function test_effective_until_ends_the_day_off_partway_through_the_range(): void
+    {
+        $this->schedule([
+            'day_of_week' => 'Sunday',
+            'is_day_off' => true,
+            'effective_until' => '2027-03-10',
+        ]);
+
+        $this->assertSame(['2027-03-07'], $this->daysOff());
+    }
+
+    public function test_a_working_shift_on_the_same_weekday_means_the_day_is_not_off(): void
+    {
+        $this->schedule(['day_of_week' => 'Sunday', 'is_day_off' => true]);
+        $this->schedule([
+            'day_of_week' => 'Sunday',
+            'start_time' => '09:00:00',
+            'end_time' => '12:00:00',
+        ]);
+
+        $this->assertSame([], $this->daysOff());
+    }
+
+    public function test_days_off_404s_for_a_therapist_not_active_at_this_branch(): void
+    {
+        $inactive = Staff::factory()->create([
+            'spa_branch_id' => $this->branch->id,
+            'role' => 'therapist',
+            'status' => 'inactive',
+        ]);
+        $elsewhere = Staff::factory()->create([
+            'spa_branch_id' => SpaBranch::factory()->create([
+                'spa_business_id' => $this->business->id,
+            ])->id,
+            'role' => 'therapist',
+            'status' => 'active',
+        ]);
+
+        foreach ([$inactive, $elsewhere] as $staff) {
+            $this->getJson("/api/spas/{$this->branch->uuid}/therapists/{$staff->uuid}/days-off"
+                . '?from=2027-03-01&to=2027-03-21')
+                ->assertNotFound();
+        }
+    }
+
+    public function test_days_off_rejects_an_over_long_range(): void
+    {
+        $this->getJson("/api/spas/{$this->branch->uuid}/therapists/{$this->therapist->uuid}/days-off"
+            . '?from=2027-03-01&to=2027-12-31')
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('to');
+
+        $this->getJson("/api/spas/{$this->branch->uuid}/therapists/{$this->therapist->uuid}/days-off"
+            . '?from=2027-03-01&to=2027-04-30')
+            ->assertOk()
+            ->assertJsonPath('data.days_off', []);
     }
 }

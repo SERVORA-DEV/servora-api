@@ -15,6 +15,16 @@ class UserRepository
         return User::with('staff.branch')->where($field, $value)->first();
     }
 
+    // Email is only unique per audience (web = owner-side accounts,
+    // mobile = clients), so every email lookup must say which one it wants.
+    public function findByEmail(string $email, string $audience)
+    {
+        return User::with('staff.branch')
+            ->where('email', $email)
+            ->where('audience', $audience)
+            ->first();
+    }
+
     public function create(array $payload)
     {
         return User::create($payload);

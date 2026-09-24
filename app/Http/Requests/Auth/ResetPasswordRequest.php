@@ -19,6 +19,8 @@ class ResetPasswordRequest extends FormRequest
                 'email',
             ],
 
+            'audience' => ['sometimes', 'in:web,mobile'],
+
             'reset_token' => [
                 'required',
                 'string',

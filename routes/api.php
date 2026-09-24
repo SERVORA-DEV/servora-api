@@ -89,6 +89,11 @@ Route::get('/spas/{uuid}', [SpaBranchController::class, 'publicShow']);
 // above's way either order, but it's kept after it for consistency.
 Route::get('/spas/{uuid}/therapists', [SpaBranchController::class, 'publicTherapistAvailability']);
 
+// Public, unauthenticated: the dates a branch therapist is off within a
+// window, so the client booking calendar can grey them out once a therapist
+// has been picked. Dates only — never shift times.
+Route::get('/spas/{uuid}/therapists/{staffUuid}/days-off', [SpaBranchController::class, 'publicTherapistDaysOff']);
+
 
 // Private verification documents (government ID front/back, face-scan
 // frames, business registration document) are served directly by

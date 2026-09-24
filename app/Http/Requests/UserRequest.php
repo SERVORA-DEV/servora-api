@@ -56,7 +56,9 @@ class UserRequest extends FormRequest
             'email' => [
                 $isCreate ? 'required' : 'sometimes',
                 'email',
-                Rule::unique('users', 'email')->ignore($userUuid, 'uuid'),
+                Rule::unique('users', 'email')
+                    ->where('audience', 'web')
+                    ->ignore($userUuid, 'uuid'),
             ],
 
             'password' => [

@@ -8,6 +8,7 @@ use App\Http\Requests\Business\SpaBranchUpdateRequest;
 use App\Http\Requests\Business\SpaBranchLocationRequest;
 use App\Http\Requests\Business\SpaBranchPermitRequest;
 use App\Http\Requests\Client\PublicTherapistAvailabilityRequest;
+use App\Http\Requests\Client\PublicTherapistDaysOffRequest;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -52,12 +53,19 @@ class SpaBranchController extends Controller
         return $this->spaBranchService->publicShow($uuid);
     }
 
-    // Public, unauthenticated — the client booking flow's therapist step
+    // Public, unauthenticated — the client booking flow's schedule step
     // calls this once it knows the date/time, since publicShow()'s
     // 'therapists' key can't say who is actually free then.
     public function publicTherapistAvailability(PublicTherapistAvailabilityRequest $request, string $uuid)
     {
         return $this->spaBranchService->publicTherapistAvailability($uuid, $request->validated());
+    }
+
+    // Public, unauthenticated — feeds the booking calendar's greyed-out days
+    // once the client has picked a specific therapist.
+    public function publicTherapistDaysOff(PublicTherapistDaysOffRequest $request, string $uuid, string $staffUuid)
+    {
+        return $this->spaBranchService->publicTherapistDaysOff($uuid, $staffUuid, $request->validated());
     }
 
     public function store(SpaBranchRequest $request)

@@ -81,7 +81,7 @@ class UserService
             ], 400);
         }
 
-        $user = $this->userRepository->findByField('email', $payload->email);
+        $user = $this->userRepository->findByEmail($payload->email, $this->resolveAudience($payload->input('audience')));
 
         if (! $user) {
             return response()->json([
@@ -381,7 +381,7 @@ class UserService
 
     public function forgetPassword(array $payload)
     {
-        $user = $this->userRepository->findByField('email', $payload['email']);
+        $user = $this->userRepository->findByEmail($payload['email'], $this->resolveAudience($payload['audience'] ?? null));
 
         if (! $user) {
             return response()->json([
@@ -404,7 +404,7 @@ class UserService
         $otp = (string) random_int(100000, 999999);
 
         DB::table('password_reset_tokens')->updateOrInsert(
-            ['email' => $user->email],
+            ['email' => $user->email, 'audience' => $user->audience],
             [
                 'token' => Hash::make($otp),
                 'created_at' => now(),
@@ -430,7 +430,7 @@ class UserService
 
     public function verifyForgetPasswordOtp(array $payload)
     {
-        $user = $this->userRepository->findByField('email', $payload['email']);
+        $user = $this->userRepository->findByEmail($payload['email'], $this->resolveAudience($payload['audience'] ?? null));
 
         if (! $user) {
             return response()->json([
@@ -438,7 +438,7 @@ class UserService
             ], 404);
         }
 
-        $record = DB::table('password_reset_tokens')->where('email', $user->email)->first();
+        $record = DB::table('password_reset_tokens')->where('email', $user->email)->where('audience', $user->audience)->first();
 
         if (! $record) {
             return response()->json([
@@ -447,7 +447,7 @@ class UserService
         }
 
         if (Carbon::parse($record->created_at)->addMinutes(self::OTP_EXPIRY_MINUTES)->isPast()) {
-            DB::table('password_reset_tokens')->where('email', $user->email)->delete();
+            DB::table('password_reset_tokens')->where('email', $user->email)->where('audience', $user->audience)->delete();
 
             return response()->json([
                 'message' => 'This code has expired. Please request a new one.'
@@ -462,7 +462,7 @@ class UserService
 
         $resetToken = Str::random(64);
 
-        DB::table('password_reset_tokens')->where('email', $user->email)->update([
+        DB::table('password_reset_tokens')->where('email', $user->email)->where('audience', $user->audience)->update([
             'token' => Hash::make($resetToken),
             'created_at' => now(),
         ]);
@@ -475,7 +475,7 @@ class UserService
 
     public function resetPassword(array $payload)
     {
-        $user = $this->userRepository->findByField('email', $payload['email']);
+        $user = $this->userRepository->findByEmail($payload['email'], $this->resolveAudience($payload['audience'] ?? null));
 
         if (! $user) {
             return response()->json([
@@ -483,7 +483,7 @@ class UserService
             ], 404);
         }
 
-        $record = DB::table('password_reset_tokens')->where('email', $user->email)->first();
+        $record = DB::table('password_reset_tokens')->where('email', $user->email)->where('audience', $user->audience)->first();
 
         if (! $record || ! Hash::check($payload['reset_token'], $record->token)) {
             return response()->json([
@@ -492,7 +492,7 @@ class UserService
         }
 
         if (Carbon::parse($record->created_at)->addMinutes(self::RESET_TOKEN_EXPIRY_MINUTES)->isPast()) {
-            DB::table('password_reset_tokens')->where('email', $user->email)->delete();
+            DB::table('password_reset_tokens')->where('email', $user->email)->where('audience', $user->audience)->delete();
 
             return response()->json([
                 'message' => 'This reset session has expired. Please start again.'
@@ -503,7 +503,7 @@ class UserService
             'password' => $payload['password'],
         ]);
 
-        DB::table('password_reset_tokens')->where('email', $user->email)->delete();
+        DB::table('password_reset_tokens')->where('email', $user->email)->where('audience', $user->audience)->delete();
 
         foreach ($user->tokens as $token) {
             $this->auditLogRepository->recordSessionEnded($user->id, $token, 'password_reset');
@@ -568,7 +568,7 @@ class UserService
 
     public function registerClientUser(array $payload)
     {
-        $existing = $this->userRepository->findByField('email', $payload['email']);
+        $existing = $this->userRepository->findByEmail($payload['email'], User::AUDIENCE_MOBILE);
 
         if ($existing) {
             // RegisterClientRequest only lets a duplicate email through when
@@ -605,7 +605,7 @@ class UserService
 
     public function resendRegistrationOtp(array $payload)
     {
-        $user = $this->userRepository->findByField('email', $payload['email']);
+        $user = $this->userRepository->findByEmail($payload['email'], User::AUDIENCE_MOBILE);
 
         if (! $user) {
             return response()->json([
@@ -644,7 +644,7 @@ class UserService
         $otp = (string) random_int(100000, 999999);
 
         DB::table('email_verification_otps')->updateOrInsert(
-            ['email' => $user->email],
+            ['email' => $user->email, 'audience' => $user->audience],
             [
                 'otp' => Hash::make($otp),
                 'created_at' => now(),
@@ -663,7 +663,7 @@ class UserService
 
     public function verifyRegistrationOtp(array $payload)
     {
-        $user = $this->userRepository->findByField('email', $payload['email']);
+        $user = $this->userRepository->findByEmail($payload['email'], User::AUDIENCE_MOBILE);
 
         if (! $user) {
             return response()->json([
@@ -677,7 +677,7 @@ class UserService
             ], 200);
         }
 
-        $record = DB::table('email_verification_otps')->where('email', $user->email)->first();
+        $record = DB::table('email_verification_otps')->where('email', $user->email)->where('audience', $user->audience)->first();
 
         if (! $record) {
             return response()->json([
@@ -686,7 +686,7 @@ class UserService
         }
 
         if (Carbon::parse($record->created_at)->addMinutes(self::OTP_EXPIRY_MINUTES)->isPast()) {
-            DB::table('email_verification_otps')->where('email', $user->email)->delete();
+            DB::table('email_verification_otps')->where('email', $user->email)->where('audience', $user->audience)->delete();
 
             return response()->json([
                 'message' => 'This code has expired. Please register again to receive a new one.'
@@ -703,10 +703,18 @@ class UserService
         $user->account_status = 'Active';
         $user->save();
 
-        DB::table('email_verification_otps')->where('email', $user->email)->delete();
+        DB::table('email_verification_otps')->where('email', $user->email)->where('audience', $user->audience)->delete();
 
         return response()->json([
             'message' => 'Email verified successfully. You can now log in.'
         ], 200);
+    }
+
+    // Which account family a shared-endpoint request (login, password reset)
+    // is about. Web (owner-side) is the default so callers that predate the
+    // field keep working; the mobile app sends 'mobile' explicitly.
+    private function resolveAudience(?string $audience): string
+    {
+        return $audience === User::AUDIENCE_MOBILE ? User::AUDIENCE_MOBILE : User::AUDIENCE_WEB;
     }
 }

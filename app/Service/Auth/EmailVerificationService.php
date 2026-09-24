@@ -45,7 +45,8 @@ class EmailVerificationService
 
     public function resend(array $payload)
     {
-        $user = $this->userRepository->findByField('email', $payload['email']);
+        // Owner-side verification links only; client accounts verify by OTP.
+        $user = $this->userRepository->findByEmail($payload['email'], 'web');
 
         if (! $user) {
             return response()->json([

@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Auth;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class RegisterRequest extends FormRequest
 {
@@ -17,7 +18,8 @@ class RegisterRequest extends FormRequest
             'email' => [
                 'required',
                 'email',
-                'unique:users,email',
+                // Unique per audience: the same email may also hold a client account.
+                Rule::unique('users', 'email')->where('audience', 'web'),
             ],
 
             'password' => [

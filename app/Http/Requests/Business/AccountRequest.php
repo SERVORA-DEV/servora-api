@@ -23,7 +23,7 @@ class AccountRequest extends FormRequest
 
         return [
             'username' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:50', Rule::unique('users', 'username')],
-            'email' => [$isCreate ? 'required' : 'sometimes', 'email', 'max:255', Rule::unique('users', 'email')],
+            'email' => [$isCreate ? 'required' : 'sometimes', 'email', 'max:255', Rule::unique('users', 'email')->where('audience', 'web')],
 
             // Which staff member this login belongs to — locked at
             // creation, same as role below, since reassigning an account to

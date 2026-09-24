@@ -120,6 +120,54 @@ class AppointmentAvailabilityService
         ];
     }
 
+    // The dates in [$from, $to] on which staffMatchesSchedule() above would
+    // reject *every* start time — so the client booking calendar can grey
+    // them out instead of letting a client pick one and be told afterwards.
+    // It has to agree with that method exactly: same day_of_week and
+    // effective_from/until filtering, and a day is only "off" when rows
+    // exist for it and none of them is a usable shift. No rows at all stays
+    // available, the same opt-in-if-configured stance.
+    //
+    // Loads the staff member's rows once and walks the dates in PHP, rather
+    // than one query per day across a two-month calendar.
+    //
+    // @return list<string> Y-m-d dates, ascending
+    public function staffDaysOff(int $staffId, string $from, string $to): array
+    {
+        $rows = StaffSchedule::where('staff_id', $staffId)->get();
+
+        if ($rows->isEmpty()) {
+            return [];
+        }
+
+        $daysOff = [];
+        $cursor = Carbon::parse($from)->startOfDay();
+        $last = Carbon::parse($to)->startOfDay();
+
+        for (; $cursor->lte($last); $cursor->addDay()) {
+            $date = $cursor->toDateString();
+            $dayOfWeek = $cursor->format('l');
+
+            $schedules = $rows->filter(fn ($row) => $row->day_of_week === $dayOfWeek
+                && (! $row->effective_from || Carbon::parse($row->effective_from)->toDateString() <= $date)
+                && (! $row->effective_until || Carbon::parse($row->effective_until)->toDateString() >= $date));
+
+            if ($schedules->isEmpty()) {
+                continue;
+            }
+
+            $hasShift = $schedules->contains(
+                fn ($row) => ! $row->is_day_off && $row->start_time && $row->end_time
+            );
+
+            if (! $hasShift) {
+                $daysOff[] = $date;
+            }
+        }
+
+        return $daysOff;
+    }
+
     // Branch-hours equivalent of staffMatchesSchedule() above — gates
     // whether the appointment itself can be booked at all, independent of
     // which staff/service is involved, so it's checked once per

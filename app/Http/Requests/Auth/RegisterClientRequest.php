@@ -23,7 +23,9 @@ class RegisterClientRequest extends FormRequest
                 // allowed through, so resubmitting after a lost/expired
                 // OTP works as a resend instead of failing as "taken".
                 Rule::unique('users', 'email')->where(
-                    fn ($query) => $query->whereNotNull('email_verified_at')
+                    fn ($query) => $query
+                        ->where('audience', 'mobile')
+                        ->whereNotNull('email_verified_at')
                 ),
             ],
 

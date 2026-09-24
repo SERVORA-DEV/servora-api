@@ -19,6 +19,8 @@ class VerifyPasswordResetOtpRequest extends FormRequest
                 'email',
             ],
 
+            'audience' => ['sometimes', 'in:web,mobile'],
+
             'otp' => [
                 'required',
                 'digits:6',

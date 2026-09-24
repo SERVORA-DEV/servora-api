@@ -41,6 +41,7 @@ class ClientProfileRequest extends FormRequest
                 'email',
                 'max:255',
                 Rule::unique('users', 'email')
+                    ->where('audience', 'mobile')
                     ->ignore($userId)
                     ->whereNull('deleted_at'),
             ],
