@@ -16,8 +16,15 @@ class SpaBusiness extends Model
         'owner_id',
 
         'business_name',
+        'legal_name',
+        'spa_type',
+        'tagline',
         'business_email',
         'business_phone',
+        'head_office_address',
+        'facebook_url',
+        'instagram_handle',
+        'website_url',
 
         'business_logo',
         'business_description',
@@ -78,6 +85,13 @@ class SpaBusiness extends Model
     public function activeSubscription()
     {
         return $this->hasOne(Subscription::class, 'spa_business_id')->latestOfMany();
+    }
+
+    // Business Settings configuration — may not exist yet; see
+    // BusinessSettingsService::settingsFor, which creates it on first use.
+    public function settings()
+    {
+        return $this->hasOne(SpaBusinessSetting::class, 'spa_business_id');
     }
 
     public function services()
