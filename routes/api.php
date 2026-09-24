@@ -18,6 +18,7 @@ use App\Http\Controllers\System\BranchController;
 use App\Http\Controllers\System\BusinessController;
 use App\Http\Controllers\System\DashboardController as SystemDashboardController;
 use App\Http\Controllers\Business\DashboardController;
+use App\Http\Controllers\Business\BusinessSettingsController;
 use App\Http\Controllers\SubscriptionController;
 use App\Http\Controllers\Business\NotificationController as BusinessNotificationController;
 use App\Http\Controllers\XenditWebhookController;
@@ -387,6 +388,18 @@ Route::middleware('auth:sanctum')->group(function () {
 
             Route::middleware('role:business_owner')->group(function () {
                 Route::get('/me', [SpaBusinessController::class, 'me']);
+
+                // Business Settings (company-wide configuration). Identity is
+                // POST because it carries the logo as multipart.
+                Route::prefix('settings')->group(function () {
+                    Route::get('/', [BusinessSettingsController::class, 'show']);
+                    Route::post('identity', [BusinessSettingsController::class, 'updateIdentity']);
+                    Route::patch('legal', [BusinessSettingsController::class, 'updateLegal']);
+                    Route::patch('payments', [BusinessSettingsController::class, 'updatePayments']);
+                    Route::patch('staff-policy', [BusinessSettingsController::class, 'updateStaffPolicy']);
+                    Route::patch('booking-defaults', [BusinessSettingsController::class, 'updateBookingDefaults']);
+                    Route::patch('notifications', [BusinessSettingsController::class, 'updateNotifications']);
+                });
 
                 // Owner identity + business verification submission — must
                 // stay reachable while the account is unverified (that's the
