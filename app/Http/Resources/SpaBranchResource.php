@@ -32,6 +32,9 @@ class SpaBranchResource extends JsonResource
             'code' => $this->code,
             'email' => $this->email,
             'phone_number' => $this->phone_number,
+            'facebook_url' => $this->facebook_url,
+            'instagram_handle' => $this->instagram_handle,
+            'website_url' => $this->website_url,
             'description' => $this->description,
 
             'formatted_address' => $this->formatted_address,
@@ -39,7 +42,7 @@ class SpaBranchResource extends JsonResource
             'latitude' => $this->latitude,
             'longitude' => $this->longitude,
 
-            'cover_photo_url' => ImageUploadService::url($this->cover_photo),
+            'cover_photo_url' => $this->resource->coverPhotoUrl(),
 
             'permit_number' => $this->permit_number,
             'permit_business_name' => $this->permit_business_name,
@@ -51,6 +54,11 @@ class SpaBranchResource extends JsonResource
 
             'verification_status' => $this->verification_status,
             'operating_status' => $this->operating_status,
+
+            // Branch Settings: marketplace listing on/off, and the booking
+            // rules this branch sets instead of the business defaults.
+            'listing_visible' => (bool) $this->listing_visible,
+            'booking_overrides' => (object) ($this->booking_overrides ?? []),
 
             'closure_note' => $this->closure_note,
             'reopens_at' => $this->reopens_at,

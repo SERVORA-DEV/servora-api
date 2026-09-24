@@ -37,7 +37,7 @@ class BranchDetailResource extends JsonResource
             'formatted_address' => $this->formatted_address,
             'latitude' => $this->latitude,
             'longitude' => $this->longitude,
-            'cover_photo_url' => ImageUploadService::url($this->cover_photo),
+            'cover_photo_url' => $this->resource->coverPhotoUrl(),
 
             'business' => [
                 'uuid' => $this->business->uuid,
@@ -47,6 +47,23 @@ class BranchDetailResource extends JsonResource
             ],
 
             'hours' => BranchHoursCalculator::resolve($this->schedules, Carbon::now()),
+
+            // What the owner set in Branch Settings → Marketplace. Additive:
+            // the mobile app doesn't read these yet.
+            'listing' => [
+                'promo_text' => $this->promo_text,
+                'highlights' => $this->highlights ?? [],
+                'display' => $this->resource->displaySettings(),
+                'photos' => $this->resource->photos->map(fn ($p) => [
+                    'url' => ImageUploadService::url($p->path),
+                    'is_cover' => (bool) $p->is_cover,
+                ])->values(),
+            ],
+            'socials' => [
+                'facebook_url' => $this->facebook_url,
+                'instagram_handle' => $this->instagram_handle,
+                'website_url' => $this->website_url,
+            ],
 
             // One entry per parent Service, with its bookable durations nested
             // underneath — the mobile app renders a single card per service with

@@ -31,7 +31,7 @@ class NearbySpaResource extends JsonResource
             'latitude' => $this->latitude,
             'longitude' => $this->longitude,
             'distance_km' => round((float) $this->distance_km, 2),
-            'cover_photo_url' => ImageUploadService::url($this->cover_photo),
+            'cover_photo_url' => $this->resource->coverPhotoUrl(),
 
             ...$this->openStatus(),
             'service_categories' => $this->serviceCategories(),

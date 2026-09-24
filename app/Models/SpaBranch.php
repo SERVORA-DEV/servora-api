@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\ImageUploadService;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -20,6 +21,9 @@ class SpaBranch extends Model
 
         'email',
         'phone_number',
+        'facebook_url',
+        'instagram_handle',
+        'website_url',
 
         'latitude',
         'longitude',
@@ -40,6 +44,12 @@ class SpaBranch extends Model
         'verification_status',
         'operating_status',
 
+        'listing_visible',
+        'promo_text',
+        'highlights',
+        'display_settings',
+        'booking_overrides',
+
         'closure_note',
         'reopens_at',
 
@@ -48,6 +58,21 @@ class SpaBranch extends Model
 
         'rejection_reason',
         'suspension_reason',
+    ];
+
+    // Client-app display options for this branch's listing, used for any
+    // key the owner hasn't saved (Branch Settings → Marketplace).
+    public const DISPLAY_DEFAULTS = [
+        'show_prices' => true,
+        'show_therapist_profiles' => true,
+        'show_available_slots' => true,
+        'show_room_availability' => false,
+        'allow_online_payment' => false,
+        'allow_promo_codes' => true,
+        'show_reviews' => true,
+        'show_rating_badge' => true,
+        'show_review_photos' => true,
+        'review_sort' => 'newest',
     ];
 
     protected function casts(): array
@@ -62,6 +87,11 @@ class SpaBranch extends Model
             'permit_issue_date' => 'date',
             'permit_expiration_date' => 'date',
             'permit_confirmed' => 'boolean',
+
+            'listing_visible' => 'boolean',
+            'highlights' => 'array',
+            'display_settings' => 'array',
+            'booking_overrides' => 'array',
         ];
     }
 
@@ -134,5 +164,33 @@ class SpaBranch extends Model
     public function facilities()
     {
         return $this->hasMany(Facility::class, 'spa_branch_id');
+    }
+
+    public function photos()
+    {
+        return $this->hasMany(SpaBranchPhoto::class, 'spa_branch_id')->orderBy('sort_order')->orderBy('id');
+    }
+
+    public function coverPhoto()
+    {
+        return $this->hasOne(SpaBranchPhoto::class, 'spa_branch_id')->where('is_cover', true);
+    }
+
+    // The gallery photo marked as cover; the older single cover_photo
+    // (set in the branch wizard) when the gallery is empty.
+    public function coverPhotoUrl(): ?string
+    {
+        return ImageUploadService::url($this->coverPhoto?->path ?? $this->cover_photo);
+    }
+
+    public function displaySettings(): array
+    {
+        $stored = $this->display_settings ?? [];
+        $result = [];
+        foreach (self::DISPLAY_DEFAULTS as $key => $default) {
+            $result[$key] = array_key_exists($key, $stored) ? $stored[$key] : $default;
+        }
+
+        return $result;
     }
 }

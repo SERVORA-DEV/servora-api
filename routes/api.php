@@ -19,6 +19,7 @@ use App\Http\Controllers\System\BusinessController;
 use App\Http\Controllers\System\DashboardController as SystemDashboardController;
 use App\Http\Controllers\Business\DashboardController;
 use App\Http\Controllers\Business\BusinessSettingsController;
+use App\Http\Controllers\Business\BranchSettingsController;
 use App\Http\Controllers\SubscriptionController;
 use App\Http\Controllers\Business\NotificationController as BusinessNotificationController;
 use App\Http\Controllers\XenditWebhookController;
@@ -441,6 +442,16 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('branch/{uuid}/location', [SpaBranchController::class, 'saveLocation']);
                 Route::post('branch/{uuid}/permit', [SpaBranchController::class, 'savePermit']);
                 Route::post('branch/{uuid}/submit', [SpaBranchController::class, 'submit']);
+
+                // Branch Settings (owner web /business/settings/branch/*).
+                Route::get('branch/{uuid}/marketplace', [BranchSettingsController::class, 'marketplace']);
+                Route::patch('branch/{uuid}/marketplace', [BranchSettingsController::class, 'updateMarketplace']);
+                Route::post('branch/{uuid}/photos', [BranchSettingsController::class, 'uploadPhotos']);
+                Route::delete('branch/{uuid}/photos/{photo}', [BranchSettingsController::class, 'deletePhoto']);
+                Route::post('branch/{uuid}/photos/{photo}/cover', [BranchSettingsController::class, 'setCover']);
+                Route::patch('branch/{uuid}/booking-policy', [BranchSettingsController::class, 'updateBookingPolicy']);
+                Route::get('branch/{uuid}/reviews-summary', [BranchSettingsController::class, 'reviewsSummary']);
+                Route::post('branch/{uuid}/permit/renew', [BranchSettingsController::class, 'renewPermit']);
 
                 Route::get('subscription/confirm/{referenceId}', [SubscriptionController::class, 'confirm']);
                 // Accept / decline an admin's update to the subscribed plan

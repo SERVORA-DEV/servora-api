@@ -96,6 +96,21 @@ class NotificationService
         }
     }
 
+    // A verified branch uploaded a renewed permit (Branch Settings →
+    // Registration & Permits). The branch stays listed; admins can review
+    // the new document.
+    public function branchPermitRenewed(SpaBranch $branch, iterable $admins): void
+    {
+        foreach ($admins as $admin) {
+            $this->notificationRepository->create(
+                $admin->id,
+                'Branch Permit Renewed',
+                "\"{$branch->branch_name}\" uploaded a renewed permit (expires {$branch->permit_expiration_date?->toDateString()}).",
+                'Registration'
+            );
+        }
+    }
+
     public function branchRegistrationApproved(SpaBranch $branch, User $owner): void
     {
         $this->notificationRepository->create(

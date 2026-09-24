@@ -16,6 +16,17 @@ class BookingDefaultsSettingsRequest extends FormRequest
      */
     public function rules(): array
     {
+        return self::ruleSet();
+    }
+
+    /**
+     * Shared with BranchBookingPolicyRequest, so a branch override is held
+     * to exactly the same limits as the business default it replaces.
+     *
+     * @return array<string, mixed>
+     */
+    public static function ruleSet(): array
+    {
         return [
             'online_booking_enabled' => 'sometimes|boolean',
             'walk_in_enabled' => 'sometimes|boolean',

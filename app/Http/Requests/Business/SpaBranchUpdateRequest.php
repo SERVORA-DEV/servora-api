@@ -50,6 +50,11 @@ class SpaBranchUpdateRequest extends FormRequest
             'email' => 'nullable|email|max:255',
             'phone_number' => 'nullable|string|max:20',
 
+            // Branch Settings → Branch Details → Social links.
+            'facebook_url' => 'nullable|string|max:255',
+            'instagram_handle' => 'nullable|string|max:100',
+            'website_url' => 'nullable|string|max:255',
+
             'description' => 'nullable|string',
 
             'cover_photo' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:'.(int) config('uploads.max_size_kb', 5120),

@@ -37,6 +37,7 @@ class SpaBranchRepository
             )
             ->where('verification_status', 'Verified')
             ->where('operating_status', 'Active')
+            ->where('listing_visible', true)
             ->whereNotNull('latitude')
             ->whereNotNull('longitude');
 
@@ -51,6 +52,7 @@ class SpaBranchRepository
             ->with([
                 'business',
                 'schedules',
+                'coverPhoto',
                 'branchServices' => fn ($q) => self::publicServices($q)->with('serviceVariant.service'),
                 'branchPackages' => fn ($q) => self::publicPackages($q)->with('package'),
             ])
@@ -59,7 +61,7 @@ class SpaBranchRepository
             ->get();
     }
 
-    // Backs GET /spas/{uuid} — same Verified+Active guard as nearby(), and
+    // Backs GET /spas/{uuid} — same Verified+Active+listed guard as nearby(), and
     // 404s (not 403s) for anything that doesn't match, matching the
     // anti-enumeration posture of findByUuidForBranches below: a stranger
     // can't tell "wrong uuid" apart from "real branch, just not public yet".
@@ -68,7 +70,8 @@ class SpaBranchRepository
         return SpaBranch::where('uuid', $uuid)
             ->where('verification_status', 'Verified')
             ->where('operating_status', 'Active')
-            ->with(['business', 'schedules'])
+            ->where('listing_visible', true)
+            ->with(['business', 'schedules', 'coverPhoto', 'photos'])
             ->firstOrFail();
     }
 
