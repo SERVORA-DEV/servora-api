@@ -11,7 +11,9 @@ class AdminUsersRepository
 {
     public function paginate(int $perPage = 15)
     {
+        // Administrators only — this list backs Settings → Administrators.
         return User::with('permission')
+        ->where('role', 'system_administrator')
         ->latest()
         ->paginate($perPage);
     }
@@ -20,7 +22,7 @@ class AdminUsersRepository
     // system administrator, not just one.
     public function allAdministrators()
     {
-        return User::where('role', 'system_administrator')->get();
+        return User::with('permission')->where('role', 'system_administrator')->get();
     }
 
     public function createUser(array $payload)
@@ -33,9 +35,12 @@ class AdminUsersRepository
         return UserPermission::create($payload);
     }
 
+    // Scoped to administrators, so this endpoint can never read or edit an
+    // owner, staff or client account by uuid.
     public function findByUuid(string $uuid)
     {
         return User::with('permission')
+        ->where('role', 'system_administrator')
         ->where('uuid', $uuid)
         ->firstOrFail();
     }
@@ -49,7 +54,7 @@ class AdminUsersRepository
 
     public function update(string $uuid, array $payload)
     {
-        $model = User::where('uuid', $uuid)->firstOrFail();
+        $model = User::where('role', 'system_administrator')->where('uuid', $uuid)->firstOrFail();
 
         $userData = Arr::only($payload, [
             'username',
@@ -69,7 +74,13 @@ class AdminUsersRepository
         $permissionData = Arr::only($payload, config('permission.system_administrator'));
 
         $model->update($userData);
-        $model->permission()->update($permissionData);
+
+        // updateOrCreate: an admin created before permissions were stored
+        // has no row, and a plain update() on the relation would silently
+        // do nothing.
+        if ($permissionData) {
+            UserPermission::updateOrCreate(['user_id' => $model->id], $permissionData);
+        }
 
         return $model->load('permission');
     }

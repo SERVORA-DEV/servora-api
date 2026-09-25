@@ -30,6 +30,8 @@ class BusinessResource extends JsonResource
             'subscription_plan' => $this->whenLoaded('activeSubscription', fn () => $this->activeSubscription?->plan ? [
                 'name' => $this->activeSubscription->plan->name,
                 'category' => $this->activeSubscription->plan->category,
+                'billing_cycle' => $this->activeSubscription->billing_cycle,
+                'expires_at' => $this->activeSubscription->expires_at,
             ] : null),
         ];
     }

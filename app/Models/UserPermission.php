@@ -40,6 +40,11 @@ class UserPermission extends Model
         'branch_approve',
         'branch_reject',
         'branch_suspend',
+        'service_template_view',
+        'service_template_create',
+        'service_template_update',
+        'service_template_delete',
+        'setting_update',
 
         'service_view',
         'service_create',
@@ -145,6 +150,13 @@ class UserPermission extends Model
             'branch_approve' => 'boolean',
             'branch_reject' => 'boolean',
             'branch_suspend' => 'boolean',
+
+            'service_template_view' => 'boolean',
+            'service_template_create' => 'boolean',
+            'service_template_update' => 'boolean',
+            'service_template_delete' => 'boolean',
+
+            'setting_update' => 'boolean',
 
             'service_view' => 'boolean',
             'service_create' => 'boolean',

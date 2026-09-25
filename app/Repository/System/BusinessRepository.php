@@ -25,15 +25,14 @@ class BusinessRepository
 
     public function findByUuid(string $uuid): SpaBusiness
     {
+        // The admin detail page is a legitimacy review: registration and
+        // owner identity documents, plus every branch's permit, location and
+        // the services it offers. Billing and the catalog live elsewhere.
         return SpaBusiness::with([
             'owner.ownerIdentityVerification.verifier',
             'verifier',
-            'branches',
-            'subscriptions.plan',
-            'subscriptions.billings.payments',
+            'branches.branchServices.serviceVariant.service',
             'activeSubscription.plan',
-            'services.variants',
-            'packages.branchPackages.branch',
         ])->where('uuid', $uuid)->firstOrFail();
     }
 

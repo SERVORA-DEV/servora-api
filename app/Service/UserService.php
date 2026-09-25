@@ -105,6 +105,14 @@ class UserService
             ], 403);
         }
 
+        // Deactivated accounts (e.g. an administrator switched off in
+        // Settings → Administrators) can't sign in until reactivated.
+        if (in_array($user->account_status, ['Inactive', 'Suspended'], true)) {
+            return response()->json([
+                'message' => 'This account has been deactivated. Contact an administrator to reactivate it.'
+            ], 403);
+        }
+
         // Business-scoped login — only sent by the branded
         // /login/{business_uuid} page (see the "Copy Login Link" button and
         // AccountCreatedModal on the Account Management page). Restricted

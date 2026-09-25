@@ -5,6 +5,7 @@ namespace App\Http\Resources;
 use App\Repository\SpaBusinessRepository;
 use App\Repository\SubscriptionRepository;
 use App\Support\OwnerVerificationStatus;
+use App\Support\AdminPermissions;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -41,6 +42,12 @@ class UserResource extends JsonResource
         // stay $hidden on User — never exposed even indirectly.
         $data['two_factor_enabled'] = $this->two_factor_confirmed_at !== null;
         $data['personal_email_verified'] = $this->personal_email_verified_at !== null;
+
+        // What this administrator may do, so the admin panel can hide the
+        // areas and buttons the API would refuse (EnsurePermission).
+        $data['permissions'] = $this->role === 'system_administrator'
+            ? AdminPermissions::effective($this->resource)
+            : null;
 
         // The login is a User account, but for manager/front_officer roles
         // the "who is this" the dashboard should show is the linked Staff

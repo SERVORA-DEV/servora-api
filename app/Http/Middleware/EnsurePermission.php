@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\AdminPermissions;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -34,6 +35,12 @@ class EnsurePermission
         // in Account Management). The role bundle above is the ceiling; the
         // account's own row can only narrow it. An account with no row keeps
         // the role bundle as before.
+        // System administrators work the same way — their own row is set in
+        // Settings → Administrators (see App\Support\AdminPermissions).
+        if ($user->role === 'system_administrator' && ! AdminPermissions::allows($user, $key)) {
+            abort(403, 'You do not have permission to perform this action.');
+        }
+
         if (in_array($user->role, self::ACCOUNT_ROLES, true)) {
             $permission = $user->permission;
 

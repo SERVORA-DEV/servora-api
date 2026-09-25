@@ -34,15 +34,15 @@ class AdminUsersController extends Controller
 
     public function update(UserRequest $request, string $uuid)
     {
-        return $this->adminUsersService->updateAdminUsers($uuid, $request->validated());
+        return $this->adminUsersService->updateAdminUsers($uuid, $request->validated(), $request->user());
     }
 
-    // public function destroy(string $uuid)
-    // {
-    //     $this->adminUsersService->deleteAdminUsers($uuid);
-    //     return response()->json(['message' => 'Deleted successfully'], 200);
-    // }
-    
+    // Deactivates (see AdminUsersService::deactivateAdminUsers).
+    public function destroy(Request $request, string $uuid)
+    {
+        return $this->adminUsersService->deactivateAdminUsers($uuid, $request->user());
+    }
+
     // public function restore(string $uuid)
     // {
     //     return $this->adminUsersService->restoreAdminUsers($uuid);

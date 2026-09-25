@@ -24,9 +24,17 @@ return [
         'spa_business_reject',
         'spa_business_suspend',
 
+        'branch_view',
         'branch_approve',
         'branch_reject',
         'branch_suspend',
+
+        'service_template_view',
+        'service_template_create',
+        'service_template_update',
+        'service_template_delete',
+
+        'setting_update',
 
         'report_view',
         'report_export',

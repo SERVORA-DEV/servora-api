@@ -121,27 +121,42 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('system')
         ->middleware('role:system_administrator')
         ->group(function () {
-            Route::apiResources([
-                'subscription-plans' => SubscriptionPlanController::class,
-                'admin/user-management' => AdminUsersController::class
-            ]);
+            // Every route below is gated by the administrator's own
+            // permission flags (EnsurePermission + App\Support\AdminPermissions);
+            // the Settings → Security self-service routes further down are
+            // the caller's own account and stay open to every admin.
+            Route::get('subscription-plans', [SubscriptionPlanController::class, 'index'])->middleware('permission:subscription_plan_view');
+            Route::get('subscription-plans/{subscription_plan}', [SubscriptionPlanController::class, 'show'])->middleware('permission:subscription_plan_view');
+            Route::post('subscription-plans', [SubscriptionPlanController::class, 'store'])->middleware('permission:subscription_plan_create');
+            Route::match(['put', 'patch'], 'subscription-plans/{subscription_plan}', [SubscriptionPlanController::class, 'update'])->middleware('permission:subscription_plan_update');
+            Route::delete('subscription-plans/{subscription_plan}', [SubscriptionPlanController::class, 'destroy'])->middleware('permission:subscription_plan_delete');
+
+            Route::get('admin/user-management', [AdminUsersController::class, 'index'])->middleware('permission:admin_view');
+            Route::get('admin/user-management/{user_management}', [AdminUsersController::class, 'show'])->middleware('permission:admin_view');
+            Route::post('admin/user-management', [AdminUsersController::class, 'store'])->middleware('permission:admin_create');
+            Route::match(['put', 'patch'], 'admin/user-management/{user_management}', [AdminUsersController::class, 'update'])->middleware('permission:admin_update');
+            // "Delete" deactivates — see AdminUsersService::deactivate.
+            Route::delete('admin/user-management/{user_management}', [AdminUsersController::class, 'destroy'])->middleware('permission:admin_delete');
 
             // The global service catalog owners start a new service from —
             // stored as services rows with is_template = true and no owning
             // business (see ServiceTemplateRepository).
-            Route::apiResource('service-templates', ServiceTemplateController::class)
-                ->parameters(['service-templates' => 'uuid']);
+            Route::get('service-templates', [ServiceTemplateController::class, 'index'])->middleware('permission:service_template_view');
+            Route::get('service-templates/{uuid}', [ServiceTemplateController::class, 'show'])->middleware('permission:service_template_view');
+            Route::post('service-templates', [ServiceTemplateController::class, 'store'])->middleware('permission:service_template_create');
+            Route::match(['put', 'patch'], 'service-templates/{uuid}', [ServiceTemplateController::class, 'update'])->middleware('permission:service_template_update');
+            Route::delete('service-templates/{uuid}', [ServiceTemplateController::class, 'destroy'])->middleware('permission:service_template_delete');
 
-            Route::get('dashboard', [SystemDashboardController::class, 'index']);
+            Route::get('dashboard', [SystemDashboardController::class, 'index'])->middleware('permission:dashboard_view');
 
-            Route::get('transactions', [TransactionController::class, 'index']);
+            Route::get('transactions', [TransactionController::class, 'index'])->middleware('permission:report_view');
 
             // Platform-wide configuration (e.g. the subscription grace
             // period used to compute the Transaction page's Overdue tile).
             Route::get('settings', [SystemSettingController::class, 'show']);
-            Route::patch('settings', [SystemSettingController::class, 'update']);
+            Route::patch('settings', [SystemSettingController::class, 'update'])->middleware('permission:setting_update');
 
-            Route::get('audit-logs', [AuditLogController::class, 'index']);
+            Route::get('audit-logs', [AuditLogController::class, 'index'])->middleware('permission:audit_log_view');
 
             // The signed-in admin's own notification feed (TopBar bell +
             // Settings > Notifications) — see NotificationController.
@@ -149,38 +164,36 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('notifications/{id}/read', [NotificationController::class, 'markRead']);
             Route::post('notifications/read-all', [NotificationController::class, 'markAllRead']);
             // Dashboard Quick Actions > Send Announcement.
-            Route::post('notifications/announce', [NotificationController::class, 'announce']);
+            Route::post('notifications/announce', [NotificationController::class, 'announce'])->middleware('permission:notification_send');
 
-            Route::get('branches', [BranchController::class, 'index']);
-            Route::get('branches/{uuid}', [BranchController::class, 'show']);
-            Route::post('branches/{uuid}/suspend', [BranchController::class, 'suspend']);
-            Route::post('branches/{uuid}/reactivate', [BranchController::class, 'reactivate']);
-            Route::get('businesses', [BusinessController::class, 'index']);
-            Route::get('businesses/{uuid}', [BusinessController::class, 'show']);
-            Route::post('businesses/{uuid}/suspend', [BusinessController::class, 'suspend']);
-            Route::post('businesses/{uuid}/reactivate', [BusinessController::class, 'reactivate']);
+            Route::get('branches', [BranchController::class, 'index'])->middleware('permission:branch_view');
+            Route::get('branches/{uuid}', [BranchController::class, 'show'])->middleware('permission:branch_view');
+            Route::post('branches/{uuid}/suspend', [BranchController::class, 'suspend'])->middleware('permission:branch_suspend');
+            Route::post('branches/{uuid}/reactivate', [BranchController::class, 'reactivate'])->middleware('permission:branch_suspend');
+            Route::get('businesses', [BusinessController::class, 'index'])->middleware('permission:spa_business_view');
+            Route::get('businesses/{uuid}', [BusinessController::class, 'show'])->middleware('permission:spa_business_view');
+            Route::post('businesses/{uuid}/suspend', [BusinessController::class, 'suspend'])->middleware('permission:spa_business_suspend');
+            Route::post('businesses/{uuid}/reactivate', [BusinessController::class, 'reactivate'])->middleware('permission:spa_business_suspend');
 
             // No store/update/destroy — a registration is only ever
             // reviewed (approve/reject), never created or edited here.
-            Route::apiResource('branch-registrations', BranchRegistrationController::class)
-                ->parameters(['branch-registrations' => 'uuid'])
-                ->only(['index', 'show']);
+            Route::get('branch-registrations', [BranchRegistrationController::class, 'index'])->middleware('permission:branch_view');
+            Route::get('branch-registrations/{uuid}', [BranchRegistrationController::class, 'show'])->middleware('permission:branch_view');
 
-            Route::post('branch-registrations/{uuid}/approve', [BranchRegistrationController::class, 'approve']);
-            Route::post('branch-registrations/{uuid}/reject', [BranchRegistrationController::class, 'reject']);
+            Route::post('branch-registrations/{uuid}/approve', [BranchRegistrationController::class, 'approve'])->middleware('permission:branch_approve');
+            Route::post('branch-registrations/{uuid}/reject', [BranchRegistrationController::class, 'reject'])->middleware('permission:branch_reject');
 
             // Owner identity and business verification are reviewed and
             // decided independently (see OwnerVerificationService) — one
             // "review" resource per account (SpaBusiness uuid), but
             // separate approve/reject actions for each half.
-            Route::apiResource('owner-verifications', SystemOwnerVerificationController::class)
-                ->parameters(['owner-verifications' => 'uuid'])
-                ->only(['index', 'show']);
+            Route::get('owner-verifications', [SystemOwnerVerificationController::class, 'index'])->middleware('permission:spa_business_view');
+            Route::get('owner-verifications/{uuid}', [SystemOwnerVerificationController::class, 'show'])->middleware('permission:spa_business_view');
 
-            Route::post('owner-verifications/{uuid}/identity/approve', [SystemOwnerVerificationController::class, 'approveIdentity']);
-            Route::post('owner-verifications/{uuid}/identity/reject', [SystemOwnerVerificationController::class, 'rejectIdentity']);
-            Route::post('owner-verifications/{uuid}/business/approve', [SystemOwnerVerificationController::class, 'approveBusiness']);
-            Route::post('owner-verifications/{uuid}/business/reject', [SystemOwnerVerificationController::class, 'rejectBusiness']);
+            Route::post('owner-verifications/{uuid}/identity/approve', [SystemOwnerVerificationController::class, 'approveIdentity'])->middleware('permission:spa_business_approve');
+            Route::post('owner-verifications/{uuid}/identity/reject', [SystemOwnerVerificationController::class, 'rejectIdentity'])->middleware('permission:spa_business_reject');
+            Route::post('owner-verifications/{uuid}/business/approve', [SystemOwnerVerificationController::class, 'approveBusiness'])->middleware('permission:spa_business_approve');
+            Route::post('owner-verifications/{uuid}/business/reject', [SystemOwnerVerificationController::class, 'rejectBusiness'])->middleware('permission:spa_business_reject');
 
             // Settings → Security: self-service actions on the CALLER'S OWN
             // account only (change password, 2FA, personal verification
