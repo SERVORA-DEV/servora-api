@@ -18,11 +18,23 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        $admin = User::create([
+        $audience = User::audienceForRole('system_administrator');
+
+        // Looked up first so re-running `php artisan db:seed` doesn't fail on
+        // the unique email once the admin exists.
+        $admin = User::where('email', 'admin@servora.com')->where('audience', $audience)->first()
+            ?? new User();
+
+        // forceFill: `audience` isn't mass-assignable, and it has to be set
+        // here because WithoutModelEvents (above) switches off User's saving
+        // hook that normally derives it from the role — the column is NOT NULL.
+        $admin->exists || $admin->forceFill([
             'uuid' => Str::uuid(),
 
             'role' => 'system_administrator',
+            'audience' => $audience,
 
+            'email' => 'admin@servora.com',
             'username' => 'admin',
 
             'first_name' => 'System',
@@ -30,7 +42,6 @@ class DatabaseSeeder extends Seeder
             'last_name' => 'Administrator',
             'suffix' => null,
 
-            'email' => 'admin@servora.com',
             'email_verified_at' => now(),
 
             'password' => Hash::make('servoraPassword'),
@@ -41,13 +52,11 @@ class DatabaseSeeder extends Seeder
             'account_status' => 'Active',
 
             'remember_token' => Str::random(10),
-        ]);
+        ])->save();
 
-        UserPermission::create(
-            array_merge(
-                ['user_id' => $admin->id],
-                array_fill_keys(config('permission.system_administrator'), true)
-            )
-        );  
+        UserPermission::updateOrCreate(
+            ['user_id' => $admin->id],
+            array_fill_keys(config('permission.system_administrator'), true),
+        );
     }
 }
