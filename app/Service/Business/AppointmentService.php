@@ -56,6 +56,7 @@ class AppointmentService
     private AttendanceStatusCalculator $attendanceStatusCalculator;
     private TherapistQueueCalculator $therapistQueueCalculator;
     private ClientNotifier $clientNotifier;
+    private StaffNotifier $staffNotifier;
 
     public function __construct(
         AppointmentRepository $appointmentRepository,
@@ -72,6 +73,7 @@ class AppointmentService
         AttendanceStatusCalculator $attendanceStatusCalculator,
         TherapistQueueCalculator $therapistQueueCalculator,
         ClientNotifier $clientNotifier,
+        StaffNotifier $staffNotifier,
     ) {
         $this->appointmentRepository = $appointmentRepository;
         $this->appointmentServiceRepository = $appointmentServiceRepository;
@@ -87,6 +89,7 @@ class AppointmentService
         $this->attendanceStatusCalculator = $attendanceStatusCalculator;
         $this->therapistQueueCalculator = $therapistQueueCalculator;
         $this->clientNotifier = $clientNotifier;
+        $this->staffNotifier = $staffNotifier;
     }
 
     private function branchIds(User $user): array
@@ -151,7 +154,7 @@ class AppointmentService
         $branches = $this->spaBusinessRepository->branchesForUser($user);
         $branchIds = $branches->pluck('id')->all();
 
-        return DB::transaction(function () use ($business, $branches, $branchIds, $payload) {
+        return DB::transaction(function () use ($user, $business, $branches, $branchIds, $payload) {
             if (! empty($payload['spa_branch_uuid'])) {
                 $branch = $this->spaBranchRepository->findByUuidForBranches($payload['spa_branch_uuid'], $branchIds);
             } elseif ($branches->count() === 1) {
@@ -168,8 +171,8 @@ class AppointmentService
             }
 
             $client = ! empty($payload['client_uuid'])
-                ? $this->clientRepository->findByUuidForBusiness($payload['client_uuid'], $business->id)
-                : $this->clientService->findOrCreate($business->id, $payload['client'] ?? []);
+                ? $this->clientRepository->findByUuidForBusiness($payload['client_uuid'], $business->id, $this->clientService->branchScope($user))
+                : $this->clientService->findOrCreate($business->id, $payload['client'] ?? [], $branch->id);
 
             $appointmentType = $payload['appointment_type'] ?? 'Reservation';
             // A walk-in has already arrived by definition — skip the
@@ -206,6 +209,20 @@ class AppointmentService
             if ($isWalkIn) {
                 $this->addToQueueInternal($appointment);
             }
+
+            $appointment->setRelation('branch', $branch);
+            $clientName = trim("{$client->first_name} {$client->last_name}") ?: 'A client';
+            $this->staffNotifier->appointment(
+                $appointment,
+                $isWalkIn ? 'Walk-in added to queue' : 'New booking',
+                $isWalkIn
+                    ? "{$clientName} walked in and joined the queue. Booking no. {$appointment->appointment_number}."
+                    : "{$clientName} was booked for "
+                        . Carbon::parse("{$payload['appointment_date']} {$payload['appointment_time']}")->format('D, M j \\a\\t g:i A')
+                        . ". Booking no. {$appointment->appointment_number}.",
+                'on_new_booking',
+                exceptUserId: $user->id,
+            );
 
             $resource = new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));
 
@@ -302,6 +319,15 @@ class AppointmentService
                 "You're booked at {$branch->branch_name} on "
                     . Carbon::parse("{$payload['appointment_date']} {$payload['appointment_time']}")->format('D, M j \\a\\t g:i A')
                     . ". Booking no. {$appointment->appointment_number}.",
+            );
+
+            $this->staffNotifier->appointment(
+                $appointment,
+                'New booking',
+                trim("{$client->first_name} {$client->last_name}") . ' booked '
+                    . Carbon::parse("{$payload['appointment_date']} {$payload['appointment_time']}")->format('D, M j \\a\\t g:i A')
+                    . ". Booking no. {$appointment->appointment_number}.",
+                'on_new_booking',
             );
 
             $resource = new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));
@@ -408,6 +434,18 @@ class AppointmentService
         }
 
         $appointment->update(['status' => Appointment::STATUS_NO_SHOW]);
+
+        $this->clientNotifier->appointment(
+            $appointment,
+            'Marked as no-show',
+            "You missed your booking {$appointment->appointment_number} at {$appointment->branch?->branch_name}.",
+        );
+        $this->staffNotifier->appointment(
+            $appointment,
+            'Client no-show',
+            trim("{$appointment->client?->first_name} {$appointment->client?->last_name}") . " didn't arrive for booking {$appointment->appointment_number}.",
+            'on_client_no_show',
+        );
 
         return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
     }
@@ -1345,6 +1383,25 @@ class AppointmentService
             ]);
 
             $paidTotal = $this->paymentRepository->paidTotalForBilling($billing->id);
+
+            $paidFor = $billing->appointment_id ? Appointment::find($billing->appointment_id) : null;
+            if ($paidFor) {
+                $amount = '₱' . number_format((float) $payload['amount'], 2);
+                $this->clientNotifier->appointment(
+                    $paidFor,
+                    'Payment received',
+                    "{$paidFor->branch?->branch_name} received your {$amount} payment for booking {$paidFor->appointment_number}.",
+                    'Payment',
+                );
+                $this->staffNotifier->appointment(
+                    $paidFor,
+                    'Payment received',
+                    "{$amount} received for booking {$paidFor->appointment_number}.",
+                    null,
+                    'Payment',
+                    false,
+                );
+            }
 
             if ($paidTotal >= (float) $billing->amount) {
                 $billing->update(['status' => 'Paid', 'paid_at' => now()]);

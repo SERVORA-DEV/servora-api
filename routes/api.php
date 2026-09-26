@@ -256,6 +256,22 @@ Route::middleware('auth:sanctum')->group(function () {
     // grants, or branch editing — those stay owner-only.
     Route::prefix('business')
         ->group(function () {
+            // Deliberately outside verified.business / subscribed.business: the
+            // notices an owner most needs to see (verification decided, plan
+            // overdue, plan changed) arrive exactly when those gates block
+            // everything else.
+            Route::middleware('role:business_owner,manager,front_officer')->group(function () {
+                // The signed-in staff member's OWN feed — same
+                // NotificationService as the admin's /system/notifications,
+                // scoped to the caller's user_id.
+                Route::get('notifications', [BusinessNotificationController::class, 'index']);
+                Route::post('notifications/read-all', [BusinessNotificationController::class, 'markAllRead']);
+                Route::post('notifications/{id}/read', [BusinessNotificationController::class, 'markRead'])->whereNumber('id');
+                // Deletes every notification the caller has already read.
+                Route::delete('notifications/read', [BusinessNotificationController::class, 'clearRead']);
+                Route::delete('notifications/{id}', [BusinessNotificationController::class, 'destroy'])->whereNumber('id');
+            });
+
             // 'verified.business' is the real enforcement of the
             // verification-onboarding gate — this group is what actually
             // renders the dashboard, so it's the point where an unverified
@@ -296,14 +312,14 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::apiResource('facility', FacilityController::class);
                 Route::get('dashboard', [DashboardController::class, 'index']);
 
-                // Manager can view and edit the catalog (service_view/service_update,
-                // package_view/package_update in config/permission.php) but not
-                // create or retire entries — those stay owner-only below.
-                Route::apiResource('service', ServiceController::class)->only(['index', 'show', 'update']);
-                Route::apiResource('package', PackageController::class)->only(['index', 'show', 'update']);
+                // The catalog is shared by every branch, so a manager can only
+                // read it here — creating, editing and retiring entries stay
+                // owner-only below. What a manager controls is their own
+                // branch's availability and price (the /branches routes next).
+                Route::apiResource('service', ServiceController::class)->only(['index', 'show']);
+                Route::apiResource('package', PackageController::class)->only(['index', 'show']);
 
                 // Per-branch availability toggle (branch_services/branch_packages) —
-                // reuses service_update/package_update rather than a new permission,
                 // scoped server-side to the caller's own branches (manager can only
                 // ever submit rows for their own staff record's branch).
                 // Service-side is scoped to one variant (a specific duration/price
@@ -423,13 +439,31 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('frontoffice/booked-times', [FrontOfficeLookupController::class, 'busyTimes']);
             });
 
+            // Branch Settings (web /business/settings/branch/*): the owner for
+            // any of their branches, a manager for their own branch only —
+            // BranchSettingsService resolves the uuid through the caller's
+            // branchesForUser(), so any other branch is a 404.
+            Route::middleware('role:business_owner,manager')->group(function () {
+                Route::get('branch/{uuid}/marketplace', [BranchSettingsController::class, 'marketplace']);
+                Route::patch('branch/{uuid}/marketplace', [BranchSettingsController::class, 'updateMarketplace']);
+                Route::post('branch/{uuid}/photos', [BranchSettingsController::class, 'uploadPhotos']);
+                Route::delete('branch/{uuid}/photos/{photo}', [BranchSettingsController::class, 'deletePhoto']);
+                Route::post('branch/{uuid}/photos/{photo}/cover', [BranchSettingsController::class, 'setCover']);
+                Route::patch('branch/{uuid}/booking-policy', [BranchSettingsController::class, 'updateBookingPolicy']);
+                Route::get('branch/{uuid}/reviews-summary', [BranchSettingsController::class, 'reviewsSummary']);
+
+                // Read side of Business Settings. A manager gets only what a
+                // branch inherits (identity + booking defaults); every write
+                // stays owner-only below.
+                Route::get('settings', [BusinessSettingsController::class, 'show']);
+            });
+
             Route::middleware('role:business_owner')->group(function () {
                 Route::get('/me', [SpaBusinessController::class, 'me']);
 
                 // Business Settings (company-wide configuration). Identity is
                 // POST because it carries the logo as multipart.
                 Route::prefix('settings')->group(function () {
-                    Route::get('/', [BusinessSettingsController::class, 'show']);
                     Route::post('identity', [BusinessSettingsController::class, 'updateIdentity']);
                     Route::patch('legal', [BusinessSettingsController::class, 'updateLegal']);
                     Route::patch('payments', [BusinessSettingsController::class, 'updatePayments']);
@@ -472,35 +506,21 @@ Route::middleware('auth:sanctum')->group(function () {
                 // POST service below carrying source_template_uuid — there is
                 // no separate adopt endpoint.
                 Route::get('service-templates', [ServiceController::class, 'templates']);
-                Route::apiResource('service', ServiceController::class)->only(['store', 'destroy']);
-                Route::apiResource('package', PackageController::class)->only(['store', 'destroy']);
+                Route::apiResource('service', ServiceController::class)->only(['store', 'update', 'destroy']);
+                Route::apiResource('package', PackageController::class)->only(['store', 'update', 'destroy']);
 
                 Route::post('branch/{uuid}/location', [SpaBranchController::class, 'saveLocation']);
                 Route::post('branch/{uuid}/permit', [SpaBranchController::class, 'savePermit']);
                 Route::post('branch/{uuid}/submit', [SpaBranchController::class, 'submit']);
 
-                // Branch Settings (owner web /business/settings/branch/*).
-                Route::get('branch/{uuid}/marketplace', [BranchSettingsController::class, 'marketplace']);
-                Route::patch('branch/{uuid}/marketplace', [BranchSettingsController::class, 'updateMarketplace']);
-                Route::post('branch/{uuid}/photos', [BranchSettingsController::class, 'uploadPhotos']);
-                Route::delete('branch/{uuid}/photos/{photo}', [BranchSettingsController::class, 'deletePhoto']);
-                Route::post('branch/{uuid}/photos/{photo}/cover', [BranchSettingsController::class, 'setCover']);
-                Route::patch('branch/{uuid}/booking-policy', [BranchSettingsController::class, 'updateBookingPolicy']);
-                Route::get('branch/{uuid}/reviews-summary', [BranchSettingsController::class, 'reviewsSummary']);
+                // Permits are legal documents reviewed by Servora — owner-only,
+                // unlike the rest of Branch Settings (shared group above).
                 Route::post('branch/{uuid}/permit/renew', [BranchSettingsController::class, 'renewPermit']);
 
                 Route::get('subscription/confirm/{referenceId}', [SubscriptionController::class, 'confirm']);
                 // Accept / decline an admin's update to the subscribed plan
                 // (PlanChangeService).
                 Route::post('subscription/plan-change', [SubscriptionController::class, 'respondToPlanChange']);
-
-                // Owner's own notification feed — mirrors the admin's
-                // /system/notifications shape/behavior exactly (same
-                // NotificationService). Owner-only, like billing, not shared
-                // with managers.
-                Route::get('owner/notifications', [BusinessNotificationController::class, 'index']);
-                Route::post('owner/notifications/{id}/read', [BusinessNotificationController::class, 'markRead']);
-                Route::post('owner/notifications/read-all', [BusinessNotificationController::class, 'markAllRead']);
             });
         });
 });

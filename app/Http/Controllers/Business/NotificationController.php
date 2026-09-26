@@ -32,4 +32,14 @@ class NotificationController extends Controller
     {
         return $this->notificationService->markAllRead($request->user());
     }
+
+    public function destroy(Request $request, int $id)
+    {
+        return $this->notificationService->delete($request->user(), $id);
+    }
+
+    public function clearRead(Request $request)
+    {
+        return $this->notificationService->clearRead($request->user());
+    }
 }

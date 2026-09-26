@@ -31,12 +31,37 @@ class BusinessSettingsService
 
     public function show(User $user)
     {
+        if ($user->role !== 'business_owner') {
+            return $this->branchView($user);
+        }
+
         $business = $this->businessOf($user);
         if (! $business) {
             return $this->noBusiness();
         }
 
         return $this->respond($business);
+    }
+
+    // What a manager's Branch Settings inherits from the company: the public
+    // identity (marketplace preview) and the booking defaults a branch policy
+    // falls back to. Legal, payment numbers, staff policy and notification
+    // preferences are the owner's alone.
+    private function branchView(User $user)
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+        if (! $business) {
+            return $this->noBusiness();
+        }
+
+        $business->setRelation('settings', $this->settingsFor($business));
+        $full = (new BusinessSettingsResource($business))->resolve(request());
+
+        return response()->json(['data' => [
+            'uuid' => $full['uuid'],
+            'identity' => $full['identity'],
+            'booking_defaults' => $full['booking_defaults'],
+        ]]);
     }
 
     public function updateIdentity(User $user, array $fields, ?UploadedFile $logo, bool $removeLogo, ?Request $request = null)

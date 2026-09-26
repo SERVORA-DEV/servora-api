@@ -124,7 +124,17 @@ class StaffService
         // 404s if this uuid isn't (or isn't a staff member of) one of this
         // user's own accessible branches — update($uuid, ...) alone wouldn't
         // scope that check.
-        $this->staffRepository->findByUuidForBranches($uuid, $branchIds);
+        $existing = $this->staffRepository->findByUuidForBranches($uuid, $branchIds);
+
+        // A manager's own staff row is what ties their login to the branch —
+        // changing its role or status would lock them out of it.
+        if ($existing->user_id === $user->id) {
+            $changesRole = isset($payload['role']) && $payload['role'] !== $existing->role;
+            $changesStatus = isset($payload['status']) && $payload['status'] !== $existing->status;
+            if ($changesRole || $changesStatus) {
+                return response()->json(['message' => "You can't change your own role or status. Ask the spa owner."], 422);
+            }
+        }
 
         if (! empty($payload['spa_branch_uuid'])) {
             $branch = $this->spaBranchRepository->findByUuidForBranches($payload['spa_branch_uuid'], $branchIds);
@@ -195,7 +205,11 @@ class StaffService
         // findByUuidForBranches 404s if this uuid isn't (or isn't a staff
         // member of) one of this user's own accessible branches — delete($uuid)
         // alone wouldn't scope that check.
-        $this->staffRepository->findByUuidForBranches($uuid, $this->branchIds($user));
+        $existing = $this->staffRepository->findByUuidForBranches($uuid, $this->branchIds($user));
+        if ($existing->user_id === $user->id) {
+            return response()->json(['message' => "You can't remove your own staff record. Ask the spa owner."], 422);
+        }
+
         $this->staffRepository->delete($uuid);
         return true;
     }

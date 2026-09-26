@@ -21,6 +21,7 @@ class Client extends Model
     protected $fillable = [
         'uuid',
         'spa_business_id',
+        'spa_branch_id',
         'user_id',
         'preferred_staff_id',
         'first_name',

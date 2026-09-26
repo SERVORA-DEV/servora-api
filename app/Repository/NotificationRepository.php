@@ -53,4 +53,15 @@ class NotificationRepository
             ->where('is_read', false)
             ->update(['is_read' => true, 'read_at' => now()]);
     }
+
+    // Same scoping as markReadForUser: another user's id deletes nothing.
+    public function deleteForUser(int $userId, int $id): bool
+    {
+        return (bool) Notification::where('id', $id)->where('user_id', $userId)->delete();
+    }
+
+    public function deleteReadForUser(int $userId): int
+    {
+        return Notification::where('user_id', $userId)->where('is_read', true)->delete();
+    }
 }

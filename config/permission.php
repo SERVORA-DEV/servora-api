@@ -124,7 +124,8 @@ return [
     // per-checkbox picker like system_administrator's, so these arrays
     // double as "everything this role gets" rather than just a whitelist.
     // Mirrors the role descriptions shown in the Add Staff modal on the
-    // frontend (manager: broad operations, no billing/subscription; front
+    // frontend (manager: runs one branch end to end, including its billing,
+    // but not the shared catalog or the subscription; front
     // officer: queue/cashiering only, no reports or staff/service editing).
     'manager' => [
         'dashboard_view',
@@ -141,16 +142,18 @@ return [
         'attendance_update',
         'attendance_delete',
 
+        // Catalog edits stay with the owner (the catalog is shared by every
+        // branch); a manager sets their branch's availability and price.
         'service_view',
-        'service_update',
 
         'package_view',
-        'package_update',
 
         'facility_view',
         'facility_update',
 
         'client_view',
+        'client_create',
+        'client_update',
         'client_therapist_manage',
 
         'appointment_view',
@@ -165,8 +168,10 @@ return [
         'queue_update',
 
         'billing_view',
+        'billing_create',
 
         'payment_view',
+        'payment_create',
 
         'commission_view',
         'commission_update',

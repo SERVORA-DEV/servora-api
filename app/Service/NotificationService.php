@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\NotificationRepository;
 use App\Repository\System\AdminUsersRepository;
+use App\Service\Business\StaffNotifier;
 
 // In-app only (writes to the app's own `notifications` table) — no email.
 // See NotificationRepository/App\Models\Notification for the schema.
@@ -20,6 +21,7 @@ class NotificationService
         private NotificationRepository $notificationRepository,
         private AdminUsersRepository $adminUsersRepository,
         private AuditLogRepository $auditLogRepository,
+        private StaffNotifier $staffNotifier,
     ) {}
 
     // ── Read side: the signed-in user's own feed (Settings > Notifications /
@@ -50,6 +52,25 @@ class NotificationService
         return response()->json([
             'message' => 'All notifications marked as read.',
             'updated' => $updated,
+        ], 200);
+    }
+
+    public function delete(User $user, int $id)
+    {
+        if (! $this->notificationRepository->deleteForUser($user->id, $id)) {
+            return response()->json(['message' => 'Notification not found.'], 404);
+        }
+
+        return response()->json(['message' => 'Notification deleted.'], 200);
+    }
+
+    public function clearRead(User $user)
+    {
+        $deleted = $this->notificationRepository->deleteReadForUser($user->id);
+
+        return response()->json([
+            'message' => 'Read notifications cleared.',
+            'deleted' => $deleted,
         ], 200);
     }
 
@@ -225,6 +246,10 @@ class NotificationService
             "\"{$business->business_name}\" has been suspended: {$reason}",
             'System'
         );
+
+        foreach ($business->branches as $branch) {
+            $this->staffNotifier->branch($branch, 'Business Suspended', "\"{$business->business_name}\" has been suspended by Servora. Contact your spa owner for details.", includeOwner: false, critical: true);
+        }
     }
 
     public function businessReactivated(SpaBusiness $business, User $owner): void
@@ -235,6 +260,10 @@ class NotificationService
             "\"{$business->business_name}\" has been reactivated and is no longer suspended.",
             'System'
         );
+
+        foreach ($business->branches as $branch) {
+            $this->staffNotifier->branch($branch, 'Business Reactivated', "\"{$business->business_name}\" is active again.", includeOwner: false, critical: true);
+        }
     }
 
     public function branchSuspended(SpaBranch $branch, User $owner, string $reason): void
@@ -245,6 +274,8 @@ class NotificationService
             "\"{$branch->branch_name}\" has been suspended: {$reason}",
             'System'
         );
+
+        $this->staffNotifier->branch($branch, 'Branch Suspended', "\"{$branch->branch_name}\" has been suspended by Servora. Contact your spa owner for details.", includeOwner: false, critical: true);
     }
 
     public function branchReactivated(SpaBranch $branch, User $owner): void
@@ -255,6 +286,8 @@ class NotificationService
             "\"{$branch->branch_name}\" has been reactivated and is no longer suspended.",
             'System'
         );
+
+        $this->staffNotifier->branch($branch, 'Branch Reactivated', "\"{$branch->branch_name}\" is active again.", includeOwner: false, critical: true);
     }
 
     // Fired from AdminUsersService::createAdminUsers — notifies every OTHER

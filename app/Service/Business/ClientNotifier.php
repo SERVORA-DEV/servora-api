@@ -19,7 +19,7 @@ class ClientNotifier
     {
     }
 
-    public function appointment(Appointment $appointment, string $title, string $message): void
+    public function appointment(Appointment $appointment, string $title, string $message, string $type = 'Appointment'): void
     {
         $userId = $appointment->client?->user_id;
         if (! $userId) {
@@ -28,9 +28,9 @@ class ClientNotifier
 
         $reference = $appointment->uuid;
 
-        DB::afterCommit(function () use ($userId, $title, $message, $reference) {
+        DB::afterCommit(function () use ($userId, $title, $message, $type, $reference) {
             try {
-                $this->notifications->create($userId, $title, $message, 'Appointment', $reference);
+                $this->notifications->create($userId, $title, $message, $type, $reference);
             } catch (\Throwable $e) {
                 report($e);
             }

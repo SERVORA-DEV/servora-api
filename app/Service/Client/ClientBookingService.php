@@ -11,6 +11,7 @@ use App\Models\Staff;
 use App\Models\User;
 use App\Service\Business\AppointmentAvailabilityService;
 use App\Service\Business\AppointmentService;
+use App\Service\Business\StaffNotifier;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -44,7 +45,13 @@ class ClientBookingService
     public function __construct(
         private AppointmentService $appointmentService,
         private AppointmentAvailabilityService $availabilityService,
+        private StaffNotifier $staffNotifier,
     ) {
+    }
+
+    private function clientName(Appointment $appointment): string
+    {
+        return trim("{$appointment->client?->first_name} {$appointment->client?->last_name}") ?: 'A client';
     }
 
     private function mine(User $user): Builder
@@ -100,6 +107,14 @@ class ClientBookingService
                 return $error;
             }
 
+            $this->staffNotifier->appointment(
+                $appointment,
+                'Booking cancelled by client',
+                "{$this->clientName($appointment)} cancelled booking {$appointment->appointment_number}."
+                    . ($reason ? " Reason: {$reason}" : ''),
+                'on_cancellation',
+            );
+
             return new ClientAppointmentResource($this->findMine($user, $uuid));
         });
     }
@@ -149,6 +164,14 @@ class ClientBookingService
             if ($error) {
                 return $error;
             }
+
+            $this->staffNotifier->appointment(
+                $appointment,
+                'Booking rescheduled by client',
+                "{$this->clientName($appointment)} moved booking {$appointment->appointment_number} to "
+                    . $startsAt->format('D, M j \\a\\t g:i A') . '.',
+                'on_reschedule',
+            );
 
             return new ClientAppointmentResource($this->findMine($user, $uuid));
         });
@@ -229,6 +252,15 @@ class ClientBookingService
             'status' => 'Published',
             'reviewed_at' => now(),
         ]);
+
+        $this->staffNotifier->appointment(
+            $appointment,
+            'New review',
+            "{$this->clientName($appointment)} left a {$payload['rating']}-star review for booking {$appointment->appointment_number}.",
+            null,
+            'Appointment',
+            false,
+        );
 
         return (new ClientReviewResource($review->load('appointment.branch.business', 'appointment.services.serviceVariant.service')))
             ->response()

@@ -39,7 +39,11 @@ class StaffController extends Controller
 
     public function destroy(Request $request, string $uuid)
     {
-        $this->staffService->deleteStaff($request->user(), $uuid);
+        $result = $this->staffService->deleteStaff($request->user(), $uuid);
+        if ($result instanceof \Illuminate\Http\JsonResponse) {
+            return $result;
+        }
+
         return response()->json(['message' => 'Deleted successfully'], 200);
     }
 

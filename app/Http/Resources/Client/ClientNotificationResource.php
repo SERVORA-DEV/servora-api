@@ -14,7 +14,7 @@ class ClientNotificationResource extends JsonResource
             'title' => $this->title,
             'message' => $this->message,
             'type' => $this->type,
-            'appointment_uuid' => $this->type === 'Appointment' ? $this->reference_uuid : null,
+            'appointment_uuid' => in_array($this->type, ['Appointment', 'Payment'], true) ? $this->reference_uuid : null,
             'is_read' => (bool) $this->is_read,
             'created_at' => optional($this->created_at)->toIso8601String(),
         ];

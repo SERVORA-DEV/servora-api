@@ -19,6 +19,15 @@ class ClientService
         $this->spaBusinessRepository = $spaBusinessRepository;
     }
 
+    // Owner: the whole business (null = no branch limit). Manager / front
+    // officer: only their own branch's clients.
+    public function branchScope(User $user): ?array
+    {
+        return $user->role === 'business_owner'
+            ? null
+            : $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
+    }
+
     public function search(User $user, ?string $query, int $perPage = 15)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
@@ -27,7 +36,7 @@ class ClientService
             return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
-        return ClientResource::collection($this->clientRepository->search($business->id, $query, $perPage));
+        return ClientResource::collection($this->clientRepository->search($business->id, $query, $perPage, $this->branchScope($user)));
     }
 
     public function show(User $user, string $uuid)
@@ -38,7 +47,7 @@ class ClientService
             return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
-        return new ClientResource($this->clientRepository->findByUuidForBusiness($uuid, $business->id));
+        return new ClientResource($this->clientRepository->findByUuidForBusiness($uuid, $business->id, $this->branchScope($user)));
     }
 
     public function createClient(User $user, array $payload)
@@ -49,7 +58,8 @@ class ClientService
             return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
-        $client = $this->findOrCreate($business->id, $payload);
+        // Staff add clients at their own branch; the owner's aren't tied to one.
+        $client = $this->findOrCreate($business->id, $payload, $this->branchScope($user)[0] ?? null);
 
         return new ClientResource($client);
     }
@@ -62,11 +72,11 @@ class ClientService
             return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
-        // 404s if this uuid isn't (or isn't a client of) this user's own
-        // business — update($uuid, ...) alone wouldn't scope that check.
-        // Front Office is the only role with client_update (see
-        // config/permission.php); Owner/Manager never reach this far.
-        $this->clientRepository->findByUuidForBusiness($uuid, $business->id);
+        // 404s if this uuid isn't a client of this user's own business (or,
+        // for branch staff, of their branch) — update($uuid, ...) alone
+        // wouldn't scope that check. Manager and front office hold
+        // client_update (config/permission.php).
+        $this->clientRepository->findByUuidForBusiness($uuid, $business->id, $this->branchScope($user));
 
         $client = $this->clientRepository->update($uuid, $payload);
 
@@ -88,8 +98,8 @@ class ClientService
         }
 
         // 404s if this uuid isn't (or isn't a client of) this user's own
-        // business, same guard updateClient uses.
-        $this->clientRepository->findByUuidForBusiness($clientUuid, $business->id);
+        // business or branch, same guard updateClient uses.
+        $this->clientRepository->findByUuidForBusiness($clientUuid, $business->id, $this->branchScope($user));
 
         $staffId = null;
 
@@ -119,7 +129,7 @@ class ClientService
     // an existing match is returned as-is (not updated) so a front-desk
     // typo in a walk-in's other fields doesn't silently overwrite a real
     // client record.
-    public function findOrCreate(int $spaBusinessId, array $payload)
+    public function findOrCreate(int $spaBusinessId, array $payload, ?int $spaBranchId = null)
     {
         $existing = $this->clientRepository->findByContact(
             $spaBusinessId,
@@ -132,6 +142,7 @@ class ClientService
         }
 
         $payload['spa_business_id'] = $spaBusinessId;
+        $payload['spa_branch_id'] = $spaBranchId;
         $payload['is_active'] = $payload['is_active'] ?? true;
 
         return $this->clientRepository->create($payload);

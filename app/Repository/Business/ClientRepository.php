@@ -10,11 +10,12 @@ class ClientRepository
     // Front-desk client search — name/phone/email, business-scoped. Used by
     // both the "search existing client" appointment-creation step and any
     // standalone client lookup.
-    public function search(int $spaBusinessId, ?string $query, int $perPage = 15)
+    public function search(int $spaBusinessId, ?string $query, int $perPage = 15, ?array $branchIds = null)
     {
         return Client::with(['user', 'preferredTherapist'])
             ->where('spa_business_id', $spaBusinessId)
             ->where('is_active', true)
+            ->when($branchIds !== null, fn ($q) => $this->scopeToBranches($q, $branchIds))
             ->when($query, function ($q) use ($query) {
                 // whereLike, not where(..., 'like', ...): it defaults to
                 // case-insensitive and compiles to ilike on PostgreSQL, where
@@ -46,12 +47,24 @@ class ClientRepository
         return $model;
     }
 
-    public function findByUuidForBusiness(string $uuid, int $spaBusinessId)
+    // $branchIds (manager / front officer) further limits it to that branch's
+    // clients — anyone else 404s, same as a client of another business.
+    public function findByUuidForBusiness(string $uuid, int $spaBusinessId, ?array $branchIds = null)
     {
         return Client::with(['user', 'preferredTherapist'])
             ->where('uuid', $uuid)
             ->where('spa_business_id', $spaBusinessId)
+            ->when($branchIds !== null, fn ($q) => $this->scopeToBranches($q, $branchIds))
             ->firstOrFail();
+    }
+
+    // A branch's clients: created there, or booked there at least once. The
+    // record itself stays business-wide (one client, many branches) — this
+    // only limits who a branch's staff can see.
+    private function scopeToBranches($query, array $branchIds)
+    {
+        return $query->where(fn ($q) => $q->whereIn('spa_branch_id', $branchIds)
+            ->orWhereHas('appointments', fn ($a) => $a->whereIn('spa_branch_id', $branchIds)));
     }
 
     // Business-scoping is the caller's responsibility (see

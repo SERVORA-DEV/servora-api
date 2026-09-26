@@ -26,6 +26,9 @@ return Application::configure(basePath: dirname(__DIR__))
     // scheduled tasks yet, so this is the app's first.
     ->withSchedule(function (Schedule $schedule): void {
         $schedule->command('subscriptions:notify-almost-due')->daily();
+        $schedule->command('appointments:send-reminders')->everyFiveMinutes();
+        $schedule->command('staff:send-shift-reminders')->everyFiveMinutes();
+        $schedule->command('billings:send-payment-reminders')->hourly();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Illuminate\Routing\Exceptions\InvalidSignatureException $e, \Illuminate\Http\Request $request) {

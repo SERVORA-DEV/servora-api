@@ -266,11 +266,13 @@ class BranchSettingsService
 
     // ── helpers ──────────────────────────────────────────────────────────
 
+    // The owner reaches any of their branches; a manager only their own —
+    // any other uuid 404s (see findByUuidForBranches).
     private function branchOf(User $user, string $uuid): ?SpaBranch
     {
-        $business = $this->spaBusinessRepository->findByOwnerId($user->id);
+        $branchIds = $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
 
-        return $business ? $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id) : null;
+        return $branchIds ? $this->spaBranchRepository->findByUuidForBranches($uuid, $branchIds) : null;
     }
 
     private function marketplacePayload(SpaBranch $branch)
