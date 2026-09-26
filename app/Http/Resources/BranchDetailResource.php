@@ -38,6 +38,9 @@ class BranchDetailResource extends JsonResource
             'latitude' => $this->latitude,
             'longitude' => $this->longitude,
             'cover_photo_url' => $this->resource->coverPhotoUrl(),
+            // Set by ReviewRepository::attachRatings() in SpaBranchService::publicShow.
+            'rating_avg' => $this->rating_avg,
+            'rating_count' => (int) ($this->rating_count ?? 0),
 
             'business' => [
                 'uuid' => $this->business->uuid,

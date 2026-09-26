@@ -6,13 +6,14 @@ use App\Models\Notification;
 
 class NotificationRepository
 {
-    public function create(int $userId, string $title, string $message, string $type = 'System'): Notification
+    public function create(int $userId, string $title, string $message, string $type = 'System', ?string $referenceUuid = null): Notification
     {
         return Notification::create([
             'user_id' => $userId,
             'title' => $title,
             'message' => $message,
             'type' => $type,
+            'reference_uuid' => $referenceUuid,
         ]);
     }
 

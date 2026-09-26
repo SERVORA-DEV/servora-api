@@ -17,6 +17,7 @@ class Notification extends Model
         'title',
         'message',
         'type',
+        'reference_uuid',
 
         'is_read',
         'read_at',

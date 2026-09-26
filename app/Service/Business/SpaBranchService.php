@@ -3,6 +3,8 @@
 namespace App\Service\Business;
 
 use App\Models\User;
+use App\Repository\ReviewRepository;
+use App\Http\Resources\Client\PublicReviewResource;
 use App\Repository\Business\SpaBranchRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Repository\System\AdminUsersRepository;
@@ -57,6 +59,8 @@ class SpaBranchService
         $limit = min(max($limit ?? 20, 1), 50);
 
         $branches = $this->spaBranchRepository->nearby($lat, $lng, $radiusKm, $limit);
+        app(ReviewRepository::class)->attachRatings($branches);
+
         return NearbySpaResource::collection($branches);
     }
 
@@ -66,6 +70,7 @@ class SpaBranchService
     public function publicShow(string $uuid)
     {
         $branch = $this->spaBranchRepository->publicFindByUuid($uuid);
+        app(ReviewRepository::class)->attachRatings([$branch]);
 
         $services = $this->spaBranchRepository->publicServicesForBranch($branch->id);
         $packages = $this->spaBranchRepository->publicPackagesForBranch($branch->id);
@@ -447,5 +452,17 @@ class SpaBranchService
         $this->notificationService->branchRegistrationSubmitted($branch, $this->adminUsersRepository->allAdministrators());
 
         return new SpaBranchResource($branch);
+    }
+
+    // Backs GET /spas/{uuid}/reviews — public, same Verified+Active+listed
+    // guard as the branch page it's shown on.
+    public function publicReviews(string $uuid)
+    {
+        $branch = $this->spaBranchRepository->publicFindByUuid($uuid);
+        $reviews = app(ReviewRepository::class);
+        $summary = $reviews->ratingsForBranches([$branch->id])[$branch->id] ?? ['avg' => null, 'count' => 0];
+
+        return PublicReviewResource::collection($reviews->publishedForBranch($branch->id))
+            ->additional(['meta' => ['rating_avg' => $summary['avg'], 'rating_count' => $summary['count']]]);
     }
 }

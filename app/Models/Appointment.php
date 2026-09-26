@@ -134,4 +134,9 @@ class Appointment extends Model
     {
         return $this->hasOne(Billing::class, 'appointment_id');
     }
+
+    public function review()
+    {
+        return $this->hasOne(Review::class, 'appointment_id');
+    }
 }

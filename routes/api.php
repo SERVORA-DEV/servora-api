@@ -46,6 +46,8 @@ use App\Http\Controllers\Business\FrontOfficeLookupController;
 use App\Http\Controllers\Business\FrontOfficeDashboardController;
 use App\Http\Controllers\Business\FrontOfficeAttendanceController;
 use App\Http\Controllers\Client\ClientAppointmentController;
+use App\Http\Controllers\Client\ClientAccountController;
+use App\Http\Controllers\Client\ClientBookingController;
 use App\Http\Controllers\Client\ClientProfileController;
 
 // authentication part
@@ -95,6 +97,8 @@ Route::get('/spas/{uuid}/therapists', [SpaBranchController::class, 'publicTherap
 // window, so the client booking calendar can grey them out once a therapist
 // has been picked. Dates only — never shift times.
 Route::get('/spas/{uuid}/therapists/{staffUuid}/days-off', [SpaBranchController::class, 'publicTherapistDaysOff']);
+// Published reviews for a branch's page — first name + last initial only.
+Route::get('/spas/{uuid}/reviews', [SpaBranchController::class, 'publicReviews'])->whereUuid('uuid');
 
 
 // Private verification documents (government ID front/back, face-scan
@@ -113,7 +117,26 @@ Route::middleware('auth:sanctum')->group(function () {
         ->middleware('role:client')
         ->group(function () {
             Route::patch('profile', [ClientProfileController::class, 'update']);
+            Route::post('change-password', [ClientAccountController::class, 'changePassword']);
+
             Route::post('appointments', [ClientAppointmentController::class, 'store']);
+            Route::get('appointments', [ClientBookingController::class, 'index']);
+            Route::get('appointments/{uuid}', [ClientBookingController::class, 'show'])->whereUuid('uuid');
+            Route::post('appointments/{uuid}/cancel', [ClientBookingController::class, 'cancel'])->whereUuid('uuid');
+            Route::patch('appointments/{uuid}/reschedule', [ClientBookingController::class, 'reschedule'])->whereUuid('uuid');
+            Route::get('appointments/{uuid}/queue', [ClientBookingController::class, 'queue'])->whereUuid('uuid');
+            Route::post('appointments/{uuid}/review', [ClientBookingController::class, 'review'])->whereUuid('uuid');
+            Route::get('reviews', [ClientBookingController::class, 'reviews']);
+
+            Route::get('favorites', [ClientAccountController::class, 'favorites']);
+            Route::put('favorites/{branchUuid}', [ClientAccountController::class, 'addFavorite'])->whereUuid('branchUuid');
+            Route::delete('favorites/{branchUuid}', [ClientAccountController::class, 'removeFavorite'])->whereUuid('branchUuid');
+
+            Route::get('transactions', [ClientAccountController::class, 'transactions']);
+
+            Route::get('notifications', [ClientAccountController::class, 'notifications']);
+            Route::post('notifications/read-all', [ClientAccountController::class, 'markAllNotificationsRead']);
+            Route::patch('notifications/{id}/read', [ClientAccountController::class, 'markNotificationRead'])->whereNumber('id');
         });
 
 

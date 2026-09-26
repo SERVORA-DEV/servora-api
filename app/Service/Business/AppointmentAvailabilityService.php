@@ -239,7 +239,9 @@ class AppointmentAvailabilityService
     // Soft signal for staff-made bookings (suggestTherapists() ranks
     // candidates with it and assign*() ignores it), but a hard gate for
     // client self-booking — see the class doc comment.
-    public function isStaffAvailable(int $staffId, string $date, string $startTime, int $durationMinutes): array
+    // $excludeAppointmentId skips the appointment being moved, so a client
+    // rescheduling within (or next to) their own slot isn't blocked by it.
+    public function isStaffAvailable(int $staffId, string $date, string $startTime, int $durationMinutes, ?int $excludeAppointmentId = null): array
     {
         $start = Carbon::parse("{$date} {$startTime}");
         $end = (clone $start)->addMinutes($durationMinutes);
@@ -250,6 +252,10 @@ class AppointmentAvailabilityService
             ->get();
 
         foreach ($assignments as $assignment) {
+            if ($excludeAppointmentId && $assignment->appointmentService?->appointment_id === $excludeAppointmentId) {
+                continue;
+            }
+
             if ($this->overlapsAppointment($assignment, $date, $start, $end)) {
                 return ['ok' => false, 'reason' => 'This therapist is already booked during the requested time.'];
             }

@@ -68,6 +68,11 @@ class SpaBranchController extends Controller
         return $this->spaBranchService->publicTherapistDaysOff($uuid, $staffUuid, $request->validated());
     }
 
+    public function publicReviews(string $uuid)
+    {
+        return $this->spaBranchService->publicReviews($uuid);
+    }
+
     public function store(SpaBranchRequest $request)
     {
         return $this->spaBranchService->createSpaBranch($request->user(), $request->validated());

@@ -30,7 +30,11 @@ class NearbySpaResource extends JsonResource
             'formatted_address' => $this->formatted_address,
             'latitude' => $this->latitude,
             'longitude' => $this->longitude,
-            'distance_km' => round((float) $this->distance_km, 2),
+            'distance_km' => $this->distance_km !== null ? round((float) $this->distance_km, 2) : null,
+            // Set by ReviewRepository::attachRatings(); null until a branch
+            // has its first published review.
+            'rating_avg' => $this->rating_avg,
+            'rating_count' => (int) ($this->rating_count ?? 0),
             'cover_photo_url' => $this->resource->coverPhotoUrl(),
 
             ...$this->openStatus(),

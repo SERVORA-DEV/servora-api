@@ -61,6 +61,27 @@ class SpaBranchRepository
             ->get();
     }
 
+    // A client's saved spas (GET /client/favorites): same public guard and
+    // eager loads as nearby(), so the favorites list renders with the same
+    // card as Explore. A favorite whose branch has since been suspended or
+    // unlisted simply drops out rather than 404ing the whole list.
+    public function publicByIds(array $ids): Collection
+    {
+        return SpaBranch::query()
+            ->whereIn('id', $ids)
+            ->where('verification_status', 'Verified')
+            ->where('operating_status', 'Active')
+            ->where('listing_visible', true)
+            ->with([
+                'business',
+                'schedules',
+                'coverPhoto',
+                'branchServices' => fn ($q) => self::publicServices($q)->with('serviceVariant.service'),
+                'branchPackages' => fn ($q) => self::publicPackages($q)->with('package'),
+            ])
+            ->get();
+    }
+
     // Backs GET /spas/{uuid} — same Verified+Active+listed guard as nearby(), and
     // 404s (not 403s) for anything that doesn't match, matching the
     // anti-enumeration posture of findByUuidForBranches below: a stranger

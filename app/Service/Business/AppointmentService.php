@@ -55,6 +55,7 @@ class AppointmentService
     private PaymentRepository $paymentRepository;
     private AttendanceStatusCalculator $attendanceStatusCalculator;
     private TherapistQueueCalculator $therapistQueueCalculator;
+    private ClientNotifier $clientNotifier;
 
     public function __construct(
         AppointmentRepository $appointmentRepository,
@@ -70,6 +71,7 @@ class AppointmentService
         PaymentRepository $paymentRepository,
         AttendanceStatusCalculator $attendanceStatusCalculator,
         TherapistQueueCalculator $therapistQueueCalculator,
+        ClientNotifier $clientNotifier,
     ) {
         $this->appointmentRepository = $appointmentRepository;
         $this->appointmentServiceRepository = $appointmentServiceRepository;
@@ -84,6 +86,7 @@ class AppointmentService
         $this->paymentRepository = $paymentRepository;
         $this->attendanceStatusCalculator = $attendanceStatusCalculator;
         $this->therapistQueueCalculator = $therapistQueueCalculator;
+        $this->clientNotifier = $clientNotifier;
     }
 
     private function branchIds(User $user): array
@@ -292,6 +295,15 @@ class AppointmentService
 
             $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
 
+            $appointment->setRelation('branch', $branch);
+            $this->clientNotifier->appointment(
+                $appointment,
+                'Booking confirmed',
+                "You're booked at {$branch->branch_name} on "
+                    . Carbon::parse("{$payload['appointment_date']} {$payload['appointment_time']}")->format('D, M j \\a\\t g:i A')
+                    . ". Booking no. {$appointment->appointment_number}.",
+            );
+
             $resource = new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));
             $warnings = array_values(array_unique($warnings));
 
@@ -370,6 +382,14 @@ class AppointmentService
             $appointment->update(['status' => Appointment::STATUS_CHECKED_IN, 'check_in_at' => now()]);
             $this->addToQueueInternal($appointment);
 
+            $queueNumber = $appointment->fresh('queue')->queue?->queue_number;
+            $this->clientNotifier->appointment(
+                $appointment,
+                "You're checked in",
+                "You're checked in at {$appointment->branch?->branch_name}."
+                    . ($queueNumber ? " Your queue number is {$queueNumber}." : ''),
+            );
+
             return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
         });
     }
@@ -415,6 +435,12 @@ class AppointmentService
         }
 
         $this->queueRepository->updateStatus($queue, 'Called', ['called_at' => now()]);
+
+        $this->clientNotifier->appointment(
+            $appointment,
+            "It's your turn",
+            "Queue {$queue->queue_number} — please proceed to the front desk at {$appointment->branch?->branch_name}.",
+        );
 
         return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
     }
@@ -478,41 +504,63 @@ class AppointmentService
         return DB::transaction(function () use ($branchIds, $uuid, $reason) {
             $appointment = $this->appointmentRepository->findByUuidForBranches($uuid, $branchIds);
 
-            if (! $appointment->canTransitionTo(Appointment::STATUS_CANCELLED)) {
-                return response()->json(['message' => 'This appointment can no longer be cancelled.'], 422);
+            $error = $this->performCancel($appointment, $reason);
+            if ($error) {
+                return $error;
             }
 
-            $blocked = $appointment->services()->whereIn('status', ['In Progress', 'Completed'])->exists();
-            if ($blocked) {
-                return response()->json(['message' => 'Cannot cancel an appointment with a service already in progress or completed.'], 422);
-            }
-
-            $serviceIds = $appointment->services()->pluck('id');
-
-            // Bulk query-builder update, not individual model saves — doesn't
-            // fire AppointmentServiceItem's model events, so the totals
-            // recalculation below can't be skipped in favor of relying on
-            // that safety net alone (see AppointmentServiceItem::booted()).
-            $appointment->services()->where('status', 'Pending')->update(['status' => 'Cancelled']);
-
-            TherapistAssignment::whereIn('appointment_service_id', $serviceIds)
-                ->where('assignment_status', 'Assigned')
-                ->update(['assignment_status' => 'Cancelled']);
-
-            if ($appointment->queue) {
-                $this->queueRepository->updateStatus($appointment->queue, 'Cancelled');
-            }
-
-            $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
-
-            $appointment->update([
-                'status' => Appointment::STATUS_CANCELLED,
-                'cancelled_at' => now(),
-                'cancellation_reason' => $reason,
-            ]);
+            $this->clientNotifier->appointment(
+                $appointment,
+                'Booking cancelled',
+                "{$appointment->branch?->branch_name} cancelled your booking {$appointment->appointment_number}."
+                    . ($reason ? " Reason: {$reason}" : ''),
+            );
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
         });
+    }
+
+    // The cancel rules and cascade, shared by the front desk (above) and a
+    // client cancelling their own booking (ClientBookingService) so the two
+    // can never disagree about what "cancelled" leaves behind. Returns an
+    // error response, or null once the appointment is cancelled. Must run
+    // inside the caller's transaction.
+    public function performCancel(Appointment $appointment, ?string $reason = null)
+    {
+        if (! $appointment->canTransitionTo(Appointment::STATUS_CANCELLED)) {
+            return response()->json(['message' => 'This appointment can no longer be cancelled.'], 422);
+        }
+
+        $blocked = $appointment->services()->whereIn('status', ['In Progress', 'Completed'])->exists();
+        if ($blocked) {
+            return response()->json(['message' => 'Cannot cancel an appointment with a service already in progress or completed.'], 422);
+        }
+
+        $serviceIds = $appointment->services()->pluck('id');
+
+        // Bulk query-builder update, not individual model saves — doesn't
+        // fire AppointmentServiceItem's model events, so the totals
+        // recalculation below can't be skipped in favor of relying on
+        // that safety net alone (see AppointmentServiceItem::booted()).
+        $appointment->services()->where('status', 'Pending')->update(['status' => 'Cancelled']);
+
+        TherapistAssignment::whereIn('appointment_service_id', $serviceIds)
+            ->where('assignment_status', 'Assigned')
+            ->update(['assignment_status' => 'Cancelled']);
+
+        if ($appointment->queue) {
+            $this->queueRepository->updateStatus($appointment->queue, 'Cancelled');
+        }
+
+        $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
+
+        $appointment->update([
+            'status' => Appointment::STATUS_CANCELLED,
+            'cancelled_at' => now(),
+            'cancellation_reason' => $reason,
+        ]);
+
+        return null;
     }
 
     // Not a status transition — appointment_date/time simply change, so
@@ -540,44 +588,65 @@ class AppointmentService
         return DB::transaction(function () use ($branchIds, $uuid, $payload) {
             $appointment = $this->appointmentRepository->findByUuidForBranches($uuid, $branchIds);
 
-            if (! in_array($appointment->status, [Appointment::STATUS_SCHEDULED, Appointment::STATUS_CHECKED_IN], true)) {
-                return response()->json(['message' => 'Only a scheduled or checked-in appointment can be rescheduled.'], 422);
+            $error = $this->performReschedule($appointment, $payload);
+            if ($error) {
+                return $error;
             }
 
-            $scheduleCheck = $this->availabilityService->branchIsOpen($appointment->spa_branch_id, $payload['appointment_date'], $payload['appointment_time']);
-            if (! $scheduleCheck['ok']) {
-                return response()->json(['message' => $scheduleCheck['reason']], 422);
-            }
-
-            // Moving a checked-in appointment to a new date/time means the
-            // client hasn't actually checked in for that new slot yet — revert
-            // to Scheduled and clear check_in_at, and void the queue ticket
-            // check-in created (same call cancelAppointment() already uses to
-            // void one), so it doesn't linger in the old date's queue.
-            $wasCheckedIn = $appointment->status === Appointment::STATUS_CHECKED_IN;
-
-            if ($wasCheckedIn && $appointment->queue) {
-                $this->queueRepository->updateStatus($appointment->queue, 'Cancelled');
-            }
-
-            // A walk-in is same-day by definition ("this client walked in
-            // right now") — pushed out to a future date, it's no longer that,
-            // it's something booked ahead of time, i.e. a Reservation.
-            // Same-day reschedules (just a different time) stay a walk-in.
-            $becomesReservation = $appointment->appointment_type === 'Walk-in'
-                && $payload['appointment_date'] > now()->toDateString();
-
-            $appointment->update([
-                'appointment_date' => $payload['appointment_date'],
-                'appointment_time' => $payload['appointment_time'],
-                'remarks' => $payload['reason'] ?? $appointment->remarks,
-                'status' => $wasCheckedIn ? Appointment::STATUS_SCHEDULED : $appointment->status,
-                'check_in_at' => $wasCheckedIn ? null : $appointment->check_in_at,
-                'appointment_type' => $becomesReservation ? 'Reservation' : $appointment->appointment_type,
-            ]);
+            $this->clientNotifier->appointment(
+                $appointment,
+                'Booking moved',
+                "{$appointment->branch?->branch_name} moved your booking {$appointment->appointment_number} to "
+                    . Carbon::parse("{$payload['appointment_date']} {$payload['appointment_time']}")->format('D, M j \\a\\t g:i A') . '.',
+            );
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
         });
+    }
+
+    // The reschedule rules, shared by the front desk (above) and a client
+    // moving their own booking (ClientBookingService, which adds its own
+    // stricter checks first). Returns an error response, or null once the
+    // appointment has moved. Must run inside the caller's transaction.
+    public function performReschedule(Appointment $appointment, array $payload)
+    {
+        if (! in_array($appointment->status, [Appointment::STATUS_SCHEDULED, Appointment::STATUS_CHECKED_IN], true)) {
+            return response()->json(['message' => 'Only a scheduled or checked-in appointment can be rescheduled.'], 422);
+        }
+
+        $scheduleCheck = $this->availabilityService->branchIsOpen($appointment->spa_branch_id, $payload['appointment_date'], $payload['appointment_time']);
+        if (! $scheduleCheck['ok']) {
+            return response()->json(['message' => $scheduleCheck['reason']], 422);
+        }
+
+        // Moving a checked-in appointment to a new date/time means the
+        // client hasn't actually checked in for that new slot yet — revert
+        // to Scheduled and clear check_in_at, and void the queue ticket
+        // check-in created (same call cancelAppointment() already uses to
+        // void one), so it doesn't linger in the old date's queue.
+        $wasCheckedIn = $appointment->status === Appointment::STATUS_CHECKED_IN;
+
+        if ($wasCheckedIn && $appointment->queue) {
+            $this->queueRepository->updateStatus($appointment->queue, 'Cancelled');
+        }
+
+        // A walk-in is same-day by definition ("this client walked in
+        // right now") — pushed out to a future date, it's no longer that,
+        // it's something booked ahead of time, i.e. a Reservation.
+        // Same-day reschedules (just a different time) stay a walk-in.
+        $becomesReservation = $appointment->appointment_type === 'Walk-in'
+            && $payload['appointment_date'] > now()->toDateString();
+
+        $appointment->update([
+            'appointment_date' => $payload['appointment_date'],
+            'appointment_time' => $payload['appointment_time'],
+            'remarks' => $payload['reason'] ?? $appointment->remarks,
+            'status' => $wasCheckedIn ? Appointment::STATUS_SCHEDULED : $appointment->status,
+            'check_in_at' => $wasCheckedIn ? null : $appointment->check_in_at,
+            'appointment_type' => $becomesReservation ? 'Reservation' : $appointment->appointment_type,
+        ]);
+
+        return null;
     }
 
     // ── Service / package selection ─────────────────────────────────────
@@ -1288,6 +1357,12 @@ class AppointmentService
                             'status' => Appointment::STATUS_COMPLETED,
                             'completed_at' => now(),
                         ]);
+
+                        $this->clientNotifier->appointment(
+                            $paidAppointment,
+                            'Thanks for visiting',
+                            "How was your visit to {$paidAppointment->branch?->branch_name}? Tap to rate it.",
+                        );
                     }
                 }
             }
