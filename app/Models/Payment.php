@@ -26,6 +26,9 @@ class Payment extends Model
         'reference_number',
 
         'amount',
+        // Cash only: what the client handed over, and the change given back.
+        'amount_tendered',
+        'change_given',
 
         'payment_status',
 
@@ -34,6 +37,12 @@ class Payment extends Model
         'refunded_amount',
         'refund_reason',
 
+        // A payment entered by mistake (payment_status 'Voided').
+        'voided_at',
+        'voided_by',
+        // The staff member who took the payment.
+        'received_by',
+
         'remarks',
     ];
 
@@ -41,10 +50,18 @@ class Payment extends Model
     {
         return [
             'amount' => 'decimal:2',
+            'amount_tendered' => 'decimal:2',
+            'change_given' => 'decimal:2',
             'refunded_amount' => 'decimal:2',
 
             'paid_at' => 'datetime',
+            'voided_at' => 'datetime',
         ];
+    }
+
+    public function receiver()
+    {
+        return $this->belongsTo(User::class, 'received_by');
     }
 
     public function uniqueIds()

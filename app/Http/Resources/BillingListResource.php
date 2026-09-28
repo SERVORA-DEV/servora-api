@@ -22,6 +22,8 @@ class BillingListResource extends JsonResource
             'uuid' => $this->uuid,
             'billing_number' => $this->billing_number,
             'amount' => (float) $this->amount,
+            'subtotal' => (float) ($this->subtotal ?? $this->amount),
+            'discount_amount' => (float) $this->discount_amount,
             'status' => $this->status,
             'issued_at' => optional($this->issued_at)->toIso8601String(),
             'paid_at' => optional($this->paid_at)->toIso8601String(),

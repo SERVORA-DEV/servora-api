@@ -125,7 +125,11 @@ class FrontOfficeLookupService
                 'checked_in_at' => $row['checked_in_at']?->format('H:i'),
                 'last_completed_at' => $row['last_completed_at']?->format('H:i'),
                 'is_next_up' => $row['uuid'] === $nextUpUuid,
+                'earned_today' => $row['earned_today'],
+                'earned_period' => $row['earned_period'],
             ])->values(),
+            // 'check_in' or 'lowest_earnings' — the owner's Staff Policies choice.
+            'rotation_mode' => $rows->first()['rotation_mode'] ?? TherapistQueueCalculator::MODE_CHECK_IN,
         ];
     }
 
@@ -134,14 +138,21 @@ class FrontOfficeLookupService
     // only rooms actually free during that window (a hard check, unlike the
     // advisory therapist-suggestion equivalent; see
     // AppointmentAvailabilityService::isFacilityAvailable()).
-    public function facilities(User $user, ?string $serviceVariantUuid = null, ?string $date = null, ?string $time = null)
+    // $excludeAppointmentUuid: the appointment the rooms are being picked
+    // for — its own bookings don't make a room "taken" (a second service in
+    // the same visit can reuse the room of the first).
+    public function facilities(User $user, ?string $serviceVariantUuid = null, ?string $date = null, ?string $time = null, ?string $excludeAppointmentUuid = null)
     {
         $variant = $serviceVariantUuid ? ServiceVariant::where('uuid', $serviceVariantUuid)->first() : null;
-        $rooms = $this->facilityRepository->listAvailableForBranches($this->branchIds($user), $variant?->service_id);
+        $branchIds = $this->branchIds($user);
+        $rooms = $this->facilityRepository->listAvailableForBranches($branchIds, $variant?->service_id);
 
         if ($date && $time) {
             $duration = $variant?->duration_minutes ?? 30;
-            $rooms = $rooms->filter(fn ($room) => $this->availabilityService->isFacilityAvailable($room->id, $date, $time, $duration)['ok'])->values();
+            $excludeId = $excludeAppointmentUuid
+                ? \App\Models\Appointment::where('uuid', $excludeAppointmentUuid)->whereIn('spa_branch_id', $branchIds)->value('id')
+                : null;
+            $rooms = $rooms->filter(fn ($room) => $this->availabilityService->isFacilityAvailable($room->id, $date, $time, $duration, excludeAppointmentId: $excludeId)['ok'])->values();
         }
 
         return LookupFacilityResource::collection($rooms);

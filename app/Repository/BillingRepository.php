@@ -94,7 +94,13 @@ class BillingRepository
         ])
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->where('billing_type', 'Appointment')
-            ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
+            // 'unpaid' / 'partially_paid' aren't stored — both are Pending,
+            // told apart by whether anything has been paid yet.
+            ->when($filters['status'] ?? null, fn ($q, $status) => match ($status) {
+                'unpaid' => $q->where('status', 'Pending')->whereDoesntHave('payments', fn ($p) => $p->where('payment_status', 'Paid')),
+                'partially_paid' => $q->where('status', 'Pending')->whereHas('payments', fn ($p) => $p->where('payment_status', 'Paid')),
+                default => $q->where('status', $status),
+            })
             ->when($filters['payment_method'] ?? null, fn ($q, $method) => $q->whereHas('payments', fn ($p) => $p->where('payment_method', $method)))
             ->when($filters['date_from'] ?? null, fn ($q, $date) => $q->whereDate('issued_at', '>=', $date))
             ->when($filters['date_to'] ?? null, fn ($q, $date) => $q->whereDate('issued_at', '<=', $date))

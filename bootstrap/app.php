@@ -28,6 +28,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('subscriptions:notify-almost-due')->daily();
         $schedule->command('appointments:send-reminders')->everyFiveMinutes();
         $schedule->command('staff:send-shift-reminders')->everyFiveMinutes();
+        $schedule->command('staff:send-front-desk-alerts')->everyFiveMinutes();
         $schedule->command('billings:send-payment-reminders')->hourly();
     })
     ->withExceptions(function (Exceptions $exceptions): void {

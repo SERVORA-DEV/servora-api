@@ -18,6 +18,8 @@ class Attendance extends Model
         'attendance_date',
         'check_in_at',
         'check_out_at',
+        'left_early',
+        'covering_for_staff_id',
         'status',
         'remarks',
         'created_by',
@@ -28,6 +30,7 @@ class Attendance extends Model
         'attendance_date' => 'date:Y-m-d',
         'check_in_at' => 'datetime',
         'check_out_at' => 'datetime',
+        'left_early' => 'boolean',
     ];
 
     public function uniqueIds()
@@ -38,6 +41,12 @@ class Attendance extends Model
     public function staff()
     {
         return $this->belongsTo(Staff::class, 'staff_id');
+    }
+
+    // The therapist this person is filling in for today (they left early or are on leave).
+    public function coveringFor()
+    {
+        return $this->belongsTo(Staff::class, 'covering_for_staff_id');
     }
 
     public function creator()

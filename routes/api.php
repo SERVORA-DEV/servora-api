@@ -270,6 +270,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Deletes every notification the caller has already read.
                 Route::delete('notifications/read', [BusinessNotificationController::class, 'clearRead']);
                 Route::delete('notifications/{id}', [BusinessNotificationController::class, 'destroy'])->whereNumber('id');
+                Route::get('notifications/{id}', [BusinessNotificationController::class, 'show'])->whereNumber('id');
             });
 
             // 'verified.business' is the real enforcement of the
@@ -403,6 +404,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('appointment-service/{uuid}/assignments', [AppointmentServiceController::class, 'assignTherapist']);
                 Route::delete('assignment/{uuid}', [AppointmentServiceController::class, 'cancelAssignment']);
                 Route::patch('assignment/{uuid}/room', [AppointmentServiceController::class, 'assignRoom']);
+                // Clears just the room, keeping the therapist on the assignment.
+                Route::delete('assignment/{uuid}/room', [AppointmentServiceController::class, 'clearRoom']);
                 Route::post('appointment-service/{uuid}/start', [AppointmentServiceController::class, 'startService']);
                 Route::post('appointment-service/{uuid}/complete', [AppointmentServiceController::class, 'completeService']);
 
@@ -414,6 +417,11 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('billings', [BillingController::class, 'index'])->middleware('permission:billing_view');
                 Route::get('billing/{uuid}', [BillingController::class, 'show'])->middleware('permission:billing_view');
                 Route::post('billing/{uuid}/payments', [PaymentController::class, 'store'])->middleware('permission:payment_create');
+                // Methods the owner accepts (Settings → Payments), for the payment dialog.
+                Route::get('payment-options', [BillingController::class, 'paymentOptions'])->middleware('permission:payment_create');
+                Route::patch('billing/{uuid}/discount', [BillingController::class, 'discount'])->middleware('permission:billing_update');
+                Route::post('billing/{uuid}/refund', [BillingController::class, 'refund'])->middleware('permission:payment_refund');
+                Route::post('payment/{uuid}/void', [PaymentController::class, 'void'])->middleware('permission:payment_refund');
 
                 Route::get('frontoffice/dashboard', [FrontOfficeDashboardController::class, 'index']);
 
@@ -425,6 +433,12 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('frontoffice/attendance', [FrontOfficeAttendanceController::class, 'index'])->middleware('permission:attendance_view');
                 Route::post('frontoffice/attendance/check-in', [FrontOfficeAttendanceController::class, 'checkIn'])->middleware('permission:attendance_checkin');
                 Route::post('frontoffice/attendance/check-out', [FrontOfficeAttendanceController::class, 'checkOut'])->middleware('permission:attendance_checkin');
+                // Sending a therapist home early / marking them on leave today,
+                // and who could fill in for them (lowest earnings first).
+                Route::post('frontoffice/attendance/leave', [FrontOfficeAttendanceController::class, 'leave'])->middleware('permission:attendance_checkin');
+                Route::get('frontoffice/attendance/fill-in-candidates', [FrontOfficeAttendanceController::class, 'fillInCandidates'])->middleware('permission:attendance_view');
+                // After every literal frontoffice/attendance/... segment above.
+                Route::get('frontoffice/attendance/{uuid}/history', [FrontOfficeAttendanceController::class, 'history'])->middleware('permission:attendance_view')->whereUuid('uuid');
 
                 Route::get('frontoffice/therapists', [FrontOfficeLookupController::class, 'therapists']);
                 Route::get('frontoffice/therapists/{uuid}', [FrontOfficeLookupController::class, 'therapist']);

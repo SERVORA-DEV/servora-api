@@ -36,6 +36,18 @@ class NotificationService
         ]);
     }
 
+    // One of the caller's own notifications (the full-page detail view) —
+    // another user's id is a 404, never their row.
+    public function showForUser(User $user, int $id)
+    {
+        $notification = $this->notificationRepository->findForUser($user->id, $id);
+        if (! $notification) {
+            return response()->json(['message' => 'Notification not found.'], 404);
+        }
+
+        return new NotificationResource($notification);
+    }
+
     public function markRead(User $user, int $id)
     {
         if (! $this->notificationRepository->markReadForUser($user->id, $id)) {

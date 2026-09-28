@@ -22,9 +22,15 @@ class BillingPaymentRequest extends FormRequest
                 'Cash', 'GCash', 'Maya', 'Bank Transfer', 'Online Banking',
                 'Credit Card', 'Debit Card', 'QR Code', 'Other',
             ])],
+            // Which methods the business accepts, whether a reference is
+            // required and the no-overpayment rule are checked against the
+            // bill itself in BillingService::paymentRejection.
             'amount' => 'required|numeric|min:0.01',
-            'reference_number' => 'nullable|string|max:255',
-            'remarks' => 'nullable|string',
+            // Cash only: what the client handed over (change = this − amount).
+            'amount_tendered' => 'nullable|numeric|min:0.01',
+            // payments.reference_number is varchar(100).
+            'reference_number' => 'nullable|string|max:100',
+            'remarks' => 'nullable|string|max:1000',
         ];
     }
 }

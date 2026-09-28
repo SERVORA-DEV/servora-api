@@ -32,6 +32,12 @@ class NotificationRepository
         return $query->latest()->paginate($perPage);
     }
 
+    // Scoped to $userId in the WHERE, like markReadForUser below.
+    public function findForUser(int $userId, int $id): ?Notification
+    {
+        return Notification::where('id', $id)->where('user_id', $userId)->first();
+    }
+
     public function countUnreadForUser(int $userId): int
     {
         return Notification::where('user_id', $userId)->where('is_read', false)->count();

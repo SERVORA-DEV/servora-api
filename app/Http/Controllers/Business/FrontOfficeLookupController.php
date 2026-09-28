@@ -37,6 +37,7 @@ class FrontOfficeLookupController extends Controller
             $request->query('service_variant_uuid'),
             $request->query('appointment_date'),
             $request->query('appointment_time'),
+            $request->query('exclude_appointment_uuid'),
         );
     }
 

@@ -26,10 +26,15 @@ class AppointmentRepository
             'services.serviceVariant.service',
             'services.therapistAssignments.staff',
             'services.therapistAssignments.facility',
-            'queue', 'billing',
+            // billing.payments: the board's "Collect ₱…" needs the balance
+            // actually due, not the pre-discount appointment price.
+            'queue', 'billing.payments',
         ])
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->when($filters['date'] ?? null, fn ($q, $date) => $q->where('appointment_date', $date))
+            // The front desk's working window (a week back, two months ahead).
+            ->when($filters['date_from'] ?? null, fn ($q, $date) => $q->where('appointment_date', '>=', $date))
+            ->when($filters['date_to'] ?? null, fn ($q, $date) => $q->where('appointment_date', '<=', $date))
             ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
             ->when($filters['client_uuid'] ?? null, fn ($q, $uuid) => $q->whereHas('client', fn ($c) => $c->where('uuid', $uuid)))
             ->orderByDesc('appointment_date')

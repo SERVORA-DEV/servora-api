@@ -22,7 +22,7 @@ class AppointmentController extends Controller
 
     public function index(Request $request)
     {
-        $filters = $request->only(['date', 'status', 'client_uuid']);
+        $filters = $request->only(['date', 'date_from', 'date_to', 'status', 'client_uuid']);
         return $this->appointmentService->listAppointments($request->user(), $filters, $request->input('per_page', 15));
     }
 

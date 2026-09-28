@@ -169,9 +169,13 @@ return [
 
         'billing_view',
         'billing_create',
+        // Discounts on a bill.
+        'billing_update',
 
         'payment_view',
         'payment_create',
+        // Voiding a mistaken payment / refunding a bill.
+        'payment_refund',
 
         'commission_view',
         'commission_update',
@@ -209,11 +213,22 @@ return [
 
         'billing_view',
         'billing_create',
+        // Grantable, but off by default — see default_off below.
+        'billing_update',
 
         'payment_view',
         'payment_create',
+        'payment_refund',
 
         'notification_view',
+    ],
+
+    // Keys in a role's bundle that a new account does NOT start with — the
+    // owner turns them on per role (Staff Policies) or per account (Account
+    // Management). Discounts and voids/refunds move money, so the front
+    // desk only gets them when the owner decides to.
+    'default_off' => [
+        'front_officer' => ['billing_update', 'payment_refund'],
     ],
 
 ];

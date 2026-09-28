@@ -35,6 +35,7 @@ class StaffPolicySettingsRequest extends FormRequest
             'allow_shift_swap' => 'sometimes|boolean',
             'require_manager_approval' => 'sometimes|boolean',
             'allow_overtime' => 'sometimes|boolean',
+            'therapist_rotation' => 'sometimes|required|in:check_in,lowest_earnings',
 
             // Default permissions per account role — keys are checked
             // against each role's bundle in withValidator().

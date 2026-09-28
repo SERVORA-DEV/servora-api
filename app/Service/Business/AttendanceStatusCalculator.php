@@ -4,6 +4,7 @@ namespace App\Service\Business;
 
 use App\Models\Attendance;
 use App\Models\BranchSchedule;
+use App\Models\SpaBusiness;
 use App\Models\Staff;
 use App\Models\StaffSchedule;
 use Carbon\Carbon;
@@ -18,8 +19,17 @@ class AttendanceStatusCalculator
 {
     // Minutes of grace after the scheduled start before a check-in counts
     // as Late — absorbs clock skew/rounding rather than flagging every
-    // on-time arrival.
+    // on-time arrival. Callers pass the owner's Staff Policies
+    // late_threshold_minutes when they have it (see graceMinutesFor()).
     private const LATE_GRACE_MINUTES = 5;
+
+    /** The owner's late threshold (Settings → Staff Policies), or the default grace. */
+    public static function graceMinutesFor(?SpaBusiness $business): int
+    {
+        $policy = $business?->settings?->section('staff_policy') ?? [];
+
+        return (int) ($policy['late_threshold_minutes'] ?? self::LATE_GRACE_MINUTES);
+    }
 
     /**
      * @param  Collection<int, StaffSchedule>  $staffSchedules  all of this staff member's schedule rows (any day/version) — matched internally by day_of_week + effective_from/until for $date.
@@ -30,9 +40,11 @@ class AttendanceStatusCalculator
         string $date,
         Collection $staffSchedules,
         ?BranchSchedule $branchSchedule = null,
-        ?Carbon $now = null
+        ?Carbon $now = null,
+        ?int $graceMinutes = null,
     ): array {
         $now = $now ?: Carbon::now();
+        $graceMinutes ??= self::LATE_GRACE_MINUTES;
         $schedule = $this->matchSchedule($staffSchedules, $date);
         $isDayOff = (bool) ($schedule?->is_day_off);
 
@@ -79,27 +91,38 @@ class AttendanceStatusCalculator
             // here is recomputed fresh from the check-in fact.
             $status = $storedStatus === 'Fill In' ? 'Fill In' : 'Present';
 
-            if ($scheduledStart && $checkIn->gt($scheduledStart->copy()->addMinutes(self::LATE_GRACE_MINUTES))) {
+            // A fill-in came in to cover, not for their own shift — never Late.
+            if ($status !== 'Fill In' && $scheduledStart && $checkIn->gt($scheduledStart->copy()->addMinutes($graceMinutes))) {
                 $lateMinutes = (int) $scheduledStart->diffInMinutes($checkIn);
                 $status = 'Late';
             }
 
             if (! $checkOut) {
-                if ($this->dayHasEnded($date, $scheduledEnd, $now)) {
+                // Someone who checked in after the shift/branch end (an
+                // after-hours fill-in) is only Incomplete once the calendar
+                // day is over — not the instant they check in.
+                $cutoff = ($scheduledEnd && $checkIn->lt($scheduledEnd)) ? $scheduledEnd : null;
+                if ($this->dayHasEnded($date, $cutoff, $now)) {
                     return $this->result('Incomplete', $lateMinutes, null, $scheduledStart, $scheduledEnd, $isDayOff, false, true);
                 }
 
                 return $this->result($status, $lateMinutes, null, $scheduledStart, $scheduledEnd, $isDayOff, false, false);
             }
 
+            // Sent home / left early at the front desk (FrontOfficeAttendanceService::leave).
+            if ($attendance?->left_early) {
+                $status = 'Left Early';
+            }
+
             return $this->result($status, $lateMinutes, $this->workMinutes($checkIn, $checkOut, $schedule), $scheduledStart, $scheduledEnd, $isDayOff, false, false);
         }
 
-        // No check-in at all. A day off, or a date with no schedule/branch
-        // info to hold this staff member to, means nothing is expected of
-        // them — never flagged (mirrors AppointmentAvailabilityService's
-        // "not configured = open" stance).
-        if ($isDayOff || (! $schedule && ! $branchSchedule)) {
+        // No check-in at all. A day off, or no StaffSchedule row for this
+        // date, means nothing is expected of them — never flagged Absent.
+        // Branch opening hours alone don't put someone on shift; only their
+        // own schedule does (an unscheduled therapist can still come in as a
+        // Fill In, but not coming in isn't an absence).
+        if ($isDayOff || ! $schedule) {
             return $this->result(null, null, null, $scheduledStart, $scheduledEnd, $isDayOff, false, false);
         }
 
@@ -119,6 +142,16 @@ class AttendanceStatusCalculator
     public function hasScheduleForDate(Collection $staffSchedules, string $date): bool
     {
         return $this->matchSchedule($staffSchedules, $date) !== null;
+    }
+
+    // A real working shift on $date — a day-off row doesn't count. Decides
+    // 'Present' vs 'Fill In' on a front-desk check-in: someone coming in on
+    // their day off is covering, same as someone with no schedule at all.
+    public function hasWorkingScheduleForDate(Collection $staffSchedules, string $date): bool
+    {
+        $schedule = $this->matchSchedule($staffSchedules, $date);
+
+        return $schedule !== null && ! $schedule->is_day_off;
     }
 
     private function matchSchedule(Collection $staffSchedules, string $date): ?StaffSchedule

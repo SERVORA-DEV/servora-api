@@ -23,6 +23,14 @@ class Billing extends Model
 
         'billing_number',
 
+        // amount = what's owed; subtotal = the pre-discount total it came from.
+        'subtotal',
+        'discount_type',
+        'discount_value',
+        'discount_amount',
+        'discount_reason',
+        'discounted_by',
+
         'amount',
 
         'status',
@@ -38,6 +46,9 @@ class Billing extends Model
     {
         return [
             'amount' => 'decimal:2',
+            'subtotal' => 'decimal:2',
+            'discount_value' => 'decimal:2',
+            'discount_amount' => 'decimal:2',
 
             'issued_at' => 'datetime',
             'due_at' => 'datetime',

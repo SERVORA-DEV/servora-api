@@ -42,6 +42,11 @@ class SpaBusinessSetting extends Model
             'allow_shift_swap' => false,
             'require_manager_approval' => true,
             'allow_overtime' => false,
+
+            // Who the front desk's therapist rotation puts next: 'check_in' (first
+            // timed in, back of the line after each service) or 'lowest_earnings'
+            // (whoever has earned the least commission this pay period goes first).
+            'therapist_rotation' => 'check_in',
         ],
 
         'booking_defaults' => [
@@ -146,15 +151,17 @@ class SpaBusinessSetting extends Model
     }
 
     // The permissions a new account of $role starts with: every key in that
-    // role's config/permission.php bundle, on unless the owner turned it off.
+    // role's config/permission.php bundle, on unless the owner turned it off
+    // (or it's in permission.default_off and the owner never turned it on).
     // Keys outside the bundle can never be granted, whatever is stored.
     public function rolePermissions(string $role): array
     {
         $stored = $this->role_permissions[$role] ?? [];
+        $offByDefault = config('permission.default_off.'.$role, []);
         $result = [];
 
         foreach (config('permission.'.$role, []) as $key) {
-            $result[$key] = array_key_exists($key, $stored) ? (bool) $stored[$key] : true;
+            $result[$key] = array_key_exists($key, $stored) ? (bool) $stored[$key] : ! in_array($key, $offByDefault, true);
         }
 
         return $result;

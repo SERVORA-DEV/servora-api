@@ -212,6 +212,7 @@ class AttendanceService
         // Prefetch every involved branch's weekly hours once, grouped by
         // branch, rather than querying per staff x date.
         $branchSchedulesByBranch = BranchSchedule::whereIn('spa_branch_id', $branchIds)->get()->groupBy('spa_branch_id');
+        $grace = AttendanceStatusCalculator::graceMinutesFor($business);
 
         $entries = collect();
 
@@ -224,7 +225,7 @@ class AttendanceService
                 $attendance = $attendanceByDate->get($date);
                 $branchSchedule = $branchDaySchedules->firstWhere('day_of_week', $day->format('l'));
 
-                $resolved = $this->statusCalculator->resolve($staff, $attendance, $date, $staff->schedules, $branchSchedule);
+                $resolved = $this->statusCalculator->resolve($staff, $attendance, $date, $staff->schedules, $branchSchedule, graceMinutes: $grace);
 
                 $entries->push([
                     'attendance_uuid' => $attendance?->uuid,
@@ -277,7 +278,8 @@ class AttendanceService
             $attendance,
             $attendance->attendance_date->format('Y-m-d'),
             $staff->schedules,
-            $branchSchedule
+            $branchSchedule,
+            graceMinutes: AttendanceStatusCalculator::graceMinutesFor($business),
         );
 
         $history = $this->auditLogRepository->forRecord('attendances', $attendance->id);

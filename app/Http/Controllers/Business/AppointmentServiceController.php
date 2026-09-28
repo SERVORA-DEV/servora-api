@@ -41,6 +41,11 @@ class AppointmentServiceController extends Controller
         return $this->appointmentService->assignRoom($request->user(), $uuid, $request->validated());
     }
 
+    public function clearRoom(Request $request, string $uuid)
+    {
+        return $this->appointmentService->clearRoom($request->user(), $uuid);
+    }
+
     public function startService(Request $request, string $uuid)
     {
         return $this->appointmentService->startService($request->user(), $uuid);

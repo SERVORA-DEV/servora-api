@@ -57,6 +57,7 @@ class AppointmentService
     private TherapistQueueCalculator $therapistQueueCalculator;
     private ClientNotifier $clientNotifier;
     private StaffNotifier $staffNotifier;
+    private BillingService $billingService;
 
     public function __construct(
         AppointmentRepository $appointmentRepository,
@@ -74,7 +75,9 @@ class AppointmentService
         TherapistQueueCalculator $therapistQueueCalculator,
         ClientNotifier $clientNotifier,
         StaffNotifier $staffNotifier,
+        BillingService $billingService,
     ) {
+        $this->billingService = $billingService;
         $this->appointmentRepository = $appointmentRepository;
         $this->appointmentServiceRepository = $appointmentServiceRepository;
         $this->therapistAssignmentRepository = $therapistAssignmentRepository;
@@ -866,9 +869,12 @@ class AppointmentService
             ->pluck('uuid')
             ->all();
 
-        $options = $therapists->map(function (Staff $staff) use ($attendanceByStaffId, $date, $time, $duration, $branchSchedule, $serviceId, $rotationByStaffId) {
+        $appointment->loadMissing('branch.business.settings');
+        $grace = AttendanceStatusCalculator::graceMinutesFor($appointment->branch?->business);
+
+        $options = $therapists->map(function (Staff $staff) use ($attendanceByStaffId, $date, $time, $duration, $branchSchedule, $serviceId, $rotationByStaffId, $grace) {
             $attendance = $attendanceByStaffId->get($staff->id);
-            $resolved = $this->attendanceStatusCalculator->resolve($staff, $attendance, $date, $staff->schedules, $branchSchedule);
+            $resolved = $this->attendanceStatusCalculator->resolve($staff, $attendance, $date, $staff->schedules, $branchSchedule, graceMinutes: $grace);
             $scheduleCheck = $this->availabilityService->staffMatchesSchedule($staff->id, $date, $time, $duration);
 
             // No resolvable service (a variant that's since been deleted)
@@ -1078,6 +1084,39 @@ class AppointmentService
             }
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));
+        });
+    }
+
+    // Takes the room off an assignment but keeps its therapist — the "×" on
+    // the room chip. (cancelAssignment drops the whole row, therapist and
+    // all.) A room-only row has nothing left once its room goes, so it is
+    // cancelled instead.
+    public function clearRoom(User $user, string $assignmentUuid)
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+        if (! $business) {
+            return response()->json(['message' => 'No spa business found for this account.'], 422);
+        }
+
+        $branchIds = $this->branchIds($user);
+
+        return DB::transaction(function () use ($branchIds, $assignmentUuid) {
+            $assignment = TherapistAssignment::whereHas('appointmentService.appointment', fn ($q) => $q->whereIn('spa_branch_id', $branchIds))
+                ->where('uuid', $assignmentUuid)
+                ->lockForUpdate()
+                ->with('appointmentService.appointment')
+                ->firstOrFail();
+
+            if (in_array($assignment->assignment_status, ['Completed', 'Cancelled'], true)
+                || in_array($assignment->appointmentService->status, ['Completed', 'Cancelled'], true)) {
+                return response()->json(['message' => 'This service is already finished — its room can no longer be changed.'], 422);
+            }
+
+            $assignment->update($assignment->staff_id
+                ? ['facility_id' => null]
+                : ['facility_id' => null, 'assignment_status' => 'Cancelled']);
+
+            return new AppointmentResource($this->appointmentRepository->findByUuid($assignment->appointmentService->appointment->uuid));
         });
     }
 
@@ -1312,6 +1351,7 @@ class AppointmentService
                 'spa_branch_id' => $appointment->spa_branch_id,
                 'billing_type' => 'Appointment',
                 'billing_number' => $this->billingRepository->generateBillingNumber(),
+                'subtotal' => $amount,
                 'amount' => $amount,
                 'status' => 'Pending',
                 'issued_at' => now(),
@@ -1333,7 +1373,7 @@ class AppointmentService
         // page can render Appointment Details / Bill Summary without a
         // second round trip to GET appointment/{uuid}.
         $billing = Billing::with([
-            'payments',
+            'payments.receiver',
             'appointment.client',
             'appointment.branch',
             'appointment.services.serviceVariant.service',
@@ -1360,16 +1400,19 @@ class AppointmentService
 
         $branchIds = $this->branchIds($user);
 
-        return DB::transaction(function () use ($business, $branchIds, $billingUuid, $payload) {
+        return DB::transaction(function () use ($business, $branchIds, $billingUuid, $payload, $user) {
             $billing = Billing::where('uuid', $billingUuid)
                 ->whereIn('spa_branch_id', $branchIds)
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if ($billing->status === 'Paid') {
-                return response()->json(['message' => 'This billing has already been fully paid.'], 422);
+            // Enabled method (Settings → Payments), reference for non-cash,
+            // no overpayment, bill/appointment still open — BillingService.
+            if ($rejection = $this->billingService->paymentRejection($billing, $business, $payload)) {
+                return $rejection;
             }
 
+            $tendered = isset($payload['amount_tendered']) ? round((float) $payload['amount_tendered'], 2) : null;
             $payment = $this->paymentRepository->create([
                 'billing_id' => $billing->id,
                 'spa_business_id' => $business->id,
@@ -1377,12 +1420,13 @@ class AppointmentService
                 'payment_method' => $payload['payment_method'],
                 'reference_number' => $payload['reference_number'] ?? null,
                 'amount' => $payload['amount'],
+                'amount_tendered' => $tendered,
+                'change_given' => $tendered !== null ? round($tendered - (float) $payload['amount'], 2) : null,
                 'payment_status' => 'Paid',
                 'paid_at' => now(),
+                'received_by' => $user->id,
                 'remarks' => $payload['remarks'] ?? null,
             ]);
-
-            $paidTotal = $this->paymentRepository->paidTotalForBilling($billing->id);
 
             $paidFor = $billing->appointment_id ? Appointment::find($billing->appointment_id) : null;
             if ($paidFor) {
@@ -1393,38 +1437,32 @@ class AppointmentService
                     "{$paidFor->branch?->branch_name} received your {$amount} payment for booking {$paidFor->appointment_number}.",
                     'Payment',
                 );
+                // Front desk included — they reconcile the cash drawer — but
+                // not whoever just recorded it.
                 $this->staffNotifier->appointment(
                     $paidFor,
                     'Payment received',
                     "{$amount} received for booking {$paidFor->appointment_number}.",
                     null,
                     'Payment',
-                    false,
+                    exceptUserId: $user->id,
                 );
             }
 
-            if ($paidTotal >= (float) $billing->amount) {
-                $billing->update(['status' => 'Paid', 'paid_at' => now()]);
+            // Paid in full → bill Paid, appointment Completed.
+            $this->billingService->settle($billing);
 
-                if ($billing->appointment_id) {
-                    $paidAppointment = Appointment::find($billing->appointment_id);
-
-                    if ($paidAppointment && $paidAppointment->canTransitionTo(Appointment::STATUS_COMPLETED)) {
-                        $paidAppointment->update([
-                            'status' => Appointment::STATUS_COMPLETED,
-                            'completed_at' => now(),
-                        ]);
-
-                        $this->clientNotifier->appointment(
-                            $paidAppointment,
-                            'Thanks for visiting',
-                            "How was your visit to {$paidAppointment->branch?->branch_name}? Tap to rate it.",
-                        );
-                    }
-                }
-            }
-
-            return new PaymentResource($payment);
+            // The receipt needs the bill's remaining balance and status too.
+            $payment->load('receiver');
+            return (new PaymentResource($payment))->additional([
+                'billing' => [
+                    'uuid' => $billing->uuid,
+                    'billing_number' => $billing->billing_number,
+                    'amount' => (float) $billing->amount,
+                    'status' => $billing->fresh()->status,
+                    'balance' => $this->billingService->balance($billing),
+                ],
+            ]);
         });
     }
 

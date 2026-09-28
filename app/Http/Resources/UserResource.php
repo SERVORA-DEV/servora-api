@@ -58,6 +58,29 @@ class UserResource extends JsonResource
             $staff = $this->resource->staff;
             $data['staff_name'] = trim("{$staff->first_name} {$staff->last_name}") ?: null;
             $data['branch_name'] = $staff->branch?->branch_name;
+
+            // Letterhead for receipts and printed reports — the owner's
+            // settings endpoint that normally supplies this is owner-only.
+            $branch = $staff->branch;
+            $business = $branch?->business;
+            $data['letterhead'] = $business ? [
+                'business_name' => $business->business_name,
+                'business_logo_url' => \App\Services\ImageUploadService::url($business->business_logo),
+                'business_email' => $business->business_email,
+                'branch_name' => $branch->branch_name,
+                'branch_address' => $branch->formatted_address,
+                'branch_phone' => $branch->phone_number ?: $business->business_phone,
+            ] : null;
+        }
+
+        // What a spa account may do, so the dashboards can hide buttons the
+        // API would refuse (EnsurePermission): the role's bundle, narrowed by
+        // the account's own user_permissions row for staff accounts.
+        if (in_array($this->role, ['business_owner', 'manager', 'front_officer'], true)) {
+            $row = $this->role === 'business_owner' ? null : $this->resource->permission;
+            $data['permissions'] = collect(config('permission.' . $this->role, []))
+                ->mapWithKeys(fn ($key) => [$key => $row ? $row->getAttribute($key) === true : true])
+                ->all();
         }
 
         if (in_array($this->role, ['business_owner', 'manager'], true)) {
