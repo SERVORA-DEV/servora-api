@@ -38,6 +38,8 @@ class Client extends Model
     {
         return [
             'is_active' => 'boolean',
+            'current_points' => 'integer',
+            'lifetime_points' => 'integer',
         ];
     }
 
@@ -68,5 +70,30 @@ class Client extends Model
     public function appointments()
     {
         return $this->hasMany(Appointment::class, 'client_id');
+    }
+
+    // Customer programs — see App\Service\Business\ProgramRewardService.
+    public function memberships()
+    {
+        return $this->hasMany(ClientMembership::class);
+    }
+
+    // The membership running right now, if any.
+    public function activeMembership()
+    {
+        return $this->hasOne(ClientMembership::class)->ofMany(
+            ['ends_at' => 'max', 'id' => 'max'],
+            fn ($q) => $q->where('status', 'active')->where('ends_at', '>', now()),
+        );
+    }
+
+    public function vouchers()
+    {
+        return $this->hasMany(ClientVoucher::class);
+    }
+
+    public function pointEntries()
+    {
+        return $this->hasMany(ClientPointEntry::class);
     }
 }

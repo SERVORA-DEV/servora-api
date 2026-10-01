@@ -23,10 +23,18 @@ class AttendanceStatusCalculator
     // late_threshold_minutes when they have it (see graceMinutesFor()).
     private const LATE_GRACE_MINUTES = 5;
 
-    /** The owner's late threshold (Settings → Staff Policies), or the default grace. */
+    /**
+     * The owner's late threshold (Settings → Staff Policies), or the default
+     * grace. With attendance tracking switched off nobody is held to a start
+     * time, so the grace covers the whole day and no check-in reads as Late.
+     */
     public static function graceMinutesFor(?SpaBusiness $business): int
     {
         $policy = $business?->settings?->section('staff_policy') ?? [];
+
+        if (! ($policy['attendance_tracking'] ?? true)) {
+            return 24 * 60;
+        }
 
         return (int) ($policy['late_threshold_minutes'] ?? self::LATE_GRACE_MINUTES);
     }

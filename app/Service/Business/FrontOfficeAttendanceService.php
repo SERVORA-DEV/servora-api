@@ -5,6 +5,7 @@ namespace App\Service\Business;
 use App\Models\Attendance;
 use App\Models\BranchSchedule;
 use App\Models\SpaBusiness;
+use App\Models\SpaBusinessSetting;
 use App\Models\Staff;
 use App\Models\User;
 use App\Repository\AuditLogRepository;
@@ -82,6 +83,7 @@ class FrontOfficeAttendanceService
             'date' => $date,
             'data' => $this->rows($business, $staffMembers, $date, $branchIds),
             'commission' => $this->commissionMeta($business),
+            'shift_swaps' => $this->shiftSwapsAllowed($business),
         ];
     }
 
@@ -104,6 +106,11 @@ class FrontOfficeAttendanceService
 
         $coveringFor = null;
         if ($coveringForUuid) {
+            // Settings → Staff & Permissions → Shift swaps. Coming in for
+            // extra hours (no one covered) is still allowed.
+            if (! $this->shiftSwapsAllowed($business)) {
+                return response()->json(['message' => 'Shift swaps are turned off, so staff can\'t cover for each other. The owner can turn them on in Settings → Staff & Permissions.'], 422);
+            }
             $coveringFor = $this->staffRepository->findByUuidForBranches($coveringForUuid, $branchIds);
             if ($coveringFor->id === $staff->id) {
                 return response()->json(['message' => 'A therapist can\'t cover for themselves.'], 422);
@@ -433,6 +440,16 @@ class FrontOfficeAttendanceService
             'staff_uuid' => $staff->uuid,
             'row' => $this->rows($business, $fresh, $date, $branchIds)[0] ?? null,
         ];
+    }
+
+    // Settings → Staff & Permissions → Shift swaps: whether one staff member
+    // may cover another's shift (a fill-in with covering_for).
+    private function shiftSwapsAllowed(SpaBusiness $business): bool
+    {
+        $business->loadMissing('settings');
+        $policy = $business->settings?->section('staff_policy') ?? SpaBusinessSetting::DEFAULTS['staff_policy'];
+
+        return (bool) ($policy['allow_shift_swap'] ?? false);
     }
 
     private function commissionMeta(SpaBusiness $business): array

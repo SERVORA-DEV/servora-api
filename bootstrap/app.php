@@ -13,11 +13,20 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Behind Render's proxy: without this $request->ip() is the proxy's
+        // address, so every per-IP rate limit would become one global bucket.
+        // Render only forwards traffic through its own proxy layer, so
+        // trusting all hops is safe there.
+        $middleware->trustProxies(at: '*');
+        $middleware->throttleApi();
+        $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
+
         $middleware->alias([
             'role' => \App\Http\Middleware\RoleMiddleware::class,
             'verified.business' => \App\Http\Middleware\EnsureBusinessVerified::class,
             'subscribed.business' => \App\Http\Middleware\EnsureBusinessSubscribed::class,
             'permission' => \App\Http\Middleware\EnsurePermission::class,
+            'plan.feature' => \App\Http\Middleware\EnsurePlanFeature::class,
         ]);
     })
     // Requires a real OS cron / Windows Task Scheduler entry running
@@ -26,10 +35,12 @@ return Application::configure(basePath: dirname(__DIR__))
     // scheduled tasks yet, so this is the app's first.
     ->withSchedule(function (Schedule $schedule): void {
         $schedule->command('subscriptions:notify-almost-due')->daily();
+        $schedule->command('subscriptions:auto-renew')->hourly()->withoutOverlapping();
         $schedule->command('appointments:send-reminders')->everyFiveMinutes();
         $schedule->command('staff:send-shift-reminders')->everyFiveMinutes();
         $schedule->command('staff:send-front-desk-alerts')->everyFiveMinutes();
         $schedule->command('billings:send-payment-reminders')->hourly();
+        $schedule->command('programs:daily')->dailyAt('00:10')->withoutOverlapping();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Illuminate\Routing\Exceptions\InvalidSignatureException $e, \Illuminate\Http\Request $request) {

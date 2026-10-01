@@ -25,6 +25,8 @@ class SpaBusiness extends Model
         'facebook_url',
         'instagram_handle',
         'website_url',
+        // Xendit Customer used for checkout and saved payment methods.
+        'xendit_customer_id',
 
         'business_logo',
         'business_description',
@@ -97,6 +99,16 @@ class SpaBusiness extends Model
     public function services()
     {
         return $this->hasMany(Service::class, 'spa_business_id');
+    }
+
+    public function paymentMethods()
+    {
+        return $this->hasMany(BusinessPaymentMethod::class, 'spa_business_id');
+    }
+
+    public function billingAddress()
+    {
+        return $this->hasOne(BusinessBillingAddress::class, 'spa_business_id');
     }
 
     public function packages()

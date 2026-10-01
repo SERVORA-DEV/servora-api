@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\CheckoutSession;
+use App\Service\CheckoutService;
 use App\Service\SubscriptionService;
 use App\Service\XenditService;
 use Illuminate\Http\Request;
@@ -24,22 +26,32 @@ class XenditWebhookController extends Controller
     // payment_channel, ...) directly at the top level.
     public function handle(Request $request)
     {
-        // Log the full raw payload, not just the fields we expect — if
-        // Xendit ever changes the callback shape (e.g. switches this
-        // account back to the Payment Requests {event, data} envelope
-        // instead of the flat Invoice callback), external_id/status below
-        // silently read as null and the payment gets logged as "ignored"
-        // with no other trace. The raw payload is what makes that visible.
-        Log::info('xendit.webhook.received', [
-            'external_id' => $request->input('external_id'),
-            'status' => $request->input('status'),
-            'has_callback_token_header' => $request->hasHeader('x-callback-token'),
-            'payload' => $request->all(),
-        ]);
-
+        // Verify first: nothing from an unauthenticated caller is logged, so
+        // the endpoint can't be used to flood or poison the logs.
         if (! $this->xenditService->verifyWebhookToken($request)) {
             Log::warning('xendit.webhook.rejected', ['reason' => 'invalid or missing x-callback-token']);
             abort(403, 'Invalid webhook token.');
+        }
+
+        // Only the identifying fields at info level (payloads can carry
+        // payment PII). The full raw payload is at debug level: if Xendit
+        // ever changes the callback shape (e.g. back to the Payment Requests
+        // {event, data} envelope), external_id/status silently read as null
+        // and the payment is "ignored", and the raw payload is what makes
+        // that visible when debugging.
+        Log::info('xendit.webhook.received', [
+            'external_id' => $request->input('external_id'),
+            'status' => $request->input('status'),
+        ]);
+        Log::debug('xendit.webhook.payload', ['payload' => $request->all()]);
+
+        // Servora's own checkout (Payment Sessions / Payments API v3) sends
+        // {event, data} envelopes; the older hosted-invoice callbacks below
+        // are flat. Both are matched to what was being paid for by reference.
+        if ($request->filled('event')) {
+            $this->handleCheckoutEvent($request->input('event'), (array) $request->input('data', []));
+
+            return response()->json(['message' => 'ok'], 200);
         }
 
         $status = $request->input('status');
@@ -62,5 +74,27 @@ class XenditWebhookController extends Controller
         }
 
         return response()->json(['message' => 'ok'], 200);
+    }
+
+    private function handleCheckoutEvent(string $event, array $data): void
+    {
+        $reference = $data['reference_id'] ?? null;
+        $session = $reference ? CheckoutSession::where('reference_id', $reference)->first() : null;
+        if (! $session) {
+            Log::info('xendit.webhook.unknown_checkout', ['event' => $event, 'reference_id' => $reference]);
+
+            return;
+        }
+
+        $checkout = app(CheckoutService::class);
+        match ($event) {
+            'payment_session.completed' => $checkout->complete($session, $data),
+            'payment_session.expired' => $session->isFinal() || $session->update(['status' => 'expired', 'failure_reason' => "The payment wasn't finished in time."]),
+            // A saved-method charge (checkout "Saved" or auto-renewal):
+            // re-read the payment request so the amount and status come from
+            // Xendit, not the webhook body.
+            'payment.capture', 'payment.succeeded', 'payment.failure', 'payment.failed' => $checkout->refresh($session),
+            default => Log::info('xendit.webhook.ignored_event', ['event' => $event]),
+        };
     }
 }

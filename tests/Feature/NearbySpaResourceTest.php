@@ -13,6 +13,7 @@ use App\Models\SpaBusiness;
 use App\Service\Business\SpaBranchService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\MakesBranchesBookable;
 use Tests\TestCase;
 
 // Covers the filter fields GET /spas/nearby carries for the client app's
@@ -29,7 +30,7 @@ use Tests\TestCase;
 //   php artisan test --filter=NearbySpaResourceTest
 class NearbySpaResourceTest extends TestCase
 {
-    use RefreshDatabase;
+    use MakesBranchesBookable, RefreshDatabase;
 
     // Bajada, Davao City — the branch sits exactly here, so it is always
     // inside the default search radius.
@@ -49,6 +50,7 @@ class NearbySpaResourceTest extends TestCase
             'latitude' => self::LAT,
             'longitude' => self::LNG,
         ]);
+        $this->makeBookable($this->branch);
     }
 
     protected function tearDown(): void
@@ -85,12 +87,12 @@ class NearbySpaResourceTest extends TestCase
         ], $branchService));
     }
 
-    public function test_a_branch_with_nothing_on_offer_has_no_categories_or_price(): void
+    // Nothing to book = not ready for the marketplace (MarketplaceReadiness).
+    public function test_a_branch_with_nothing_on_offer_is_not_listed(): void
     {
-        $row = $this->row();
+        $rows = app(SpaBranchService::class)->nearby(self::LAT, self::LNG, null, null)->toArray(request());
 
-        $this->assertSame([], $row['service_categories']);
-        $this->assertNull($row['starting_price']);
+        $this->assertSame([], $rows);
     }
 
     public function test_categories_are_distinct_and_sorted(): void
@@ -139,6 +141,8 @@ class NearbySpaResourceTest extends TestCase
 
     public function test_open_now_follows_the_branch_schedule(): void
     {
+        $this->offer('Massage', 800);
+
         // A Wednesday.
         BranchSchedule::create([
             'spa_branch_id' => $this->branch->id,

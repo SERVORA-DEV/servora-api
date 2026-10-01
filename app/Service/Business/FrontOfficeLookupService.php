@@ -9,6 +9,7 @@ use App\Http\Resources\LookupServiceResource;
 use App\Http\Resources\LookupTherapistResource;
 use App\Http\Resources\StaffScheduleResource;
 use App\Models\ServiceVariant;
+use App\Models\SpaBranch;
 use App\Models\Staff;
 use App\Models\User;
 use App\Repository\Business\BranchPackageRepository;
@@ -17,6 +18,7 @@ use App\Repository\Business\BranchServiceRepository;
 use App\Repository\Business\FacilityRepository;
 use App\Repository\Business\StaffRepository;
 use App\Repository\SpaBusinessRepository;
+use App\Service\Client\BookingPolicy;
 
 // Narrow, read-only projections backing the front-office
 // therapist/room/service pickers. front_officer has no
@@ -57,6 +59,18 @@ class FrontOfficeLookupService
     private function branchIds(User $user): array
     {
         return $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
+    }
+
+    // The branch(es) this front-office user works at — just uuid + name, so
+    // the front desk can resolve "my branch" without the owner/manager-only
+    // GET /business/branch. A front officer gets their one branch; an owner
+    // viewing the front desk gets every branch of their business.
+    public function branches(User $user): array
+    {
+        return $this->spaBusinessRepository->branchesForUser($user)
+            ->map(fn (SpaBranch $branch) => ['id' => $branch->uuid, 'name' => $branch->branch_name])
+            ->values()
+            ->all();
     }
 
     public function therapists(User $user)
@@ -184,7 +198,12 @@ class FrontOfficeLookupService
             return response()->json(['message' => 'No branch found for this account.'], 422);
         }
 
-        return BranchScheduleResource::collection($this->branchScheduleRepository->allForBranch($branchId));
+        // walk_in_enabled rides along so the New Appointment modal can hide
+        // the Walk-In option when the branch has walk-ins switched off.
+        $branch = SpaBranch::find($branchId);
+
+        return BranchScheduleResource::collection($this->branchScheduleRepository->allForBranch($branchId))
+            ->additional(['walk_in_enabled' => $branch ? BookingPolicy::for($branch)['walk_in_enabled'] : true]);
     }
 
     // Backs the appointment modal's "grey out already-booked times" — same

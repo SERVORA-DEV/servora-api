@@ -357,7 +357,10 @@ class NotificationService
             $when = $daysLeft === 0 ? 'today' : ($daysLeft === 1 ? 'in 1 day' : "in {$daysLeft} days");
 
             $title = 'Subscription Renewal Reminder';
-            $message = "Your {$planName} plan renews {$when}. Renew soon to avoid losing access.";
+            $method = $subscription->auto_renew ? $subscription->paymentMethod?->label : null;
+            $message = $method
+                ? "Your {$planName} plan renews automatically {$when} — we'll charge {$method}."
+                : "Your {$planName} plan renews {$when}. Renew soon to avoid losing access.";
         }
 
         // Admin changed the plan and the owner hasn't declined — the
@@ -370,6 +373,13 @@ class NotificationService
 
             $message .= " Your renewal will use the updated {$subscription->pendingPlan->name} plan"
                 . ($price !== null ? ' (₱' . number_format((float) $price, 2) . "/{$per})." : '.');
+        }
+
+        // Owner's own downgrade / cycle switch (PlanSwitchService) — takes
+        // precedence over the above for what the renewal will be.
+        if ($subscription->scheduledPlan) {
+            $message .= " Your renewal will be on the {$subscription->scheduledPlan->name} plan"
+                . ($subscription->scheduled_billing_cycle ? " ({$subscription->scheduled_billing_cycle})" : '') . ', as you chose.';
         }
 
         $this->notificationRepository->create($subscription->business->owner->id, $title, $message, 'Subscription');
@@ -410,6 +420,70 @@ class NotificationService
         foreach ($admins as $admin) {
             $this->notificationRepository->create($admin->id, 'Plan Change Response', $message, 'Subscription');
         }
+    }
+
+    // Fired from PlanSwitchService — an owner upgraded (paid, effective now),
+    // scheduled a downgrade for their next billing, or took one back. Admins
+    // get the fact; on an upgrade the owner gets a confirmation too.
+    public function planSwitched(Subscription $subscription, string $event, string $fromPlan, string $toPlan, iterable $admins): void
+    {
+        $businessName = $subscription->business->business_name ?? 'A business';
+        $on = $subscription->expires_at?->format('F j, Y');
+
+        [$title, $message] = match ($event) {
+            'upgraded' => ['Plan Upgraded', "\"{$businessName}\" upgraded from {$fromPlan} to {$toPlan}."],
+            'downgrade_scheduled' => ['Downgrade Scheduled', "\"{$businessName}\" will move from {$fromPlan} to {$toPlan}" . ($on ? " when their term ends on {$on}." : ' at renewal.')],
+            default => ['Downgrade Withdrawn', "\"{$businessName}\" is staying on {$fromPlan} instead of moving to {$toPlan}."],
+        };
+
+        foreach ($admins as $admin) {
+            $this->notificationRepository->create($admin->id, $title, $message, 'Subscription');
+        }
+
+        if ($event === 'upgraded' && $subscription->business?->owner) {
+            $this->notificationRepository->create(
+                $subscription->business->owner->id,
+                'Plan Upgraded',
+                "You're now on the {$toPlan} plan." . ($on ? " Your renewal date stays {$on}." : ''),
+                'Subscription'
+            );
+        }
+    }
+
+    // Fired from CheckoutService once an automatic renewal charge succeeds.
+    public function subscriptionAutoRenewed(Subscription $subscription, float $amount): void
+    {
+        $subscription->loadMissing(['plan', 'business.owner', 'paymentMethod']);
+        if (! $subscription->business?->owner) {
+            return;
+        }
+
+        $method = $subscription->paymentMethod?->label;
+        $this->notificationRepository->create(
+            $subscription->business->owner->id,
+            'Subscription Renewed',
+            "Your {$subscription->plan?->name} plan renewed until {$subscription->expires_at?->format('F j, Y')}. "
+                . '₱' . number_format($amount, 2) . ' was charged' . ($method ? " to {$method}" : '') . '.',
+            'Subscription'
+        );
+    }
+
+    // Fired from SubscriptionRenewalService when an automatic renewal can't
+    // be charged — the owner fixes it (new method / smaller usage) or renews
+    // by hand; the job retries daily through the grace period.
+    public function subscriptionRenewalFailed(Subscription $subscription, string $reason): void
+    {
+        if (! $subscription->business?->owner) {
+            return;
+        }
+
+        $this->notificationRepository->create(
+            $subscription->business->owner->id,
+            'Auto-Renewal Failed',
+            "We couldn't renew your plan automatically. {$reason}"
+                . ($subscription->expires_at ? ' Your plan ends ' . $subscription->expires_at->format('F j, Y') . ' — renew before then to keep access.' : ''),
+            'Subscription'
+        );
     }
 
     public function paymentReceived(SpaBusiness $business, float $amount, iterable $admins): void

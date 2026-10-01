@@ -22,6 +22,12 @@ class Subscription extends Model
         'plan_change_status',
         'plan_change_responded_at',
 
+        // Owner's own downgrade / billing-cycle switch, taking effect at
+        // their next payment (see PlanSwitchService).
+        'scheduled_plan_id',
+        'scheduled_billing_cycle',
+        'scheduled_at',
+
         'billing_cycle',
 
         'starts_at',
@@ -31,6 +37,12 @@ class Subscription extends Model
         'expiry_reminder_sent_at',
 
         'auto_renew',
+        // The saved method auto-renewal charges, and how the last attempts
+        // went (SubscriptionRenewalService).
+        'payment_method_id',
+        'renewal_attempts',
+        'last_renewal_attempt_at',
+        'renewal_failure_reason',
 
         'status',
 
@@ -45,8 +57,11 @@ class Subscription extends Model
             'expires_at' => 'datetime',
             'expiry_reminder_sent_at' => 'datetime',
             'plan_change_responded_at' => 'datetime',
+            'scheduled_at' => 'datetime',
 
             'auto_renew' => 'boolean',
+            'renewal_attempts' => 'integer',
+            'last_renewal_attempt_at' => 'datetime',
 
             'cancelled_at' => 'datetime',
         ];
@@ -70,6 +85,16 @@ class Subscription extends Model
     public function pendingPlan()
     {
         return $this->belongsTo(SubscriptionPlan::class, 'pending_plan_id');
+    }
+
+    public function paymentMethod()
+    {
+        return $this->belongsTo(BusinessPaymentMethod::class, 'payment_method_id');
+    }
+
+    public function scheduledPlan()
+    {
+        return $this->belongsTo(SubscriptionPlan::class, 'scheduled_plan_id');
     }
 
     // Owner chose to let this subscription end at expires_at instead of

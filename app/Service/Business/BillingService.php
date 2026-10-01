@@ -6,6 +6,8 @@ use App\Http\Resources\BillingResource;
 use App\Http\Resources\PaymentResource;
 use App\Models\Appointment;
 use App\Models\Billing;
+use App\Models\ClientVoucher;
+use App\Models\CustomerProgram;
 use App\Models\Payment;
 use App\Models\SpaBusiness;
 use App\Models\SpaBusinessSetting;
@@ -44,6 +46,7 @@ class BillingService
         private AuditLogRepository $auditLogRepository,
         private ClientNotifier $clientNotifier,
         private StaffNotifier $staffNotifier,
+        private ProgramRewardService $rewards,
     ) {
     }
 
@@ -147,6 +150,9 @@ class BillingService
 
         $billing->update(['status' => 'Paid', 'paid_at' => now()]);
 
+        // Loyalty points and earned vouchers (customer programs).
+        $this->rewards->onBillPaid($billing);
+
         $appointment = $billing->appointment_id ? Appointment::find($billing->appointment_id) : null;
         if ($appointment && $appointment->canTransitionTo(Appointment::STATUS_COMPLETED)) {
             $appointment->update(['status' => Appointment::STATUS_COMPLETED, 'completed_at' => now()]);
@@ -162,14 +168,19 @@ class BillingService
 
     // type 'amount' (₱) or 'percent' of the pre-discount subtotal; value 0
     // removes the discount. Can't go below what has already been paid.
-    public function applyDiscount(User $user, string $billingUuid, string $type, float $value, ?string $reason, ?Request $request = null)
+    //
+    // Or, instead of typing it in, the front desk picks a customer program:
+    // a discount program ($programUuid) or one of the client's vouchers
+    // ($voucherUuid) — the amount and reason then come from the program, and
+    // the voucher is marked used (and handed back if the discount changes).
+    public function applyDiscount(User $user, string $billingUuid, string $type, float $value, ?string $reason, ?Request $request = null, ?string $programUuid = null, ?string $voucherUuid = null, bool $programOnly = false)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
         if (! $business) {
             return $this->noBusiness();
         }
 
-        return DB::transaction(function () use ($user, $billingUuid, $type, $value, $reason, $request) {
+        return DB::transaction(function () use ($user, $billingUuid, $type, $value, $reason, $request, $programUuid, $voucherUuid, $programOnly) {
             $billing = $this->lockedBilling($user, $billingUuid);
 
             if (in_array($billing->status, ['Paid', 'Cancelled', 'Refunded'], true)) {
@@ -177,6 +188,30 @@ class BillingService
             }
 
             $subtotal = (float) ($billing->subtotal ?? $billing->amount);
+
+            // Program-only callers (the rewards route — front desk without
+            // billing_update) may swap or remove a program/voucher discount,
+            // never a discount someone typed in by hand.
+            $manual = (float) $billing->discount_amount > 0 && ! $billing->discount_program_id && ! $billing->client_voucher_id;
+            if ($programOnly && $manual) {
+                return $this->reject('This bill already has a manual discount — ask someone who can give discounts to change it.');
+            }
+
+            $program = null;
+            $voucher = null;
+            if ($voucherUuid || $programUuid) {
+                $picked = $voucherUuid ? $this->voucherForBill($billing, $voucherUuid) : $this->discountProgramForBill($billing, $programUuid);
+                if (is_string($picked)) {
+                    return $this->reject($picked);
+                }
+                [$program, $voucher] = $picked;
+                $derived = $this->programDiscount($billing, $program);
+                if (is_string($derived)) {
+                    return $this->reject($derived);
+                }
+                [$type, $value] = $derived;
+                $reason = ($voucher ? 'Voucher: ' : 'Discount: ') . $program->name;
+            }
             $discount = $type === 'percent' ? round($subtotal * min($value, 100) / 100, 2) : round(min($value, $subtotal), 2);
             $paid = $this->paymentRepository->paidTotalForBilling($billing->id);
 
@@ -187,6 +222,13 @@ class BillingService
                 return $this->reject('Give a reason for the discount.');
             }
 
+            // A voucher that was on this bill goes back to the client's
+            // wallet unless it's the one being applied again.
+            if ($billing->client_voucher_id && $billing->client_voucher_id !== $voucher?->id) {
+                ClientVoucher::whereKey($billing->client_voucher_id)->where('status', 'used')
+                    ->update(['status' => 'available', 'used_at' => null, 'used_billing_id' => null, 'used_by' => null]);
+            }
+
             $old = $billing->only(['subtotal', 'discount_type', 'discount_value', 'discount_amount', 'discount_reason', 'amount']);
             $billing->update($value > 0 ? [
                 'subtotal' => $subtotal,
@@ -195,6 +237,8 @@ class BillingService
                 'discount_amount' => $discount,
                 'discount_reason' => $reason,
                 'discounted_by' => $user->id,
+                'discount_program_id' => $program?->id,
+                'client_voucher_id' => $voucher?->id,
                 'amount' => round($subtotal - $discount, 2),
             ] : [
                 'subtotal' => $subtotal,
@@ -203,8 +247,14 @@ class BillingService
                 'discount_amount' => 0,
                 'discount_reason' => null,
                 'discounted_by' => null,
+                'discount_program_id' => null,
+                'client_voucher_id' => null,
                 'amount' => $subtotal,
             ]);
+
+            if ($voucher && $value > 0) {
+                $voucher->update(['status' => 'used', 'used_at' => now(), 'used_billing_id' => $billing->id, 'used_by' => $user->id]);
+            }
 
             $this->auditLogRepository->record($user->id, 'billings', $billing->id, 'Update', $old, $billing->only(array_keys($old)), $request);
             $this->settle($billing->fresh());
@@ -250,6 +300,7 @@ class BillingService
 
             if ($billing->status === 'Paid' && $this->balance($billing) > 0) {
                 $billing->update(['status' => 'Pending', 'paid_at' => null]);
+                $this->rewards->onBillReopened($billing);
             }
 
             $this->auditLogRepository->record($user->id, 'payments', $payment->id, 'Cancel', $old, $payment->only(array_keys($old)), $request);
@@ -309,12 +360,125 @@ class BillingService
 
             if ($this->paymentRepository->paidTotalForBilling($billing->id) <= 0.004) {
                 $billing->update(['status' => 'Refunded']);
+                $this->rewards->onBillReopened($billing, refunded: true);
             }
 
             $this->notify($billing, 'Refund issued', '₱' . number_format($amount, 2) . " refunded on {$billing->billing_number} — {$reason}.", $user);
 
             return new BillingResource($this->detailed($billing->uuid));
         });
+    }
+
+    // ── Customer programs at checkout ─────────────────────────────────────
+
+    // What the front desk can apply to this bill: discount programs offered
+    // at its branch (members-only ones when the client's membership bundles
+    // them) and the client's usable vouchers — each with its computed value.
+    public function programOptions(User $user, string $billingUuid)
+    {
+        $billing = Billing::where('uuid', $billingUuid)->whereIn('spa_branch_id', $this->branchIds($user))->firstOrFail();
+        if (! $billing->spa_branch_id || ! $this->rewards->enabledFor($billing->spa_business_id)) {
+            return ['data' => ['enabled' => false, 'discounts' => [], 'vouchers' => []]];
+        }
+
+        $client = $billing->appointment?->client;
+        $memberItemIds = $this->memberItemIds($client);
+
+        $describe = function (CustomerProgram $program, ?ClientVoucher $voucher = null) use ($billing) {
+            $derived = $this->programDiscount($billing, $program);
+
+            return [
+                'uuid' => $voucher?->uuid ?? $program->uuid,
+                'program_uuid' => $program->uuid,
+                'name' => $program->name,
+                'type' => is_string($derived) ? null : $derived[0],
+                'value' => is_string($derived) ? null : $derived[1],
+                'unavailable_reason' => is_string($derived) ? $derived : null,
+                'expires_at' => $voucher?->expires_at?->toIso8601String(),
+                'members_only' => $program->audience === 'members',
+            ];
+        };
+
+        $discounts = $this->rewards->offeredAt($billing->spa_business_id, $billing->spa_branch_id, 'discount')
+            ->filter(fn ($p) => $p->audience !== 'members' || in_array($p->id, $memberItemIds, true))
+            ->map(fn ($p) => $describe($p))->values();
+
+        $vouchers = $client
+            ? ClientVoucher::with('program')->where('client_id', $client->id)->where('status', 'available')
+                ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+                ->orderBy('expires_at')->get()
+                ->filter(fn ($v) => $v->program && ! $v->program->trashed())
+                ->map(fn ($v) => $describe($v->program, $v))->values()
+            : collect();
+
+        return ['data' => ['enabled' => true, 'discounts' => $discounts, 'vouchers' => $vouchers]];
+    }
+
+    /** @return array{0: CustomerProgram, 1: ClientVoucher}|string */
+    private function voucherForBill(Billing $billing, string $voucherUuid): array|string
+    {
+        $clientId = $billing->appointment?->client_id;
+        $voucher = $clientId ? ClientVoucher::with('program')->where('uuid', $voucherUuid)->where('client_id', $clientId)->lockForUpdate()->first() : null;
+        if (! $voucher || ! $voucher->program) {
+            return 'That voucher doesn\'t belong to this client.';
+        }
+        if ($billing->client_voucher_id !== $voucher->id && ! $voucher->isUsable()) {
+            return $voucher->status === 'used' ? 'That voucher has already been used.' : 'That voucher has expired.';
+        }
+
+        return [$voucher->program, $voucher];
+    }
+
+    /** @return array{0: CustomerProgram, 1: null}|string */
+    private function discountProgramForBill(Billing $billing, string $programUuid): array|string
+    {
+        $program = CustomerProgram::where('uuid', $programUuid)
+            ->where('spa_business_id', $billing->spa_business_id)
+            ->where('type', 'discount')->where('is_active', true)->first();
+        if (! $program || ! $program->offeredAt($billing->spa_branch_id)) {
+            return 'That discount isn\'t offered at this branch.';
+        }
+        if ($program->audience === 'members' && ! in_array($program->id, $this->memberItemIds($billing->appointment?->client), true)) {
+            return 'That discount is for members — this client\'s membership doesn\'t include it.';
+        }
+
+        return [$program, null];
+    }
+
+    // The discount programs a client's running membership bundles.
+    private function memberItemIds($client): array
+    {
+        $membership = $client?->activeMembership()->with('program.items')->first();
+
+        return $membership?->program?->items->pluck('id')->all() ?? [];
+    }
+
+    /** @return array{0: string, 1: float}|string [type, value], or why it can't apply */
+    private function programDiscount(Billing $billing, CustomerProgram $program): array|string
+    {
+        if ($program->type === 'discount') {
+            $amount = (float) $program->value('percent', 0);
+
+            return $amount > 0 ? [$program->value('kind') === '₱' ? 'amount' : 'percent', $amount] : 'This discount has no amount set.';
+        }
+
+        $deal = $program->value('dealType', '₱ off');
+        if ($deal === 'Free service') {
+            $name = trim((string) $program->value('usableOn', ''));
+            $line = $name === '' ? null : $billing->appointment?->services()
+                ->with('serviceVariant.service')
+                ->where('status', '!=', 'Cancelled')
+                ->get()
+                ->filter(fn ($item) => str_contains(mb_strtolower($item->serviceVariant?->service?->name ?? ''), mb_strtolower($name)))
+                ->sortByDesc(fn ($item) => (float) $item->unit_price)
+                ->first();
+
+            return $line ? ['amount', (float) $line->unit_price] : "This bill has no {$name} to make free.";
+        }
+
+        $amount = (float) $program->value('value', 0);
+
+        return $amount > 0 ? [$deal === '% off' ? 'percent' : 'amount', $amount] : 'This voucher has no amount set.';
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────

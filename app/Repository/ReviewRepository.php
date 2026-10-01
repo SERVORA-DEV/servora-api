@@ -44,15 +44,23 @@ class ReviewRepository
         }
     }
 
-    public function publishedForBranch(int $branchId, int $perPage = 20)
+    // $sort is the branch's Marketplace "review order": newest first, or by
+    // rating (highest / lowest), newest breaking ties.
+    public function publishedForBranch(int $branchId, int $perPage = 20, string $sort = 'newest')
     {
-        return Review::query()
+        $query = Review::query()
             ->select('reviews.*')
             ->join('appointments', 'appointments.id', '=', 'reviews.appointment_id')
             ->where('reviews.status', 'Published')
             ->where('appointments.spa_branch_id', $branchId)
-            ->with(['client', 'appointment.services.serviceVariant.service'])
-            ->orderByDesc('reviews.created_at')
-            ->paginate($perPage);
+            ->with(['client', 'appointment.services.serviceVariant.service']);
+
+        match ($sort) {
+            'highest' => $query->orderByDesc('reviews.rating'),
+            'lowest' => $query->orderBy('reviews.rating'),
+            default => null,
+        };
+
+        return $query->orderByDesc('reviews.created_at')->paginate($perPage);
     }
 }

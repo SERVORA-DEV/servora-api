@@ -85,6 +85,10 @@ services:
       # redirect in bootstrap/app.php.
       - key: FRONTEND_URL
         sync: false
+      # Optional extra browser origins allowed by CORS, comma-separated
+      # (staging site, custom domain). No trailing slashes.
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
 
       # Gmail SMTP. NOTE: Render's free tier blocks outbound ports 25/465/587,
       # so this needs a paid instance or an HTTP-API provider. See DEPLOYMENT.md.

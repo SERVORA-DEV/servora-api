@@ -39,6 +39,16 @@ class ClientResource extends JsonResource
                 ]
             ),
 
+            // Customer programs: the membership running now (null when none)
+            // and how many usable vouchers are in the wallet — present when
+            // the caller loaded them (ClientRepository search / find).
+            'membership' => $this->when($this->relationLoaded('activeMembership'), fn () => $this->activeMembership ? [
+                'uuid' => $this->activeMembership->uuid,
+                'name' => $this->activeMembership->program?->name,
+                'ends_at' => $this->activeMembership->ends_at?->toIso8601String(),
+            ] : null),
+            'vouchers_available' => $this->when(isset($this->vouchers_available_count), fn () => (int) $this->vouchers_available_count),
+
             // The standing preferred-therapist relationship (see
             // Client::preferredTherapist) — omitted entirely (not null) when
             // unset or not eager-loaded, same convention as `account` above.

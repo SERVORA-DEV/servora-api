@@ -7,6 +7,7 @@ use App\Http\Resources\System\BusinessResource;
 use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\System\BusinessRepository;
+use App\Service\Business\CustomerProgramService;
 use App\Service\NotificationService;
 use Illuminate\Http\Request;
 
@@ -16,7 +17,16 @@ class BusinessService
         private BusinessRepository $businessRepository,
         private AuditLogRepository $auditLogRepository,
         private NotificationService $notificationService,
+        private CustomerProgramService $customerPrograms,
     ) {}
+
+    // Read-only customer programs overview for the business's admin page.
+    public function programs(string $uuid)
+    {
+        $business = \App\Models\SpaBusiness::where('uuid', $uuid)->firstOrFail();
+
+        return response()->json(['data' => $this->customerPrograms->adminOverview($business)]);
+    }
 
     public function listBusinesses(int $perPage = 100)
     {

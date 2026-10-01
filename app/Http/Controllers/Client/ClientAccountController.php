@@ -40,6 +40,13 @@ class ClientAccountController extends Controller
         return $this->account->removeFavorite($request->user(), $branchUuid);
     }
 
+    public function deleteAccount(Request $request)
+    {
+        $data = $request->validate(['password' => ['required', 'string']]);
+
+        return $this->account->deleteAccount($request->user(), $data['password']);
+    }
+
     public function transactions(Request $request)
     {
         return $this->account->transactions($request->user());

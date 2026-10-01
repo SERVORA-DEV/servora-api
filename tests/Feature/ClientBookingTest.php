@@ -20,6 +20,7 @@ use App\Service\Business\AppointmentService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Laravel\Sanctum\Sanctum;
+use Tests\Concerns\MakesBranchesBookable;
 use Tests\TestCase;
 
 // The mobile client's own-account endpoints under /api/client: their
@@ -31,7 +32,7 @@ use Tests\TestCase;
 //   php artisan test --filter=ClientBookingTest
 class ClientBookingTest extends TestCase
 {
-    use RefreshDatabase;
+    use MakesBranchesBookable, RefreshDatabase;
 
     // A Tuesday comfortably in the future, so "choose a future time" and
     // "can still change it" hold without freezing the clock.
@@ -76,6 +77,7 @@ class ClientBookingTest extends TestCase
             'spa_branch_id' => $this->branch->id,
             'service_variant_id' => $this->variant->id,
         ]);
+        $this->makeBookable($this->branch);
     }
 
     private function client(array $attributes = []): User

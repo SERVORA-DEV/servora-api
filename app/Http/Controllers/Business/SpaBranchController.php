@@ -7,6 +7,7 @@ use App\Http\Requests\Business\SpaBranchRequest;
 use App\Http\Requests\Business\SpaBranchUpdateRequest;
 use App\Http\Requests\Business\SpaBranchLocationRequest;
 use App\Http\Requests\Business\SpaBranchPermitRequest;
+use App\Http\Requests\Client\PublicBookingSlotsRequest;
 use App\Http\Requests\Client\PublicTherapistAvailabilityRequest;
 use App\Http\Requests\Client\PublicTherapistDaysOffRequest;
 use App\Http\Controllers\Controller;
@@ -59,6 +60,13 @@ class SpaBranchController extends Controller
     public function publicTherapistAvailability(PublicTherapistAvailabilityRequest $request, string $uuid)
     {
         return $this->spaBranchService->publicTherapistAvailability($uuid, $request->validated());
+    }
+
+    // Public, unauthenticated — the bookable start times on one day, for
+    // the client booking and reschedule screens' time chips.
+    public function publicSlots(PublicBookingSlotsRequest $request, string $uuid)
+    {
+        return $this->spaBranchService->publicSlots($uuid, $request->validated(), auth('sanctum')->user());
     }
 
     // Public, unauthenticated — feeds the booking calendar's greyed-out days

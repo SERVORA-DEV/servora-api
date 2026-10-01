@@ -19,7 +19,9 @@ class RegisterController extends Controller
 
     public function register(RegisterRequest $request)
     {
-        return $this->userService->registerBusinessUser($request->all());
+        // Whitelist: only credentials. Never pass raw input, which could carry
+        // fillable fields such as email_verified_at or account_status.
+        return $this->userService->registerBusinessUser($request->safe()->only(['email', 'password']));
     }
 
     public function registerClient(RegisterClientRequest $request)

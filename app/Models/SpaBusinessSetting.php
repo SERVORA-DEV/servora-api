@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class SpaBusinessSetting extends Model
 {
-    public const SECTIONS = ['payments', 'staff_policy', 'booking_defaults', 'notifications'];
+    public const SECTIONS = ['payments', 'staff_policy', 'booking_defaults', 'notifications', 'programs'];
 
     // Roles whose starting permissions the owner sets in Staff Policies.
     public const ACCOUNT_ROLES = ['manager', 'front_officer'];
@@ -115,6 +115,12 @@ class SpaBusinessSetting extends Model
             'push_channel' => true,
             'in_app_channel' => true,
         ],
+        // Customer Programs module switch — not every spa runs loyalty,
+        // vouchers, discounts or memberships, so it starts off. The programs
+        // themselves live in customer_programs.
+        'programs' => [
+            'enabled' => false,
+        ],
     ];
 
     protected $fillable = [
@@ -123,6 +129,7 @@ class SpaBusinessSetting extends Model
         'staff_policy',
         'booking_defaults',
         'notifications',
+        'programs',
         'role_permissions',
     ];
 
@@ -133,6 +140,7 @@ class SpaBusinessSetting extends Model
             'staff_policy' => 'array',
             'booking_defaults' => 'array',
             'notifications' => 'array',
+            'programs' => 'array',
             'role_permissions' => 'array',
         ];
     }

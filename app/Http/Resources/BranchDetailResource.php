@@ -7,6 +7,8 @@ use App\Support\BranchHoursCalculator;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use App\Service\Business\MarketplaceReadiness;
+use App\Service\Client\BookingPolicy;
 
 // Backs the unauthenticated GET /spas/{uuid} branch-detail endpoint. Same
 // "only what's safe to show a stranger" rule as NearbySpaResource/
@@ -31,6 +33,14 @@ class BranchDetailResource extends JsonResource
 
     public function toArray(Request $request): array
     {
+        // Branch Settings → Marketplace. Hidden prices go out as null (the app
+        // shows "Price at the spa"; the booking is still priced server-side),
+        // and without the rating badge the rating isn't shared.
+        $display = $this->resource->displaySettings();
+        $showPrices = (bool) $display['show_prices'];
+        $showRating = $display['show_reviews'] && $display['show_rating_badge'];
+        $price = fn ($value) => $showPrices ? (float) $value : null;
+
         return [
             'uuid' => $this->uuid,
             'branch_name' => $this->branch_name,
@@ -39,8 +49,9 @@ class BranchDetailResource extends JsonResource
             'longitude' => $this->longitude,
             'cover_photo_url' => $this->resource->coverPhotoUrl(),
             // Set by ReviewRepository::attachRatings() in SpaBranchService::publicShow.
-            'rating_avg' => $this->rating_avg,
-            'rating_count' => (int) ($this->rating_count ?? 0),
+            'rating_avg' => $showRating ? $this->rating_avg : null,
+            'rating_count' => $showRating ? (int) ($this->rating_count ?? 0) : 0,
+            'prices_hidden' => ! $showPrices,
 
             'business' => [
                 'uuid' => $this->business->uuid,
@@ -51,8 +62,15 @@ class BranchDetailResource extends JsonResource
 
             'hours' => BranchHoursCalculator::resolve($this->schedules, Carbon::now()),
 
-            // What the owner set in Branch Settings → Marketplace. Additive:
-            // the mobile app doesn't read these yet.
+            // Customer programs this branch offers (loyalty, vouchers,
+            // discounts, memberships) — what a visitor can get here. A
+            // signed-in client's own points/vouchers come from
+            // GET client/spas/{uuid}/rewards.
+            'programs' => $this->programs(),
+
+            // What the owner set in Branch Settings → Marketplace. The flags in
+            // 'display' are already applied above (prices, rating, therapists)
+            // and tell the app which sections to leave out.
             'listing' => [
                 'promo_text' => $this->promo_text,
                 'highlights' => $this->highlights ?? [],
@@ -80,7 +98,7 @@ class BranchDetailResource extends JsonResource
             'services' => $this->services
                 ->filter(fn ($bs) => $bs->serviceVariant?->service !== null)
                 ->groupBy(fn ($bs) => $bs->serviceVariant->service_id)
-                ->map(function ($rows) {
+                ->map(function ($rows) use ($price) {
                     $service = $rows->first()->serviceVariant->service;
 
                     return [
@@ -96,7 +114,7 @@ class BranchDetailResource extends JsonResource
                             ->map(fn ($bs) => [
                                 'service_variant_uuid' => $bs->serviceVariant->uuid,
                                 'duration_minutes' => (int) $bs->serviceVariant->duration_minutes,
-                                'price' => (float) ($bs->custom_price ?? $bs->serviceVariant->price),
+                                'price' => $price($bs->custom_price ?? $bs->serviceVariant->price),
                             ])
                             ->values(),
                     ];
@@ -107,12 +125,32 @@ class BranchDetailResource extends JsonResource
                 // an array and the client parses no services at all.
                 ->values(),
 
-            'packages' => $this->packages->map(fn ($bp) => [
-                'package_uuid' => $bp->package->uuid,
-                'name' => $bp->package->name,
-                'duration_minutes' => $bp->package->duration_minutes,
-                'price' => (float) ($bp->custom_price ?? $bp->package->default_price),
-            ])->values(),
+            // duration_minutes is what a booking of this package will take:
+            // the same per-service sum the server books and checks slots with
+            // (AppointmentAvailabilityService::estimatedDurationMinutes), so
+            // the app's slot lookup and the booking never disagree — the
+            // package's own duration column is often left empty.
+            'packages' => $this->packages->map(function ($bp) use ($price) {
+                $items = $bp->package->packageServiceItems;
+                $sum = (int) $items->sum(fn ($i) => $i->serviceVariant?->duration_minutes ?? 30);
+
+                return [
+                    'package_uuid' => $bp->package->uuid,
+                    'name' => $bp->package->name,
+                    'duration_minutes' => $sum > 0 ? $sum : (int) ($bp->package->duration_minutes ?? 0),
+                    'price' => $price($bp->custom_price ?? $bp->package->default_price),
+                    'included_services' => $items->map(fn ($i) => $i->serviceVariant?->service?->name)->filter()->values(),
+                ];
+            })->values(),
+
+            // The owner's booking rules for this branch (BookingPolicy) — the
+            // app uses them for its calendar window and service limit.
+            'booking_policy' => BookingPolicy::for($this->resource),
+
+            // False when the branch can't take a booking right now (no
+            // therapist, no hours… — MarketplaceReadiness). The page still
+            // opens for existing links; the app just won't offer booking.
+            'accepting_bookings' => MarketplaceReadiness::isBookable($this->resource),
 
             'therapists' => $this->therapists->map(fn ($staff) => [
                 'uuid' => $staff->uuid,
@@ -121,5 +159,24 @@ class BranchDetailResource extends JsonResource
                 'role' => $staff->role,
             ])->values(),
         ];
+    }
+
+    private function programs(): array
+    {
+        $rewards = app(\App\Service\Business\ProgramRewardService::class);
+        if (! $rewards->enabledFor($this->spa_business_id)) {
+            return [];
+        }
+        $programs = app(\App\Service\Business\CustomerProgramService::class);
+
+        return $rewards->offeredAt($this->spa_business_id, $this->id)
+            ->sortBy(fn ($p) => array_search($p->type, ['loyalty', 'voucher', 'discount', 'membership'], true))
+            ->map(fn ($p) => [
+                'uuid' => $p->uuid,
+                'type' => $p->type,
+                'name' => $p->name,
+                'summary' => $programs->summaryText($p),
+                'condition' => $p->type === 'voucher' ? ['kind' => $p->condition_kind, 'value' => $p->condition_value] : null,
+            ])->values()->all();
     }
 }

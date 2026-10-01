@@ -58,5 +58,8 @@ class DatabaseSeeder extends Seeder
             ['user_id' => $admin->id],
             array_fill_keys(config('permission.system_administrator'), true),
         );
+
+        // The platform's starter catalog of service templates.
+        $this->call(ServiceTemplateSeeder::class);
     }
 }

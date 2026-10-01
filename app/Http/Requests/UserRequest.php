@@ -2,6 +2,8 @@
 
 namespace App\Http\Requests;
 
+use Illuminate\Validation\Rules\Password;
+
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -64,7 +66,7 @@ class UserRequest extends FormRequest
             'password' => [
                 $isCreate ? 'required' : 'nullable',
                 'string',
-                'min:8',
+                Password::defaults(),
             ],
 
             'profile_photo' => 'nullable|string',

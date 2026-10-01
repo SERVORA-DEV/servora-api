@@ -2,6 +2,8 @@
 
 namespace App\Http\Requests\Client;
 
+use Illuminate\Validation\Rules\Password;
+
 use Illuminate\Foundation\Http\FormRequest;
 
 class ClientChangePasswordRequest extends FormRequest
@@ -15,7 +17,7 @@ class ClientChangePasswordRequest extends FormRequest
     {
         return [
             'current_password' => ['required', 'string'],
-            'password' => ['required', 'string', 'min:8', 'confirmed'],
+            'password' => ['required', 'string', Password::defaults(), 'confirmed'],
         ];
     }
 }

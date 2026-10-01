@@ -220,6 +220,11 @@ return [
         'payment_create',
         'payment_refund',
 
+        // Customer programs: see what's offered, sell memberships, apply
+        // vouchers and redeem points at the counter.
+        'reward_view',
+        'reward_update',
+
         'notification_view',
     ],
 

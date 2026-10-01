@@ -18,6 +18,7 @@ use App\Service\Business\SpaBranchService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\JsonResponse;
 use Symfony\Component\HttpKernel\Exception\HttpException;
+use Tests\Concerns\MakesBranchesBookable;
 use Tests\TestCase;
 
 // Covers the date/time-aware therapist availability the client booking flow
@@ -37,7 +38,7 @@ use Tests\TestCase;
 //   php artisan test --filter=TherapistAvailabilityTest
 class TherapistAvailabilityTest extends TestCase
 {
-    use RefreshDatabase;
+    use MakesBranchesBookable, RefreshDatabase;
 
     // A Tuesday, comfortably in the future so the "choose a future time"
     // guard on client bookings never fires.
@@ -81,6 +82,7 @@ class TherapistAvailabilityTest extends TestCase
             'spa_branch_id' => $this->branch->id,
             'service_variant_id' => $this->variant->id,
         ]);
+        $this->makeBookable($this->branch);
     }
 
     /** @return array{available: bool, reason: ?string} the therapist's row */
@@ -269,6 +271,9 @@ class TherapistAvailabilityTest extends TestCase
     public function test_client_booking_is_rejected_for_an_off_schedule_therapist(): void
     {
         $this->schedule(['is_day_off' => true]);
+        // They do work another day — a therapist who never works would make
+        // the branch unbookable altogether (MarketplaceReadiness).
+        $this->schedule(['day_of_week' => 'Monday', 'start_time' => '09:00:00', 'end_time' => '18:00:00']);
 
         try {
             $this->appointmentService->createClientAppointment(

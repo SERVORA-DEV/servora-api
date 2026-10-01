@@ -105,7 +105,7 @@ class SubscriptionRepository
 
         $windowStart = $repeat ? now()->subDays($graceDays) : now();
 
-        return Subscription::with(['business.owner', 'plan', 'pendingPlan'])
+        return Subscription::with(['business.owner', 'business.settings', 'plan', 'pendingPlan', 'scheduledPlan', 'paymentMethod'])
             ->whereIn('id', $latestIdsPerBusiness)
             ->where('status', 'Active')
             ->where(fn ($q) => $this->notDeclined($q))

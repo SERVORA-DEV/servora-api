@@ -31,7 +31,8 @@ class EnsureBusinessVerified
         // staff account is logged in — a manager has no
         // ownerIdentityVerification row of their own, so resolve through
         // the business's owner either way.
-        $owner = $business?->owner;
+        // The signed-in owner is that user already — no need to load them again.
+        $owner = $user->role === 'business_owner' && $business?->owner_id === $user->id ? $user : $business?->owner;
 
         $identityStatus = $owner?->ownerIdentityVerification?->status ?? 'Unregistered';
         $businessStatus = $business?->verification_status ?? 'Unregistered';

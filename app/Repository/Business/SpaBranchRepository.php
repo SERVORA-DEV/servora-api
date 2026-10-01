@@ -6,6 +6,7 @@ use App\Models\BranchPackage;
 use App\Models\BranchService;
 use App\Models\SpaBranch;
 use App\Models\Staff;
+use App\Service\Business\MarketplaceReadiness;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Collection;
 
@@ -40,6 +41,7 @@ class SpaBranchRepository
             ->where('listing_visible', true)
             ->whereNotNull('latitude')
             ->whereNotNull('longitude');
+        MarketplaceReadiness::scope($withDistance);
 
         // The extra relations feed Explore's filters (open now, category,
         // starting price) and are constrained exactly like the branch-detail
@@ -64,10 +66,11 @@ class SpaBranchRepository
     // A client's saved spas (GET /client/favorites): same public guard and
     // eager loads as nearby(), so the favorites list renders with the same
     // card as Explore. A favorite whose branch has since been suspended or
-    // unlisted simply drops out rather than 404ing the whole list.
+    // unlisted — or stopped being bookable (MarketplaceReadiness) — simply
+    // drops out rather than 404ing the whole list.
     public function publicByIds(array $ids): Collection
     {
-        return SpaBranch::query()
+        return MarketplaceReadiness::scope(SpaBranch::query())
             ->whereIn('id', $ids)
             ->where('verification_status', 'Verified')
             ->where('operating_status', 'Active')
@@ -111,7 +114,7 @@ class SpaBranchRepository
     public function publicPackagesForBranch(int $branchId): Collection
     {
         return self::publicPackages(BranchPackage::where('spa_branch_id', $branchId))
-            ->with('package')
+            ->with('package.packageServiceItems.serviceVariant.service')
             ->get();
     }
 
@@ -119,14 +122,15 @@ class SpaBranchRepository
     // shared by the branch-detail lookups above and nearby()'s eager loads
     // so the two can't disagree. Takes and returns a query builder (or a
     // relation's), since nearby() applies it inside a `with()` constraint.
-    private static function publicServices($query)
+    // MarketplaceReadiness uses them too, for "has something to book".
+    public static function publicServices($query)
     {
         return $query
             ->where('is_available', true)
             ->whereHas('serviceVariant.service', fn ($q) => $q->where('is_active', true));
     }
 
-    private static function publicPackages($query)
+    public static function publicPackages($query)
     {
         return $query
             ->where('is_available', true)

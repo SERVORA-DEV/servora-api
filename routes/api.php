@@ -19,8 +19,10 @@ use App\Http\Controllers\System\BusinessController;
 use App\Http\Controllers\System\DashboardController as SystemDashboardController;
 use App\Http\Controllers\Business\DashboardController;
 use App\Http\Controllers\Business\BusinessSettingsController;
+use App\Http\Controllers\Business\CustomerProgramController;
 use App\Http\Controllers\Business\BranchSettingsController;
 use App\Http\Controllers\SubscriptionController;
+use App\Http\Controllers\CheckoutController;
 use App\Http\Controllers\Business\NotificationController as BusinessNotificationController;
 use App\Http\Controllers\XenditWebhookController;
 use App\Http\Controllers\Business\BranchScheduleController;
@@ -47,25 +49,26 @@ use App\Http\Controllers\Business\FrontOfficeDashboardController;
 use App\Http\Controllers\Business\FrontOfficeAttendanceController;
 use App\Http\Controllers\Client\ClientAppointmentController;
 use App\Http\Controllers\Client\ClientAccountController;
+use App\Http\Controllers\Client\ClientRewardsController;
 use App\Http\Controllers\Client\ClientBookingController;
 use App\Http\Controllers\Client\ClientProfileController;
 
 // authentication part
-Route::post('/auth/login', [AuthController::class, 'login']);
+Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:auth-login');
 // Per-IP throttles on top of UserService's per-challenge attempt cap.
 Route::post('/auth/two-factor/verify', [AuthController::class, 'verifyTwoFactorLogin'])->middleware('throttle:10,1');
 Route::post('/auth/two-factor/request-email-code', [AuthController::class, 'requestTwoFactorEmailCode'])->middleware('throttle:5,1');
-Route::post('/auth/register', [RegisterController::class, 'registerClient']);
-Route::post('/auth/forget-password', [AuthController::class, 'forgetPassword']);
-Route::post('/auth/forget-password/verify-otp', [AuthController::class, 'verifyForgetPasswordOtp']);
-Route::post('/auth/reset-password', [AuthController::class, 'resetPassword']);
+Route::post('/auth/register', [RegisterController::class, 'registerClient'])->middleware('throttle:auth-sensitive');
+Route::post('/auth/forget-password', [AuthController::class, 'forgetPassword'])->middleware('throttle:auth-sensitive');
+Route::post('/auth/forget-password/verify-otp', [AuthController::class, 'verifyForgetPasswordOtp'])->middleware('throttle:auth-otp');
+Route::post('/auth/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:auth-otp');
 Route::post('/auth/resend-verification', [EmailVerificationController::class, 'resend'])
     ->middleware('throttle:6,1');
 Route::post('/auth/verify-registration-otp', [AuthController::class, 'verifyRegistrationOtp'])
     ->middleware('throttle:10,1');
 Route::post('/auth/resend-registration-otp', [AuthController::class, 'resendRegistrationOtp'])
     ->middleware('throttle:6,1');
-Route::post('/business/administrator/register', [RegisterController::class, 'register']);
+Route::post('/business/administrator/register', [RegisterController::class, 'register'])->middleware('throttle:auth-sensitive');
 
 
 // display available subscription plan
@@ -93,6 +96,11 @@ Route::get('/spas/{uuid}', [SpaBranchController::class, 'publicShow']);
 // above's way either order, but it's kept after it for consistency.
 Route::get('/spas/{uuid}/therapists', [SpaBranchController::class, 'publicTherapistAvailability']);
 
+// Public: the start times a client can actually book on one day (hours,
+// break, service end before closing, booking policy, therapists on shift
+// vs bookings already made) — see BookingSlotService.
+Route::get('/spas/{uuid}/slots', [SpaBranchController::class, 'publicSlots']);
+
 // Public, unauthenticated: the dates a branch therapist is off within a
 // window, so the client booking calendar can grey them out once a therapist
 // has been picked. Dates only — never shift times.
@@ -118,6 +126,8 @@ Route::middleware('auth:sanctum')->group(function () {
         ->group(function () {
             Route::patch('profile', [ClientProfileController::class, 'update']);
             Route::post('change-password', [ClientAccountController::class, 'changePassword']);
+            // Password-confirmed; anonymizes the login (see ClientAccountService).
+            Route::delete('account', [ClientAccountController::class, 'deleteAccount'])->middleware('throttle:5,1');
 
             Route::post('appointments', [ClientAppointmentController::class, 'store']);
             Route::get('appointments', [ClientBookingController::class, 'index']);
@@ -133,6 +143,12 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::delete('favorites/{branchUuid}', [ClientAccountController::class, 'removeFavorite'])->whereUuid('branchUuid');
 
             Route::get('transactions', [ClientAccountController::class, 'transactions']);
+
+            // Customer programs: points, vouchers, discounts and memberships
+            // per spa, one spa's rewards for its page, and points → voucher.
+            Route::get('rewards', [ClientRewardsController::class, 'index']);
+            Route::post('rewards/redeem', [ClientRewardsController::class, 'redeem']);
+            Route::get('spas/{branchUuid}/rewards', [ClientRewardsController::class, 'forBranch'])->whereUuid('branchUuid');
 
             Route::get('notifications', [ClientAccountController::class, 'notifications']);
             Route::post('notifications/read-all', [ClientAccountController::class, 'markAllNotificationsRead']);
@@ -195,6 +211,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('branches/{uuid}/reactivate', [BranchController::class, 'reactivate'])->middleware('permission:branch_suspend');
             Route::get('businesses', [BusinessController::class, 'index'])->middleware('permission:spa_business_view');
             Route::get('businesses/{uuid}', [BusinessController::class, 'show'])->middleware('permission:spa_business_view');
+            Route::get('businesses/{uuid}/programs', [BusinessController::class, 'programs'])->middleware('permission:spa_business_view');
             Route::post('businesses/{uuid}/suspend', [BusinessController::class, 'suspend'])->middleware('permission:spa_business_suspend');
             Route::post('businesses/{uuid}/reactivate', [BusinessController::class, 'reactivate'])->middleware('permission:spa_business_suspend');
 
@@ -420,6 +437,9 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Methods the owner accepts (Settings → Payments), for the payment dialog.
                 Route::get('payment-options', [BillingController::class, 'paymentOptions'])->middleware('permission:payment_create');
                 Route::patch('billing/{uuid}/discount', [BillingController::class, 'discount'])->middleware('permission:billing_update');
+                // Customer programs at checkout — vouchers and discount programs.
+                Route::get('billing/{uuid}/program-options', [BillingController::class, 'programOptions'])->middleware('permission:reward_view');
+                Route::patch('billing/{uuid}/program-discount', [BillingController::class, 'programDiscount'])->middleware(['permission:reward_update', 'plan.feature:reward_access']);
                 Route::post('billing/{uuid}/refund', [BillingController::class, 'refund'])->middleware('permission:payment_refund');
                 Route::post('payment/{uuid}/void', [PaymentController::class, 'void'])->middleware('permission:payment_refund');
 
@@ -440,6 +460,32 @@ Route::middleware('auth:sanctum')->group(function () {
                 // After every literal frontoffice/attendance/... segment above.
                 Route::get('frontoffice/attendance/{uuid}/history', [FrontOfficeAttendanceController::class, 'history'])->middleware('permission:attendance_view')->whereUuid('uuid');
 
+                // Customer programs (loyalty · vouchers · discounts · memberships).
+                // Reading is open to every business role with reward_view (a
+                // manager/front desk sees what's offered at their branch);
+                // defining programs is the owner's; switching one on/off for a
+                // branch is owner + manager; selling memberships and redeeming
+                // points is the counter's job too. Writes need a plan that
+                // includes rewards.
+                Route::get('programs', [CustomerProgramController::class, 'index'])->middleware('permission:reward_view');
+                Route::get('programs/memberships', [CustomerProgramController::class, 'memberships'])->middleware('permission:reward_view');
+                Route::get('client/{uuid}/rewards', [CustomerProgramController::class, 'clientRewards'])->middleware('permission:reward_view');
+                Route::middleware('plan.feature:reward_access')->group(function () {
+                    Route::middleware('role:business_owner')->group(function () {
+                        Route::patch('programs/module', [CustomerProgramController::class, 'module'])->middleware('permission:reward_update');
+                        Route::post('programs', [CustomerProgramController::class, 'store'])->middleware('permission:reward_create');
+                        Route::patch('programs/{uuid}', [CustomerProgramController::class, 'update'])->middleware('permission:reward_update')->whereUuid('uuid');
+                        Route::delete('programs/{uuid}', [CustomerProgramController::class, 'destroy'])->middleware('permission:reward_delete')->whereUuid('uuid');
+                    });
+                    Route::put('programs/{uuid}/branches/{branchUuid}', [CustomerProgramController::class, 'branch'])
+                        ->middleware(['role:business_owner,manager', 'permission:reward_update'])->whereUuid('uuid');
+                    Route::post('programs/memberships', [CustomerProgramController::class, 'sellMembership'])->middleware('permission:reward_update');
+                    Route::post('programs/memberships/{uuid}/renew', [CustomerProgramController::class, 'renewMembership'])->middleware('permission:reward_update');
+                    Route::post('programs/memberships/{uuid}/cancel', [CustomerProgramController::class, 'cancelMembership'])->middleware('permission:reward_update');
+                    Route::post('client/{uuid}/rewards/redeem', [CustomerProgramController::class, 'redeem'])->middleware('permission:reward_update');
+                });
+
+                Route::get('frontoffice/branches', [FrontOfficeLookupController::class, 'branches']);
                 Route::get('frontoffice/therapists', [FrontOfficeLookupController::class, 'therapists']);
                 Route::get('frontoffice/therapists/{uuid}', [FrontOfficeLookupController::class, 'therapist']);
                 // Today's therapist rotation (who's next in line) — a read of
@@ -510,10 +556,32 @@ Route::middleware('auth:sanctum')->group(function () {
                 // show() with "suggest" as the uuid.
                 Route::get('account/suggest', [AccountController::class, 'suggest']);
 
-                Route::apiResources([
-                    'subscription' => SubscriptionController::class,
-                    'account' => AccountController::class,
-                ]);
+                // Upgrade / downgrade the live plan (PlanSwitchService). Before
+                // the subscription resource, so subscription/{id} can't
+                // swallow "change".
+                // Servora's own checkout (Card / GCash / Maya via Xendit
+                // Components), auto-renew and saved payment methods.
+                Route::get('checkout/quote', [CheckoutController::class, 'quote']);
+                Route::post('checkout', [CheckoutController::class, 'start'])->middleware('throttle:20,1');
+                Route::get('checkout/{uuid}', [CheckoutController::class, 'status'])->whereUuid('uuid');
+                Route::patch('subscription/auto-renew', [CheckoutController::class, 'setAutoRenew']);
+                Route::post('payment-methods/{uuid}/default', [CheckoutController::class, 'makeDefaultMethod'])->whereUuid('uuid');
+                Route::delete('payment-methods/{uuid}', [CheckoutController::class, 'removeMethod'])->whereUuid('uuid');
+
+                // Just the plan's limits + current usage, for the Branches and
+                // Accounts pages' Plan Capacity card (the full subscription
+                // read also settles payments and loads billing history).
+                Route::get('subscription/capacity', [SubscriptionController::class, 'capacity']);
+
+                Route::get('subscription/change/quote', [SubscriptionController::class, 'quotePlanChange']);
+                Route::post('subscription/change', [SubscriptionController::class, 'changePlan']);
+                Route::delete('subscription/change', [SubscriptionController::class, 'cancelScheduledPlanChange']);
+
+                // Owners read and buy subscriptions only — the plan, dates and
+                // status change through payments and plan switches, never by
+                // editing the row directly.
+                Route::apiResource('subscription', SubscriptionController::class)->only(['index', 'store']);
+                Route::apiResource('account', AccountController::class);
                 Route::apiResource('branch', SpaBranchController::class)->except(['index', 'show']);
                 // Read-only view of the admin's catalog, shown when the owner
                 // clicks Add Service. Adopting one is just the normal

@@ -45,6 +45,8 @@ class ClientProfileRequest extends FormRequest
                     ->ignore($userId)
                     ->whereNull('deleted_at'),
             ],
+            // Optional — only used for birthday-month vouchers.
+            'birth_date' => ['sometimes', 'nullable', 'date', 'before:today', 'after:1900-01-01'],
         ];
     }
 

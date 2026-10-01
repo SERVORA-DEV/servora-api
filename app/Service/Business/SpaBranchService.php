@@ -13,6 +13,7 @@ use App\Http\Resources\SpaBranchResource;
 use App\Http\Resources\NearbySpaResource;
 use App\Http\Resources\BranchDetailResource;
 use App\Http\Resources\PublicTherapistAvailabilityResource;
+use App\Service\Client\BookingPolicy;
 use App\Service\NotificationService;
 use App\Services\DocumentUploadService;
 use App\Services\ImageUploadService;
@@ -58,7 +59,11 @@ class SpaBranchService
         $radiusKm = min(max($radiusKm ?? 15, 1), 100);
         $limit = min(max($limit ?? 20, 1), 50);
 
-        $branches = $this->spaBranchRepository->nearby($lat, $lng, $radiusKm, $limit);
+        // The query already keeps only bookable branches (MarketplaceReadiness);
+        // online booking lives in settings JSON, so that part is checked here.
+        $branches = $this->spaBranchRepository->nearby($lat, $lng, $radiusKm, $limit)
+            ->filter(fn ($b) => MarketplaceReadiness::acceptsOnlineBooking($b))
+            ->values();
         app(ReviewRepository::class)->attachRatings($branches);
 
         return NearbySpaResource::collection($branches);
@@ -74,7 +79,11 @@ class SpaBranchService
 
         $services = $this->spaBranchRepository->publicServicesForBranch($branch->id);
         $packages = $this->spaBranchRepository->publicPackagesForBranch($branch->id);
-        $therapists = $this->spaBranchRepository->publicTherapistsForBranch($branch->id);
+        // Branch Settings → Marketplace → Show therapist profiles: off keeps
+        // the roster private, and bookings are auto-assigned.
+        $therapists = $branch->displaySettings()['show_therapist_profiles']
+            ? $this->spaBranchRepository->publicTherapistsForBranch($branch->id)
+            : collect();
 
         return new BranchDetailResource($branch, $services, $packages, $therapists);
     }
@@ -99,7 +108,9 @@ class SpaBranchService
         $time = $query['time'];
         $duration = (int) ($query['duration_minutes'] ?? 60);
 
-        $therapists = $this->spaBranchRepository->publicTherapistsForBranch($branch->id);
+        $therapists = $branch->displaySettings()['show_therapist_profiles']
+            ? $this->spaBranchRepository->publicTherapistsForBranch($branch->id)
+            : collect();
 
         $rows = $therapists->map(function ($staff) use ($date, $time, $duration) {
             $schedule = $this->availabilityService->staffMatchesSchedule($staff->id, $date, $time, $duration);
@@ -118,6 +129,55 @@ class SpaBranchService
         })->values();
 
         return PublicTherapistAvailabilityResource::collection($rows);
+    }
+
+    // Backs GET /spas/{uuid}/slots — public, no auth. A requested therapist
+    // is looked up in this branch's public roster (unknown → 404, like
+    // days-off). exclude_appointment_uuid only counts when it's the signed-
+    // in client's own booking, so rescheduling doesn't collide with itself.
+    public function publicSlots(string $uuid, array $query, ?User $user = null): array
+    {
+        $branch = $this->spaBranchRepository->publicFindByUuid($uuid);
+
+        // Not ready for bookings (no therapist, no hours…): offer no times,
+        // with the same message the booking endpoint would give.
+        if (! MarketplaceReadiness::isBookable($branch)) {
+            $policy = BookingPolicy::for($branch);
+
+            return ['data' => [
+                'date' => $query['date'],
+                'duration_minutes' => (int) $query['duration_minutes'],
+                'closed_reason' => $policy['online_booking_enabled']
+                    ? MarketplaceReadiness::NOT_BOOKABLE
+                    : BookingPolicy::startTimeProblem($policy, BookingPolicy::now()),
+                'slots' => [],
+            ]];
+        }
+
+        $therapist = null;
+        // With therapist profiles hidden a client can't have picked one, so
+        // a stray therapist_uuid is ignored rather than narrowing the slots.
+        if (! empty($query['therapist_uuid']) && $branch->displaySettings()['show_therapist_profiles']) {
+            $therapist = $this->spaBranchRepository->publicTherapistsForBranch($branch->id)
+                ->firstWhere('uuid', $query['therapist_uuid']);
+            abort_if(! $therapist, 404, 'Therapist not found.');
+        }
+
+        $excludeId = null;
+        if (! empty($query['exclude_appointment_uuid']) && $user) {
+            $excludeId = \App\Models\Appointment::where('uuid', $query['exclude_appointment_uuid'])
+                ->where('spa_branch_id', $branch->id)
+                ->whereHas('client', fn ($q) => $q->where('user_id', $user->id))
+                ->value('id');
+        }
+
+        return ['data' => app(\App\Service\Client\BookingSlotService::class)->slots(
+            $branch,
+            $query['date'],
+            (int) $query['duration_minutes'],
+            $therapist,
+            $excludeId,
+        )];
     }
 
     // Backs GET /spas/{uuid}/therapists/{staffUuid}/days-off — public, no
@@ -459,10 +519,21 @@ class SpaBranchService
     public function publicReviews(string $uuid)
     {
         $branch = $this->spaBranchRepository->publicFindByUuid($uuid);
-        $reviews = app(ReviewRepository::class);
-        $summary = $reviews->ratingsForBranches([$branch->id])[$branch->id] ?? ['avg' => null, 'count' => 0];
+        $display = $branch->displaySettings();
 
-        return PublicReviewResource::collection($reviews->publishedForBranch($branch->id))
-            ->additional(['meta' => ['rating_avg' => $summary['avg'], 'rating_count' => $summary['count']]]);
+        // Branch Settings → Marketplace → Reviews: hidden reviews come back as
+        // an empty page (the app drops the section), and without the rating
+        // badge the average isn't shared either.
+        if (! $display['show_reviews']) {
+            return response()->json(['data' => [], 'meta' => ['rating_avg' => null, 'rating_count' => 0, 'hidden' => true]]);
+        }
+
+        $reviews = app(ReviewRepository::class);
+        $summary = $display['show_rating_badge']
+            ? ($reviews->ratingsForBranches([$branch->id])[$branch->id] ?? ['avg' => null, 'count' => 0])
+            : ['avg' => null, 'count' => 0];
+
+        return PublicReviewResource::collection($reviews->publishedForBranch($branch->id, sort: $display['review_sort']))
+            ->additional(['meta' => ['rating_avg' => $summary['avg'], 'rating_count' => $summary['count'], 'hidden' => false]]);
     }
 }

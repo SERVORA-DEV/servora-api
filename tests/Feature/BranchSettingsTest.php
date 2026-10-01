@@ -14,6 +14,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Laravel\Sanctum\Sanctum;
 use Mockery;
+use Tests\Concerns\MakesBranchesBookable;
 use Tests\TestCase;
 
 // Covers the owner's Branch Settings endpoints (web /business/settings/branch/*)
@@ -23,7 +24,7 @@ use Tests\TestCase;
 //   DB_PASSWORD=... php artisan test --filter=BranchSettingsTest
 class BranchSettingsTest extends TestCase
 {
-    use RefreshDatabase;
+    use MakesBranchesBookable, RefreshDatabase;
 
     private User $owner;
     private SpaBusiness $business;
@@ -99,6 +100,8 @@ class BranchSettingsTest extends TestCase
 
     public function test_a_hidden_branch_disappears_from_the_client_app(): void
     {
+        $this->makeBookable($this->branch, withService: true);
+
         $this->getJson('/api/spas/nearby?lat=7.0731&lng=125.6128')->assertOk()->assertJsonCount(1, 'data');
         $this->getJson("/api/spas/{$this->branch->uuid}")->assertOk();
 

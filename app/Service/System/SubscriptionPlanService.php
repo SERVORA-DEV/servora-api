@@ -2,6 +2,7 @@
 
 namespace App\Service\System;
 
+use App\Models\Subscription;
 use App\Repository\System\SubscriptionPlanRepository;
 use App\Http\Resources\SubscriptionPlanResource;
 use App\Repository\AuditLogRepository;
@@ -27,14 +28,37 @@ class SubscriptionPlanService
     public function listSubscriptionPlan(int $perPage = 15)
     {
         $collection = $this->subscriptionPlanRepository->paginate($perPage);
-        return SubscriptionPlanResource::collection($collection);
+        $this->markMostPopular($collection);
+
+        return SubscriptionPlanResource::collection($collection)->additional([
+            'meta' => [
+                // Businesses paid up right now, across every plan version.
+                'active_subscribers' => SubscriptionPlanRepository::live(Subscription::query())->count(),
+                'most_popular_category' => $this->subscriptionPlanRepository->mostPopularCategory(),
+                // Per tier, all versions — what the active plan's card shows.
+                'subscribers_by_category' => (object) $this->subscriptionPlanRepository->liveSubscribersByCategory(),
+            ],
+        ]);
     }
 
     public function listOfActiveSubscriptionPlan(int $perPage = 15)
     {
         $collection = $this->subscriptionPlanRepository->paginateActivePlan($perPage);
+        $this->markMostPopular($collection);
 
         return SubscriptionPlanResource::collection($collection);
+    }
+
+    // "Most Popular" is earned: the active plan of whichever tier has the
+    // most live subscribers (see SubscriptionPlanRepository::
+    // mostPopularCategory). Nobody subscribed yet → no badge anywhere.
+    private function markMostPopular($plans): void
+    {
+        $popular = $this->subscriptionPlanRepository->mostPopularCategory();
+
+        foreach ($plans as $plan) {
+            $plan->setAttribute('is_most_popular', $popular !== null && $plan->is_active && $plan->category === $popular);
+        }
     }
 
     /**
@@ -104,8 +128,44 @@ class SubscriptionPlanService
         $plan = $this->subscriptionPlanRepository->findByUuid($uuid);
         $payload = Arr::except($payload, ['category']);
         [$old, $new] = $this->auditLogRepository->diff($plan->only($plan->getFillable()), $payload);
+        $changed = array_keys($new ?? []);
+
+        // Saved without changing anything — don't create a pointless version.
+        if (! $changed) {
+            return (new SubscriptionPlanResource($plan))->additional(['meta' => ['versioned' => false]]);
+        }
+
+        // Only one active plan per category.
+        if (($payload['is_active'] ?? $plan->is_active) && ! $plan->is_active
+            && ($current = $this->subscriptionPlanRepository->findOtherActiveInCategory($plan))) {
+            return response()->json([
+                'success' => false,
+                'message' => "“{$current->name}” is already the active {$plan->category} plan. Deactivate it first, then activate this one.",
+                'active_plan_uuid' => $current->uuid,
+            ], 409);
+        }
+
+        // Switching a plan on or off doesn't change its terms, so it's an
+        // in-place update even with subscribers — they keep their plan until
+        // their term ends; it just can't be picked by anyone new.
+        if (array_diff($changed, ['is_active']) === []) {
+            $updated = $this->subscriptionPlanRepository->update($uuid, ['is_active' => (bool) $payload['is_active']]);
+            $this->auditLogRepository->recordAdminAction('subscription_plans', $updated->id, 'Update', $old, array_merge($new, ['name' => $updated->name]));
+
+            return (new SubscriptionPlanResource($this->subscriptionPlanRepository->findByUuid($uuid)))->additional([
+                'meta' => ['versioned' => false],
+            ]);
+        }
 
         if ($this->subscriptionPlanRepository->hasSubscribers($plan)) {
+            // An older version kept only for the owners still on it — its
+            // terms are what they paid for.
+            if (! $plan->is_active) {
+                return response()->json([
+                    'message' => 'This is an older version kept for the businesses still on it, so its terms can\'t change. Edit the current plan instead.',
+                ], 422);
+            }
+
             $newPlan = $this->subscriptionPlanRepository->archiveAndVersion($plan, $payload);
 
             // Current subscribers keep the archived terms until their term
@@ -142,6 +202,15 @@ class SubscriptionPlanService
     public function deleteSubscriptionPlan(string $uuid)
     {
         $plan = $this->subscriptionPlanRepository->findByUuid($uuid);
+
+        // Subscriptions, invoices and scheduled renewals point at this plan;
+        // deleting it would leave them showing "Unknown plan".
+        if ($this->subscriptionPlanRepository->hasSubscribers($plan)) {
+            return response()->json([
+                'message' => 'Businesses have subscribed to this plan, so it can\'t be deleted. Deactivate it instead — no one new can choose it.',
+            ], 422);
+        }
+
         $this->subscriptionPlanRepository->delete($uuid);
 
         $this->auditLogRepository->recordAdminAction('subscription_plans', $plan->id, 'Delete', null, ['name' => $plan->name]);

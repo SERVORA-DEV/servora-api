@@ -5,13 +5,19 @@ namespace App\Service\Client;
 use App\Http\Resources\Client\ClientNotificationResource;
 use App\Http\Resources\Client\ClientTransactionResource;
 use App\Http\Resources\NearbySpaResource;
+use App\Models\Appointment;
 use App\Models\Billing;
+use App\Models\Client;
 use App\Models\ClientFavorite;
+use App\Models\Notification;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use App\Models\SpaBranch;
 use App\Models\User;
 use App\Repository\Business\SpaBranchRepository;
 use App\Repository\NotificationRepository;
 use App\Repository\ReviewRepository;
+use App\Service\Business\MarketplaceReadiness;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
@@ -35,6 +41,7 @@ class ClientAccountService
         $order = array_flip($ids);
 
         $branches = $this->branches->publicByIds($ids)
+            ->filter(fn (SpaBranch $b) => MarketplaceReadiness::acceptsOnlineBooking($b))
             ->sortBy(fn (SpaBranch $b) => $order[$b->id] ?? PHP_INT_MAX)
             ->values();
 
@@ -138,5 +145,53 @@ class ClientAccountService
         $user->tokens()->when($current && isset($current->id), fn ($q) => $q->where('id', '!=', $current->id))->delete();
 
         return response()->json(['message' => 'Your password has been changed.']);
+    }
+
+    // ── Delete account (app store requirement) ───────────────────────────
+    //
+    // Confirms the password, cancels the client's upcoming reservations
+    // (so no spa keeps a slot for someone who's gone), then removes what is
+    // personal to the login: favorites, notifications, sign-ins. The login
+    // itself is anonymized and deactivated rather than hard-deleted, and
+    // each spa's own client record is unlinked from it — spas keep their
+    // visit and payment history (names as they were given at the desk),
+    // which they need for their books.
+    public function deleteAccount(User $user, string $password)
+    {
+        if (! Hash::check($password, $user->password)) {
+            throw ValidationException::withMessages(['password' => 'Your password is incorrect.']);
+        }
+
+        DB::transaction(function () use ($user) {
+            $appointments = app(\App\Service\Business\AppointmentService::class);
+            Appointment::whereHas('client', fn ($q) => $q->where('user_id', $user->id))
+                ->where('status', Appointment::STATUS_SCHEDULED)
+                ->lockForUpdate()
+                ->get()
+                ->each(fn (Appointment $a) => $appointments->performCancel($a, 'Client deleted their account'));
+
+            ClientFavorite::where('user_id', $user->id)->delete();
+            Notification::where('user_id', $user->id)->delete();
+            Client::where('user_id', $user->id)->update(['user_id' => null]);
+
+            $user->tokens()->delete();
+            $user->forceFill([
+                'first_name' => 'Deleted',
+                'middle_name' => null,
+                'last_name' => 'user',
+                'suffix' => null,
+                'username' => null,
+                'gender' => null,
+                'birth_date' => null,
+                'phone_number' => null,
+                'profile_photo' => null,
+                'personal_email' => null,
+                'email' => "deleted+{$user->uuid}@servora.invalid",
+                'password' => Hash::make(Str::random(64)),
+                'account_status' => 'Inactive',
+            ])->save();
+        });
+
+        return response()->json(['message' => 'Your account has been deleted.']);
     }
 }

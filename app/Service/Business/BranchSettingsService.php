@@ -287,6 +287,8 @@ class BranchSettingsService
                 'url' => ImageUploadService::url($p->path),
                 'is_cover' => $p->is_cover,
             ]),
+            // Whether clients can find and book this branch, and what's missing.
+            'readiness' => MarketplaceReadiness::check($branch),
         ]]);
     }
 

@@ -15,6 +15,11 @@ class FrontOfficeLookupController extends Controller
         $this->frontOfficeLookupService = $frontOfficeLookupService;
     }
 
+    public function branches(Request $request)
+    {
+        return response()->json(['data' => $this->frontOfficeLookupService->branches($request->user())]);
+    }
+
     public function therapists(Request $request)
     {
         return $this->frontOfficeLookupService->therapists($request->user());

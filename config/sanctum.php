@@ -50,7 +50,10 @@ return [
     |
     */
 
-    'expiration' => null,
+    // Minutes until a token stops working (default 30 days, matching the
+    // web app's "remember me" cookie). A stolen token used to be valid
+    // forever. Set SANCTUM_EXPIRATION=0 to disable expiry.
+    'expiration' => (int) env('SANCTUM_EXPIRATION', 43200) ?: null,
 
     /*
     |--------------------------------------------------------------------------

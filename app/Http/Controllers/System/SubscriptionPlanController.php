@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\System;
 
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use App\Service\System\SubscriptionPlanService;
 use App\Http\Requests\SubscriptionPlanRequest;
@@ -25,7 +26,7 @@ class SubscriptionPlanController extends Controller
     //Create a Subscription Plan
     public function store(SubscriptionPlanRequest $request)
     {
-        return $this->subscriptionPlanService->createSubscriptionPlan($request->all());
+        return $this->subscriptionPlanService->createSubscriptionPlan($request->validated());
     }
 
     public function show(string $uuid)
@@ -35,12 +36,16 @@ class SubscriptionPlanController extends Controller
 
     public function update(SubscriptionPlanRequest $request, string $uuid)
     {
-        return $this->subscriptionPlanService->updateSubscriptionPlan($uuid, $request->all());
+        return $this->subscriptionPlanService->updateSubscriptionPlan($uuid, $request->validated());
     }
 
     public function destroy(string $uuid)
     {
-        $this->subscriptionPlanService->deleteSubscriptionPlan($uuid);
+        $result = $this->subscriptionPlanService->deleteSubscriptionPlan($uuid);
+        if ($result instanceof JsonResponse) {
+            return $result;
+        }
+
         return response()->json(['message' => 'Deleted successfully'], 200);
     }
     

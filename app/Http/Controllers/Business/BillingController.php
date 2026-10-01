@@ -47,6 +47,36 @@ class BillingController extends Controller
         return $this->billingService->applyDiscount($request->user(), $uuid, $data['type'], (float) $data['value'], $data['reason'] ?? null, $request);
     }
 
+    // Customer programs at checkout: the client's vouchers and the discount
+    // programs that apply to this bill.
+    public function programOptions(Request $request, string $uuid)
+    {
+        return $this->billingService->programOptions($request->user(), $uuid);
+    }
+
+    // Apply one of those (or remove it with `remove`). Separate from
+    // discount() so the front desk can use programs the owner set up
+    // without being allowed to type in any discount they like.
+    public function programDiscount(Request $request, string $uuid)
+    {
+        $data = $request->validate([
+            'discount_program_uuid' => ['nullable', 'uuid', 'required_without_all:client_voucher_uuid,remove'],
+            'client_voucher_uuid' => ['nullable', 'uuid'],
+            'remove' => ['nullable', 'boolean'],
+        ]);
+
+        if ($request->boolean('remove')) {
+            return $this->billingService->applyDiscount($request->user(), $uuid, 'amount', 0, null, $request, programOnly: true);
+        }
+
+        return $this->billingService->applyDiscount(
+            $request->user(), $uuid, 'amount', 0, null, $request,
+            programUuid: $data['discount_program_uuid'] ?? null,
+            voucherUuid: $data['client_voucher_uuid'] ?? null,
+            programOnly: true,
+        );
+    }
+
     public function refund(Request $request, string $uuid)
     {
         $data = $request->validate([

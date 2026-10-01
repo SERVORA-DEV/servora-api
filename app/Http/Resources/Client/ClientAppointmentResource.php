@@ -4,6 +4,7 @@ namespace App\Http\Resources\Client;
 
 use App\Models\Appointment;
 use App\Service\Business\AppointmentAvailabilityService;
+use App\Service\Client\BookingPolicy;
 use App\Services\ImageUploadService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -29,12 +30,36 @@ class ClientAppointmentResource extends JsonResource
         return $startsAt->gt(now());
     }
 
+    // Why the client can't cancel/reschedule this booking from the app right
+    // now, or null: still just a reservation (above), then the spa's own
+    // rules — allow cancel/reschedule and the cancellation window.
+    public static function changeProblem(Appointment $appointment, string $action): ?string
+    {
+        if (! self::clientCanChange($appointment)) {
+            return $action === 'cancel'
+                ? 'This booking can no longer be cancelled from the app. Please contact the spa.'
+                : 'This booking can no longer be rescheduled from the app. Please contact the spa.';
+        }
+
+        $branch = $appointment->branch;
+        if (! $branch) {
+            return null;
+        }
+
+        $startsAt = Carbon::parse($appointment->appointment_date->format('Y-m-d') . ' ' . $appointment->appointment_time);
+
+        return BookingPolicy::changeProblem(BookingPolicy::for($branch), $startsAt, $action);
+    }
+
     public function toArray(Request $request): array
     {
         $branch = $this->branch;
         $business = $branch?->business;
         $billing = $this->billing;
-        $paid = $billing ? (float) $billing->payments->where('payment_status', 'Paid')->sum('amount') : 0.0;
+        // Net of refunds, the same as the spa's own billing screens.
+        $paid = $billing
+            ? (float) $billing->payments->where('payment_status', 'Paid')->sum(fn ($p) => (float) $p->amount - (float) ($p->refunded_amount ?? 0))
+            : 0.0;
 
         $therapists = $this->services
             ->flatMap(fn ($s) => $s->therapistAssignments->whereNotIn('assignment_status', ['Cancelled'])->map(fn ($a) => $a->staff))
@@ -114,8 +139,12 @@ class ClientAppointmentResource extends JsonResource
 
             'review' => $this->review ? new ClientReviewResource($this->review) : null,
 
-            'can_cancel' => self::clientCanChange($this->resource),
-            'can_reschedule' => self::clientCanChange($this->resource),
+            'can_cancel' => ($cancelProblem = self::changeProblem($this->resource, 'cancel')) === null,
+            'can_reschedule' => ($rescheduleProblem = self::changeProblem($this->resource, 'reschedule')) === null,
+            // Why not, for a still-upcoming booking the app shows the buttons
+            // for (e.g. inside the spa's cancellation window).
+            'cancel_blocked_reason' => $this->status === Appointment::STATUS_SCHEDULED ? $cancelProblem : null,
+            'reschedule_blocked_reason' => $this->status === Appointment::STATUS_SCHEDULED ? $rescheduleProblem : null,
             'can_review' => $this->status === Appointment::STATUS_COMPLETED && ! $this->review,
 
             'created_at' => optional($this->created_at)->toIso8601String(),

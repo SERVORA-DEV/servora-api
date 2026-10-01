@@ -166,7 +166,11 @@ class ClientService
             $user->email,
         );
 
-        if ($existing) {
+        // Only claim a walk-in record nobody owns yet. A record already
+        // linked to a different account (a shared or recycled phone number)
+        // must not be reused — the booking would land in that other
+        // person's account and vanish from this one.
+        if ($existing && (! $existing->user_id || $existing->user_id === $user->id)) {
             if (! $existing->user_id) {
                 $existing->update(['user_id' => $user->id]);
             }

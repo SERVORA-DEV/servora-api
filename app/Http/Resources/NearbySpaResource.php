@@ -24,6 +24,11 @@ class NearbySpaResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        // Branch Settings → Marketplace: no rating without the rating badge,
+        // no "from ₱…" when prices are hidden.
+        $display = $this->resource->displaySettings();
+        $showRating = $display['show_reviews'] && $display['show_rating_badge'];
+
         return [
             'uuid' => $this->uuid,
             'branch_name' => $this->branch_name,
@@ -33,13 +38,14 @@ class NearbySpaResource extends JsonResource
             'distance_km' => $this->distance_km !== null ? round((float) $this->distance_km, 2) : null,
             // Set by ReviewRepository::attachRatings(); null until a branch
             // has its first published review.
-            'rating_avg' => $this->rating_avg,
-            'rating_count' => (int) ($this->rating_count ?? 0),
+            'rating_avg' => $showRating ? $this->rating_avg : null,
+            'rating_count' => $showRating ? (int) ($this->rating_count ?? 0) : 0,
             'cover_photo_url' => $this->resource->coverPhotoUrl(),
 
             ...$this->openStatus(),
             'service_categories' => $this->serviceCategories(),
-            'starting_price' => $this->startingPrice(),
+            'starting_price' => $display['show_prices'] ? $this->startingPrice() : null,
+            'prices_hidden' => ! $display['show_prices'],
 
             'business' => $this->whenLoaded('business', function () {
                 return [

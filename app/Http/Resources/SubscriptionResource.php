@@ -17,6 +17,8 @@ class SubscriptionResource extends JsonResource
         return [
             ...parent::toArray($request),
             'plan' => $this->whenLoaded('plan', fn () => new SubscriptionPlanResource($this->plan)),
+            // Owner's downgrade taking effect at the next billing (PlanSwitchService).
+            'scheduled_plan' => $this->whenLoaded('scheduledPlan', fn () => $this->scheduledPlan ? new SubscriptionPlanResource($this->scheduledPlan) : null),
             'billings' => $this->whenLoaded('billings', fn () => BillingResource::collection($this->billings)),
         ];
     }

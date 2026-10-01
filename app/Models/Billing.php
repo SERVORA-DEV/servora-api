@@ -30,8 +30,14 @@ class Billing extends Model
         'discount_amount',
         'discount_reason',
         'discounted_by',
+        // Where the discount came from, when the front desk picked a program
+        // or one of the client's vouchers instead of typing it in.
+        'discount_program_id',
+        'client_voucher_id',
 
         'amount',
+        // Subscription invoices: the 12% VAT included in amount.
+        'vat_amount',
 
         'status',
 
@@ -46,6 +52,7 @@ class Billing extends Model
     {
         return [
             'amount' => 'decimal:2',
+            'vat_amount' => 'decimal:2',
             'subtotal' => 'decimal:2',
             'discount_value' => 'decimal:2',
             'discount_amount' => 'decimal:2',
@@ -84,5 +91,15 @@ class Billing extends Model
     public function payments()
     {
         return $this->hasMany(Payment::class, 'billing_id');
+    }
+
+    public function discountProgram()
+    {
+        return $this->belongsTo(CustomerProgram::class, 'discount_program_id')->withTrashed();
+    }
+
+    public function clientVoucher()
+    {
+        return $this->belongsTo(ClientVoucher::class, 'client_voucher_id');
     }
 }

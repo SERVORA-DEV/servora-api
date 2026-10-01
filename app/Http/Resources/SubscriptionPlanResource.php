@@ -22,6 +22,15 @@ class SubscriptionPlanResource extends JsonResource
             // a new version (and archive this one) instead of a plain
             // in-place edit — see SubscriptionPlanService::updateSubscriptionPlan().
             'has_subscribers' => ($this->subscriptions_count ?? 0) > 0,
+
+            // Businesses on this exact version right now (paid up, not
+            // expired) — only where the admin listing counted them.
+            'active_subscribers' => $this->when(isset($this->active_subscribers_count), fn () => (int) $this->active_subscribers_count),
+
+            // The live plan of the tier with the most current subscribers
+            // (SubscriptionPlanService::markMostPopular) — replaces the old
+            // hard-coded "Premium".
+            'is_most_popular' => (bool) ($this->is_most_popular ?? false),
         ];
     }
 }

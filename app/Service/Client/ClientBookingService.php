@@ -11,6 +11,7 @@ use App\Models\Staff;
 use App\Models\User;
 use App\Service\Business\AppointmentAvailabilityService;
 use App\Service\Business\AppointmentService;
+use App\Service\Business\MarketplaceReadiness;
 use App\Service\Business\StaffNotifier;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
@@ -30,7 +31,9 @@ use Illuminate\Support\Facades\DB;
 // first.
 class ClientBookingService
 {
-    private const RELATIONS = [
+    // Public: AppointmentService::createClientAppointment returns the new
+    // booking in this same shape.
+    public const RELATIONS = [
         'branch.business',
         'branch.coverPhoto',
         'services.serviceVariant.service',
@@ -46,6 +49,7 @@ class ClientBookingService
         private AppointmentService $appointmentService,
         private AppointmentAvailabilityService $availabilityService,
         private StaffNotifier $staffNotifier,
+        private BookingSlotService $slotService,
     ) {
     }
 
@@ -98,8 +102,8 @@ class ClientBookingService
         return DB::transaction(function () use ($user, $uuid, $reason) {
             $appointment = $this->mine($user)->where('uuid', $uuid)->lockForUpdate()->firstOrFail();
 
-            if (! ClientAppointmentResource::clientCanChange($appointment)) {
-                return response()->json(['message' => 'This booking can no longer be cancelled from the app. Please contact the spa.'], 422);
+            if ($problem = ClientAppointmentResource::changeProblem($appointment, 'cancel')) {
+                return response()->json(['message' => $problem], 422);
             }
 
             $error = $this->appointmentService->performCancel($appointment, $reason ?: 'Cancelled by client');
@@ -125,13 +129,18 @@ class ClientBookingService
             $appointment = $this->mine($user)->where('uuid', $uuid)->lockForUpdate()->firstOrFail();
             $appointment->load('services.serviceVariant', 'services.therapistAssignments');
 
-            if (! ClientAppointmentResource::clientCanChange($appointment)) {
-                return response()->json(['message' => 'This booking can no longer be rescheduled from the app. Please contact the spa.'], 422);
+            if ($problem = ClientAppointmentResource::changeProblem($appointment, 'reschedule')) {
+                return response()->json(['message' => $problem], 422);
             }
 
+            // The new time has to follow the same rules as a new booking.
             $startsAt = Carbon::parse("{$payload['appointment_date']} {$payload['appointment_time']}");
-            if ($startsAt->lt(now())) {
-                return response()->json(['message' => 'Please choose a future time.'], 422);
+            $branch = $appointment->branch;
+            if ($problem = BookingPolicy::startTimeProblem(BookingPolicy::for($branch), $startsAt)) {
+                return response()->json(['message' => $problem], 422);
+            }
+            if (! MarketplaceReadiness::isBookable($branch)) {
+                return response()->json(['message' => MarketplaceReadiness::NOT_BOOKABLE], 422);
             }
 
             // Same hard gate as booking: a therapist the client asked for
@@ -155,6 +164,20 @@ class ClientBookingService
                 if (! $booked['ok']) {
                     return response()->json(['message' => "{$name} isn't available then. {$booked['reason']}"], 422);
                 }
+            }
+
+            // Hours, break, end-before-close and "is a therapist left" —
+            // the same check the reschedule screen's time chips came from.
+            $slotProblem = $this->slotService->bookingProblem(
+                $branch,
+                $payload['appointment_date'],
+                substr($payload['appointment_time'], 0, 5),
+                $duration,
+                $staffIds->isNotEmpty() ? Staff::find($staffIds->first()) : null,
+                $appointment->id,
+            );
+            if ($slotProblem) {
+                return response()->json(['message' => $slotProblem], 422);
             }
 
             $error = $this->appointmentService->performReschedule($appointment, [
@@ -210,7 +233,15 @@ class ClientBookingService
             ->orderByDesc('called_at')
             ->value('queue_number');
 
-        $therapists = max(Staff::where('spa_branch_id', $ticket->spa_branch_id)->where('role', 'therapist')->where('status', 'active')->count(), 1);
+        // Therapists actually in today (checked in, not out) share the line;
+        // before anyone has checked in, fall back to the active roster.
+        $roster = Staff::where('spa_branch_id', $ticket->spa_branch_id)->where('role', 'therapist')->where('status', 'active');
+        $inToday = \App\Models\Attendance::whereIn('staff_id', (clone $roster)->select('id'))
+            ->whereDate('attendance_date', $date)
+            ->whereNotNull('check_in_at')
+            ->whereNull('check_out_at')
+            ->count();
+        $therapists = max($inToday ?: $roster->count(), 1);
         $minutesAhead = $ahead->sum(fn (Queue $q) => $q->appointment
             ? max($this->availabilityService->estimatedDurationMinutes($q->appointment), 30)
             : 30);

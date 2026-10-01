@@ -33,6 +33,8 @@ class UserService
 
     private const OTP_EXPIRY_MINUTES = 10;
     private const RESET_TOKEN_EXPIRY_MINUTES = 10;
+    // Wrong guesses allowed per OTP / reset token before it is discarded.
+    private const MAX_OTP_ATTEMPTS = 5;
 
     // Parked here, between "password verified" and "token issued", exactly
     // like PENDING_CACHE_PREFIX in SubscriptionService parks a payment
@@ -85,7 +87,7 @@ class UserService
 
         if (! $user) {
             return response()->json([
-                'message' => 'User not found'
+                'message' => 'Invalid email or password.'
             ], 401);
         }
 
@@ -95,7 +97,7 @@ class UserService
             );
 
             return response()->json([
-                'message' => 'Invalid password'
+                'message' => 'Invalid email or password.'
             ], 401);
         }
 
@@ -391,16 +393,15 @@ class UserService
     {
         $user = $this->userRepository->findByEmail($payload['email'], $this->resolveAudience($payload['audience'] ?? null));
 
-        if (! $user) {
-            return response()->json([
-                'message' => 'No account found with this email.'
-            ], 404);
-        }
+        // Same response whether or not the account exists (or is an admin
+        // account that can't self-reset), so this endpoint can't be used to
+        // discover which emails are registered.
+        $genericResponse = response()->json([
+            'message' => 'If an account exists for this email, a one-time password has been sent.'
+        ], 200);
 
-        if ($user->role === 'system_administrator') {
-            return response()->json([
-                'message' => 'System administrator accounts cannot be reset through this process.'
-            ], 403);
+        if (! $user || $user->role === 'system_administrator') {
+            return $genericResponse;
         }
 
         if (! $user->hasVerifiedEmail()) {
@@ -416,6 +417,7 @@ class UserService
             [
                 'token' => Hash::make($otp),
                 'created_at' => now(),
+                'attempts' => 0,
             ]
         );
 
@@ -431,9 +433,7 @@ class UserService
             ], 503);
         }
 
-        return response()->json([
-            'message' => 'A one-time password has been sent to your email.'
-        ], 200);
+        return $genericResponse;
     }
 
     public function verifyForgetPasswordOtp(array $payload)
@@ -441,17 +441,13 @@ class UserService
         $user = $this->userRepository->findByEmail($payload['email'], $this->resolveAudience($payload['audience'] ?? null));
 
         if (! $user) {
-            return response()->json([
-                'message' => 'No account found with this email.'
-            ], 404);
+            return response()->json(['message' => 'Invalid code.'], 422);
         }
 
         $record = DB::table('password_reset_tokens')->where('email', $user->email)->where('audience', $user->audience)->first();
 
         if (! $record) {
-            return response()->json([
-                'message' => 'No password reset request found for this email.'
-            ], 404);
+            return response()->json(['message' => 'Invalid code.'], 422);
         }
 
         if (Carbon::parse($record->created_at)->addMinutes(self::OTP_EXPIRY_MINUTES)->isPast()) {
@@ -463,9 +459,7 @@ class UserService
         }
 
         if (! Hash::check($payload['otp'], $record->token)) {
-            return response()->json([
-                'message' => 'Invalid code.'
-            ], 422);
+            return $this->rejectOtpGuess('password_reset_tokens', $user, (int) $record->attempts);
         }
 
         $resetToken = Str::random(64);
@@ -473,6 +467,7 @@ class UserService
         DB::table('password_reset_tokens')->where('email', $user->email)->where('audience', $user->audience)->update([
             'token' => Hash::make($resetToken),
             'created_at' => now(),
+            'attempts' => 0,
         ]);
 
         return response()->json([
@@ -486,17 +481,17 @@ class UserService
         $user = $this->userRepository->findByEmail($payload['email'], $this->resolveAudience($payload['audience'] ?? null));
 
         if (! $user) {
-            return response()->json([
-                'message' => 'No account found with this email.'
-            ], 404);
+            return response()->json(['message' => 'Invalid or expired reset token.'], 422);
         }
 
         $record = DB::table('password_reset_tokens')->where('email', $user->email)->where('audience', $user->audience)->first();
 
-        if (! $record || ! Hash::check($payload['reset_token'], $record->token)) {
-            return response()->json([
-                'message' => 'Invalid or expired reset token.'
-            ], 422);
+        if (! $record) {
+            return response()->json(['message' => 'Invalid or expired reset token.'], 422);
+        }
+
+        if (! Hash::check($payload['reset_token'], $record->token)) {
+            return $this->rejectOtpGuess('password_reset_tokens', $user, (int) $record->attempts, 'Invalid or expired reset token.');
         }
 
         if (Carbon::parse($record->created_at)->addMinutes(self::RESET_TOKEN_EXPIRY_MINUTES)->isPast()) {
@@ -522,6 +517,30 @@ class UserService
         return response()->json([
             'message' => 'Password reset successfully. Please log in with your new password.'
         ], 200);
+    }
+
+    /**
+     * Records a wrong OTP / reset-token guess against its row and, once the
+     * cap is hit, deletes the row so the code can no longer be guessed;
+     * the user has to request a fresh one. Shared by the password-reset and
+     * registration OTP checks ($table is one of two fixed table names,
+     * never user input).
+     */
+    private function rejectOtpGuess(string $table, User $user, int $attempts, string $message = 'Invalid code.')
+    {
+        $query = DB::table($table)->where('email', $user->email)->where('audience', $user->audience);
+
+        if ($attempts + 1 >= self::MAX_OTP_ATTEMPTS) {
+            $query->delete();
+
+            return response()->json([
+                'message' => 'Too many incorrect attempts. Please request a new code.'
+            ], 429);
+        }
+
+        $query->increment('attempts');
+
+        return response()->json(['message' => $message], 422);
     }
 
     public function registerBusinessUser(array $payload){
@@ -582,12 +601,16 @@ class UserService
             // RegisterClientRequest only lets a duplicate email through when
             // the existing account is still unverified, so reaching here
             // means this is a resend (their first OTP expired or never
-            // arrived), not a real collision — refresh their password and
-            // issue a fresh code for the same pending account instead of
-            // creating a duplicate.
-            $user = $this->userRepository->update($existing, [
-                'password' => $payload['password'],
-            ]);
+            // arrived), not a real collision — issue a fresh code for the
+            // same pending account instead of creating a duplicate.
+            //
+            // The password is deliberately NOT overwritten: anyone could
+            // submit a victim's email here with a password of their own, and
+            // if the victim then verified the OTP mailed to them, the
+            // attacker would already know the account's password. A user who
+            // forgot what they first chose can use "forgot password" once
+            // verified.
+            $user = $existing;
         } else {
             $user = $this->userRepository->create(array_merge($payload, ['role' => 'client']));
         }
@@ -617,8 +640,8 @@ class UserService
 
         if (! $user) {
             return response()->json([
-                'message' => 'No account found with this email.'
-            ], 404);
+                'message' => 'If an account exists for this email, a new verification code has been sent.'
+            ], 200);
         }
 
         if ($user->hasVerifiedEmail()) {
@@ -656,6 +679,7 @@ class UserService
             [
                 'otp' => Hash::make($otp),
                 'created_at' => now(),
+                'attempts' => 0,
             ]
         );
 
@@ -674,9 +698,7 @@ class UserService
         $user = $this->userRepository->findByEmail($payload['email'], User::AUDIENCE_MOBILE);
 
         if (! $user) {
-            return response()->json([
-                'message' => 'No account found with this email.'
-            ], 404);
+            return response()->json(['message' => 'Invalid code.'], 422);
         }
 
         if ($user->hasVerifiedEmail()) {
@@ -688,9 +710,7 @@ class UserService
         $record = DB::table('email_verification_otps')->where('email', $user->email)->where('audience', $user->audience)->first();
 
         if (! $record) {
-            return response()->json([
-                'message' => 'No verification request found for this email.'
-            ], 404);
+            return response()->json(['message' => 'Invalid code.'], 422);
         }
 
         if (Carbon::parse($record->created_at)->addMinutes(self::OTP_EXPIRY_MINUTES)->isPast()) {
@@ -702,9 +722,7 @@ class UserService
         }
 
         if (! Hash::check($payload['otp'], $record->otp)) {
-            return response()->json([
-                'message' => 'Invalid code.'
-            ], 422);
+            return $this->rejectOtpGuess('email_verification_otps', $user, (int) $record->attempts);
         }
 
         $user->markEmailAsVerified();

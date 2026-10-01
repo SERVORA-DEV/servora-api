@@ -49,7 +49,7 @@ class AppointmentResource extends JsonResource
             'services' => AppointmentServiceResource::collection($this->whenLoaded('services')),
             'packages' => AppointmentPackageResource::collection($this->whenLoaded('packages')),
             'queue' => new QueueResource($this->whenLoaded('queue')),
-            'billing' => new BillingResource($this->whenLoaded('billing')),
+            'billing' => (new BillingResource($this->whenLoaded('billing')))->forAppointment($this->resource),
 
             'created_at' => $this->created_at,
         ];

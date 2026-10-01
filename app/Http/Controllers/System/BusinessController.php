@@ -26,6 +26,11 @@ class BusinessController extends Controller
         return $this->businessService->getBusiness($uuid);
     }
 
+    public function programs(string $uuid)
+    {
+        return $this->businessService->programs($uuid);
+    }
+
     public function suspend(SuspendReasonRequest $request, string $uuid)
     {
         return $this->businessService->suspend($request->user(), $uuid, $request->validated()['reason'], $request);

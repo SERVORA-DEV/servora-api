@@ -8,6 +8,7 @@ use App\Models\Staff;
 use App\Models\User;
 use App\Repository\SpaBusinessRepository;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 
 class DashboardService
 {
@@ -39,32 +40,45 @@ class DashboardService
             return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
-        $branches = $this->spaBusinessRepository->branchesForUser($user);
-        $branchIds = $branches->pluck('id')->all();
+        // The database is a network round trip away, so the overview is built
+        // from a handful of aggregate queries and kept for a short while —
+        // revisits, scope toggles back and forth and several staff on the
+        // same business are served from cache. An owner sees every branch;
+        // anyone else only their own, so the key carries that branch and an
+        // owner and a branch manager never share an entry.
+        $scopeKey = $user->role === 'business_owner' ? 'all' : (string) ($user->staff?->spa_branch_id ?? 'none');
+        $key = sprintf('business:dashboard:%s:%d:%s:%s', $user->role, $business->id, $scopeKey, $scope);
 
+        return Cache::remember($key, self::CACHE_TTL_SECONDS, function () use ($user, $scope) {
+            $branches = $this->spaBusinessRepository->branchesForUser($user);
+
+            return $this->buildOverview($user, $branches, $branches->pluck('id')->all(), $scope);
+        });
+    }
+
+    private const CACHE_TTL_SECONDS = 30;
+
+    private function buildOverview(User $user, $branches, array $branchIds, string $scope): array
+    {
         [$periodStart, $periodEnd, $prevStart, $prevEnd, $periodLabel] = $this->periodFor($scope);
+        $payments = $this->paymentTotals($branchIds, $periodStart, $periodEnd, $prevStart, $prevEnd);
 
-        $revenueTotal = (float) Payment::whereIn('spa_branch_id', $branchIds)
-            ->where('payment_status', 'Paid')
-            ->whereBetween('paid_at', [$periodStart, $periodEnd])
-            ->sum('amount');
-
-        $revenuePrev = (float) Payment::whereIn('spa_branch_id', $branchIds)
-            ->where('payment_status', 'Paid')
-            ->whereBetween('paid_at', [$prevStart, $prevEnd])
-            ->sum('amount');
+        $revenueTotal = $payments['current'];
+        $revenuePrev = $payments['previous'];
 
         $revenueDeltaPct = $revenuePrev > 0
             ? round((($revenueTotal - $revenuePrev) / $revenuePrev) * 100, 1)
             : ($revenueTotal > 0 ? 100.0 : 0.0);
 
+        $staff = $this->staffRoster($branchIds);
+
         return [
             'scope' => $scope,
             'branchScope' => $this->branchScope($user, $branches),
             'stats' => [
-                'activeStaff' => (clone $this->staffQuery($branchIds))->where('status', 'active')->count(),
-                'totalStaff' => (clone $this->staffQuery($branchIds))->count(),
-                'staffOnLeave' => (clone $this->staffQuery($branchIds))->where('status', 'on-leave')->count(),
+                'activeStaff' => $staff->where('status', 'active')->count(),
+                'totalStaff' => $staff->count(),
+                'staffOnLeave' => $staff->where('status', 'on-leave')->count(),
                 'revenue' => [
                     'total' => $revenueTotal,
                     'deltaPct' => $revenueDeltaPct,
@@ -72,8 +86,8 @@ class DashboardService
                 ],
                 'outstandingBilling' => $this->outstandingBilling($branchIds),
             ],
-            'revenueLast7Days' => $this->revenueLast7Days($branchIds),
-            'staffAvailability' => $this->staffAvailability($branchIds),
+            'revenueLast7Days' => $payments['last7Days'],
+            'staffAvailability' => $this->staffAvailability($staff),
 
             // No Appointment/Queue/service-catalog model exists yet — these
             // stay honestly empty rather than fabricated, and comingSoon
@@ -85,46 +99,71 @@ class DashboardService
         ];
     }
 
-    private function staffQuery(array $branchIds)
+    // Revenue for this period, the previous one and each of the last 7 days,
+    // in one query (it used to be nine).
+    private function paymentTotals(array $branchIds, $periodStart, $periodEnd, $prevStart, $prevEnd): array
     {
-        return Staff::whereIn('spa_branch_id', $branchIds);
+        $days = [];
+        $sums = [
+            'sum(case when paid_at between ? and ? then amount else 0 end) as current',
+            'sum(case when paid_at between ? and ? then amount else 0 end) as previous',
+        ];
+        $bindings = [$periodStart, $periodEnd, $prevStart, $prevEnd];
+
+        for ($i = 6; $i >= 0; $i--) {
+            $date = Carbon::now()->subDays($i);
+            $days[] = $date;
+            $sums[] = "sum(case when paid_at between ? and ? then amount else 0 end) as d{$i}";
+            $bindings[] = $date->copy()->startOfDay();
+            $bindings[] = $date->copy()->endOfDay();
+        }
+
+        $row = Payment::whereIn('spa_branch_id', $branchIds)
+            ->where('payment_status', 'Paid')
+            ->selectRaw(implode(', ', $sums), $bindings)
+            ->toBase()
+            ->first();
+
+        return [
+            'current' => (float) ($row->current ?? 0),
+            'previous' => (float) ($row->previous ?? 0),
+            'last7Days' => array_map(fn (Carbon $date, int $i) => [
+                'label' => $date->format('D'),
+                'amount' => (float) ($row->{'d' . (6 - $i)} ?? 0),
+            ], $days, array_keys($days)),
+        ];
+    }
+
+    // Every staff member at the scoped branches (one query) — the counts and
+    // the availability roster are both worked out from it.
+    private function staffRoster(array $branchIds)
+    {
+        return Staff::whereIn('spa_branch_id', $branchIds)
+            ->get(['id', 'first_name', 'last_name', 'role', 'status']);
     }
 
     private function outstandingBilling(array $branchIds): array
     {
-        $query = Billing::whereIn('spa_branch_id', $branchIds)->whereIn('status', ['Pending', 'Overdue']);
+        $row = Billing::whereIn('spa_branch_id', $branchIds)
+            ->whereIn('status', ['Pending', 'Overdue'])
+            ->selectRaw('coalesce(sum(amount), 0) as total, count(*) as count')
+            ->toBase()
+            ->first();
 
         return [
-            'total' => (float) (clone $query)->sum('amount'),
-            'count' => (clone $query)->count(),
+            'total' => (float) $row->total,
+            'count' => (int) $row->count,
         ];
-    }
-
-    private function revenueLast7Days(array $branchIds): array
-    {
-        $days = [];
-        for ($i = 6; $i >= 0; $i--) {
-            $date = Carbon::now()->subDays($i);
-            $amount = (float) Payment::whereIn('spa_branch_id', $branchIds)
-                ->where('payment_status', 'Paid')
-                ->whereDate('paid_at', $date->toDateString())
-                ->sum('amount');
-
-            $days[] = ['label' => $date->format('D'), 'amount' => $amount];
-        }
-
-        return $days;
     }
 
     // Only ever emits available/on_leave — both real, straight from
     // Staff.status. 'busy' isn't emitted since there's no appointment data
     // to derive it from; terminated/inactive staff are left off the roster
     // entirely since they're not part of an "availability" view.
-    private function staffAvailability(array $branchIds): array
+    private function staffAvailability($staff): array
     {
-        return Staff::whereIn('spa_branch_id', $branchIds)
+        return $staff
             ->whereIn('status', ['active', 'on-leave'])
-            ->get()
             ->map(fn (Staff $staff) => [
                 'id' => $staff->id,
                 'name' => trim("{$staff->first_name} {$staff->last_name}"),

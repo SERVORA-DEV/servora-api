@@ -15,7 +15,13 @@ use App\Models\BranchService;
 use App\Models\Facility;
 use App\Models\Package;
 use App\Models\ServiceVariant;
+use App\Models\SpaBranch;
+use App\Models\SpaBusinessSetting;
 use App\Models\Staff;
+use App\Http\Resources\Client\ClientAppointmentResource;
+use App\Service\Client\BookingPolicy;
+use App\Service\Client\BookingSlotService;
+use App\Service\Client\ClientBookingService;
 use App\Models\TherapistAssignment;
 use App\Models\User;
 use Carbon\Carbon;
@@ -168,6 +174,11 @@ class AppointmentService
                 return response()->json(['message' => 'spa_branch_uuid is required.'], 422);
             }
 
+            // Business Defaults → Walk-ins (or this branch's own rule).
+            if (($payload['appointment_type'] ?? null) === 'Walk-in' && ! BookingPolicy::for($branch)['walk_in_enabled']) {
+                return response()->json(['message' => "{$branch->branch_name} isn't accepting walk-ins. Turn them on in Settings → Booking & Policies, or add a reservation instead."], 422);
+            }
+
             $scheduleCheck = $this->availabilityService->branchIsOpen($branch->id, $payload['appointment_date'], $payload['appointment_time']);
             if (! $scheduleCheck['ok']) {
                 return response()->json(['message' => $scheduleCheck['reason']], 422);
@@ -243,10 +254,37 @@ class AppointmentService
     public function createClientAppointment(User $user, array $payload)
     {
         $branch = $this->spaBranchRepository->publicFindByUuid($payload['spa_branch_uuid']);
+        $policy = BookingPolicy::for($branch);
 
+        // The owner's booking rules (online booking on, lead time, how far
+        // ahead) — stored in Settings for a long time but only enforced here
+        // now; see BookingPolicy.
         $startsAt = Carbon::parse("{$payload['appointment_date']} {$payload['appointment_time']}");
-        if ($startsAt->lt(now())) {
-            return response()->json(['message' => 'Please choose a future time.'], 422);
+        if ($problem = BookingPolicy::startTimeProblem($policy, $startsAt)) {
+            return response()->json(['message' => $problem], 422);
+        }
+
+        // Only branches ready for bookings (services, hours, a therapist… —
+        // see MarketplaceReadiness) are listed; a stale link can't book one.
+        if (! MarketplaceReadiness::isBookable($branch)) {
+            return response()->json(['message' => MarketplaceReadiness::NOT_BOOKABLE], 422);
+        }
+
+        $serviceCount = count($payload['services'] ?? []) + (empty($payload['package_uuid']) ? 0 : 1);
+        $maxServices = $policy['max_services_per_booking'];
+        if ($maxServices > 0 && $serviceCount > $maxServices) {
+            return response()->json(['message' => "You can book up to {$maxServices} services at a time."], 422);
+        }
+
+        // A stale menu (a service or package removed since the app loaded
+        // it) is a message, not "this spa is no longer accepting bookings".
+        foreach ($payload['services'] ?? [] as $item) {
+            if (! ServiceVariant::where('uuid', $item['service_variant_uuid'])->exists()) {
+                return response()->json(['message' => 'One of the services you picked is no longer offered. Please go back and choose again.'], 422);
+            }
+        }
+        if (! empty($payload['package_uuid']) && ! Package::where('uuid', $payload['package_uuid'])->exists()) {
+            return response()->json(['message' => 'That package is no longer offered. Please go back and choose again.'], 422);
         }
 
         $scheduleCheck = $this->availabilityService->branchIsOpen($branch->id, $payload['appointment_date'], $payload['appointment_time']);
@@ -254,7 +292,29 @@ class AppointmentService
             return response()->json(['message' => $scheduleCheck['reason']], 422);
         }
 
+        // A retried request (slow network) must not book the same visit twice.
+        $duplicate = Appointment::where('spa_branch_id', $branch->id)
+            ->whereDate('appointment_date', $payload['appointment_date'])
+            ->where('appointment_time', 'like', substr($payload['appointment_time'], 0, 5).'%')
+            ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW])
+            ->whereHas('client', fn ($q) => $q->where('user_id', $user->id))
+            ->exists();
+        if ($duplicate) {
+            return response()->json(['message' => 'You already have a booking here at this time.'], 422);
+        }
+
+        // Branch Settings → Marketplace → Show therapist profiles off: the app
+        // offers no therapist picker, so a requested therapist (an older app,
+        // a direct call) is dropped and the front desk assigns one as usual.
+        if (! $branch->displaySettings()['show_therapist_profiles']) {
+            unset($payload['requested_therapist_uuid']);
+        }
+
         return DB::transaction(function () use ($user, $branch, $payload) {
+            // One booking at a time per branch, so two clients can't both
+            // take the last therapist for the same slot.
+            SpaBranch::whereKey($branch->id)->lockForUpdate()->first();
+
             $client = $this->clientService->findOrCreateForUser($branch->spa_business_id, $user, $payload['client']);
 
             $appointment = $this->appointmentRepository->create([
@@ -290,6 +350,24 @@ class AppointmentService
             }
 
             $warnings = [];
+
+            // Now that the services are on, the visit's real length is known:
+            // it must end before closing, stay out of the break, and leave a
+            // therapist free for it (BookingSlotService — the same check the
+            // app's time chips were built from). abort() rolls this back.
+            $appointment->load('services.serviceVariant');
+            $requestedStaff = ! empty($payload['requested_therapist_uuid'])
+                ? $this->resolveStaffForBranch($payload['requested_therapist_uuid'], $branch->id)
+                : null;
+            $slotProblem = app(BookingSlotService::class)->bookingProblem(
+                $branch,
+                $payload['appointment_date'],
+                substr($payload['appointment_time'], 0, 5),
+                max($this->availabilityService->estimatedDurationMinutes($appointment), 30),
+                $requestedStaff,
+                $appointment->id,
+            );
+            abort_if($slotProblem !== null, 422, (string) $slotProblem);
 
             if (! empty($payload['requested_therapist_uuid'])) {
                 // Unlike the front-desk path, a client's requested therapist
@@ -333,7 +411,11 @@ class AppointmentService
                 'on_new_booking',
             );
 
-            $resource = new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));
+            // The client's own view of the booking (total, duration, who's
+            // assigned) — the app builds its confirmation from this.
+            $resource = new ClientAppointmentResource(
+                Appointment::with(ClientBookingService::RELATIONS)->findOrFail($appointment->id)
+            );
             $warnings = array_values(array_unique($warnings));
 
             return $warnings ? $resource->additional(['warnings' => $warnings]) : $resource;
@@ -1177,6 +1259,42 @@ class AppointmentService
         });
     }
 
+    // Settings → Staff & Permissions → Digital check-in: with attendance
+    // tracking on, a therapist has to be timed in (and not yet out) today
+    // before a service of theirs can start. Assigning ahead of time is
+    // unaffected — this only gates the moment the service begins.
+    private function checkInProblem(Appointment $appointment, array $staffIds): ?string
+    {
+        if (! $staffIds) {
+            return null;
+        }
+
+        $appointment->loadMissing('branch.business.settings');
+        $policy = $appointment->branch?->business?->settings?->section('staff_policy')
+            ?? SpaBusinessSetting::DEFAULTS['staff_policy'];
+        if (! ($policy['attendance_tracking'] ?? true) || ! ($policy['require_check_in'] ?? true)) {
+            return null;
+        }
+
+        $present = Attendance::whereIn('staff_id', $staffIds)
+            ->where('attendance_date', now()->toDateString())
+            ->whereNotNull('check_in_at')
+            ->whereNull('check_out_at')
+            ->pluck('staff_id')
+            ->all();
+
+        $missing = Staff::whereIn('id', array_diff($staffIds, $present))->get(['first_name', 'last_name']);
+        if ($missing->isEmpty()) {
+            return null;
+        }
+
+        $names = $missing->map(fn (Staff $s) => trim("{$s->first_name} {$s->last_name}"))->implode(', ');
+
+        return $missing->count() === 1
+            ? "{$names} hasn't checked in for today yet. Check them in on Attendance before starting this service."
+            : "{$names} haven't checked in for today yet. Check them in on Attendance before starting this service.";
+    }
+
     // Shared by startService() (explicit front-desk click) and
     // completeService()'s same-therapist auto-continue below — one place
     // for what "actually starting a service" means (guards + transition),
@@ -1208,6 +1326,10 @@ class AppointmentService
                     return ['ok' => false, 'reason' => $occupied['reason']];
                 }
             }
+        }
+
+        if ($problem = $this->checkInProblem($service->appointment, $activeAssignments->pluck('staff_id')->filter()->all())) {
+            return ['ok' => false, 'reason' => $problem];
         }
 
         $now = now();

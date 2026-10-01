@@ -14,9 +14,27 @@ class SpaBusinessRepository
         return SpaBusiness::create($payload);
     }
 
+    // One lookup per request: EnsureBusinessVerified, EnsureBusinessSubscribed
+    // and the controller's service all ask for the owner's business, and the
+    // database is a network round trip away. Remembered on the current HTTP
+    // request only (never in queue workers or commands, which have no route),
+    // and only once found — a business created later in the request is still
+    // picked up.
     public function findByOwnerId(int $ownerId)
     {
-        return SpaBusiness::where('owner_id', $ownerId)->first();
+        $request = app()->bound('request') ? request() : null;
+        $memo = $request?->route() ? "servora.business_of_owner:{$ownerId}" : null;
+
+        if ($memo && $request->attributes->has($memo)) {
+            return $request->attributes->get($memo);
+        }
+
+        $business = SpaBusiness::where('owner_id', $ownerId)->first();
+        if ($memo && $business) {
+            $request->attributes->set($memo, $business);
+        }
+
+        return $business;
     }
 
     public function update(SpaBusiness $business, array $payload): SpaBusiness

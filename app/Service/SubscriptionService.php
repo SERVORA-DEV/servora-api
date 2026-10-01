@@ -2,6 +2,9 @@
 
 namespace App\Service;
 
+use App\Models\CheckoutSession;
+use App\Models\Subscription;
+use App\Models\SubscriptionPlan;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Repository\SubscriptionRepository;
@@ -56,6 +59,8 @@ class SubscriptionService
         AdminUsersRepository $adminUsersRepository,
         NotificationService $notificationService,
         private PlanChangeService $planChangeService,
+        private PlanSwitchService $planSwitchService,
+        private CheckoutService $checkoutService,
     ) {
         $this->subscriptionRepository = $subscriptionRepository;
         $this->businessRepository = $businessRepository;
@@ -93,6 +98,15 @@ class SubscriptionService
         }
 
         $this->resolvePendingPaymentForBusiness($business->id);
+        // Same self-heal for Servora's own checkout: an owner who approved in
+        // GCash / Maya but never landed back on the return page (or whose
+        // webhook couldn't reach us) is settled just by opening this page.
+        CheckoutSession::where('spa_business_id', $business->id)
+            ->where('status', 'pending')
+            ->where('purpose', '!=', 'auto_renew')
+            ->where('created_at', '>', now()->subDay())
+            ->latest()->take(3)->get()
+            ->each(fn ($session) => $this->checkoutService->refresh($session));
 
         // Billing history is independent of the current subscription's
         // status — past invoices should stay visible even once a plan has
@@ -109,6 +123,8 @@ class SubscriptionService
                 'has_subscription' => false,
                 'message' => 'No subscription found for this business yet.',
                 'billings' => $billings,
+                'payment_methods' => $this->checkoutService->methodsFor($business),
+                'billing_address' => $this->checkoutService->addressFor($business),
             ], 200);
         }
 
@@ -143,7 +159,128 @@ class SubscriptionService
             // Admin updated this subscription's plan — the owner's
             // accept/cancel prompt (null when there's nothing to answer).
             'plan_change' => $this->planChangeService->present($subscription),
+            // The owner's own downgrade waiting for the next billing, and the
+            // admin's Subscription Policy deadlines for this term.
+            'scheduled_change' => $this->planSwitchService->presentScheduled($subscription),
+            'plan_policy' => $this->planSwitchService->presentPolicy($subscription),
+            // Saved card / GCash / Maya, the billing address, and how
+            // auto-renewal stands (CheckoutService, SubscriptionRenewalService).
+            'payment_methods' => $this->checkoutService->methodsFor($business),
+            'billing_address' => $this->checkoutService->addressFor($business),
+            'auto_renew' => [
+                'enabled' => (bool) $subscription->auto_renew,
+                'payment_method' => $subscription->auto_renew ? $subscription->paymentMethod?->present() : null,
+                'failure_reason' => $subscription->renewal_failure_reason,
+                'last_attempt_at' => $subscription->last_renewal_attempt_at,
+            ],
         ], 200);
+    }
+
+    // GET /business/subscription/capacity — the plan's branch/account limits
+    // and how many are used, for the Branches and Accounts pages. Same
+    // "latest subscription" as getCurrentSubscription() above, without its
+    // payment self-heal and billing history, so it answers in a few queries.
+    public function capacity(User $user)
+    {
+        $business = $this->businessRepository->findByOwnerId($user->id);
+        if (! $business) {
+            return response()->json(['has_subscription' => false, 'plan' => null, 'branches_used' => 0, 'accounts_used' => 0]);
+        }
+
+        $subscription = $this->subscriptionRepository->findLatestForBusiness($business->id);
+        $plan = $subscription?->plan;
+
+        return response()->json([
+            'has_subscription' => (bool) $subscription,
+            'status' => $subscription?->status,
+            'plan' => $plan ? [
+                'name' => $plan->name,
+                'max_branches' => (int) $plan->max_branches,
+                'max_user_accounts' => (int) $plan->max_user_accounts,
+            ] : null,
+            'branches_used' => $business->branches()->count(),
+            'accounts_used' => $this->accountRepository->countForBusiness($business->id),
+        ]);
+    }
+
+    // ── Upgrade / downgrade (PlanSwitchService) ─────────────────────────
+
+    // GET business/subscription/change/quote — what switching to a plan
+    // would cost and when it would apply, before the owner commits.
+    public function quotePlanChange(User $user, array $payload)
+    {
+        [$subscription, $plan, $error] = $this->liveSubscriptionAndPlan($user, $payload['subscription_plan_uuid']);
+        if ($error) {
+            return $error;
+        }
+
+        return response()->json(['data' => $this->planSwitchService->quote($subscription, $plan, $payload['billing_cycle'])], 200);
+    }
+
+    // POST business/subscription/change — an upgrade starts a Xendit invoice
+    // for the difference (applied once paid, like a new subscription); a
+    // downgrade is scheduled for the next billing, nothing charged now.
+    public function changePlan(User $user, array $payload)
+    {
+        [$subscription, $plan, $error] = $this->liveSubscriptionAndPlan($user, $payload['subscription_plan_uuid']);
+        if ($error) {
+            return $error;
+        }
+
+        $quote = $this->planSwitchService->quote($subscription, $plan, $payload['billing_cycle']);
+        if (! $quote['allowed']) {
+            return response()->json(['message' => $quote['blocked_reason'], 'data' => $quote], 422);
+        }
+
+        if ($quote['type'] === 'downgrade') {
+            $this->planSwitchService->scheduleDowngrade($subscription, $plan, $payload['billing_cycle']);
+
+            return response()->json([
+                'type' => 'downgrade',
+                'message' => "You'll move to the {$plan->name} plan on {$subscription->expires_at->format('F j, Y')}. You keep your current plan until then.",
+                'scheduled_change' => $this->planSwitchService->presentScheduled($subscription->fresh()),
+                'over_limits' => $quote['over_limits'],
+            ], 200);
+        }
+
+        // Upgrades pay the difference on Servora's checkout (CheckoutService,
+        // purpose upgrade), which re-checks the same PlanSwitchService rules.
+        return response()->json([
+            'type' => 'upgrade',
+            'amount_due' => $quote['amount_due'],
+            'checkout_url' => '/business/checkout?purpose=upgrade&plan=' . $plan->uuid . '&cycle=' . ($subscription->billing_cycle ?? 'Monthly'),
+        ], 200);
+    }
+
+    // DELETE business/subscription/change — keep the current plan after all.
+    public function cancelScheduledPlanChange(User $user)
+    {
+        $business = $this->businessRepository->findByOwnerId($user->id);
+        $subscription = $business ? $this->subscriptionRepository->findActiveForBusiness($business->id) : null;
+
+        if (! $subscription || ! $subscription->scheduled_plan_id) {
+            return response()->json(['message' => 'There is no plan change scheduled.'], 422);
+        }
+
+        $this->planSwitchService->cancelScheduled($subscription);
+
+        return response()->json(['message' => "You'll stay on your current plan."], 200);
+    }
+
+    // [subscription, plan, null] or [null, null, error response].
+    private function liveSubscriptionAndPlan(User $user, string $planUuid): array
+    {
+        $business = $this->businessRepository->findByOwnerId($user->id);
+        if (! $business) {
+            return [null, null, response()->json(['message' => 'No spa business found for this account.'], 422)];
+        }
+
+        $subscription = $this->subscriptionRepository->findActiveForBusiness($business->id);
+        if (! $subscription) {
+            return [null, null, response()->json(['message' => 'You have no active plan to change. Choose a plan to subscribe.'], 422)];
+        }
+
+        return [$subscription, $this->subscriptionPlanRepository->findByUuid($planUuid), null];
     }
 
     public function respondToPlanChange(User $user, string $decision)
@@ -160,6 +297,19 @@ class SubscriptionService
     // from the Xendit webhook, so we never record a subscription that was
     // never actually paid for.
     public function createSubscription(User $user, array $payload)
+    {
+        // Paying now happens on Servora's own checkout (CheckoutService) —
+        // card, GCash or Maya, with a billing address and VAT on the invoice.
+        // The hosted-invoice flow below is kept only so an invoice already
+        // opened before this change can still be confirmed.
+        return response()->json([
+            'message' => 'Choose your plan and pay on the checkout page.',
+            'checkout_url' => '/business/checkout?purpose=subscribe&plan=' . $payload['subscription_plan_uuid'] . '&cycle=' . $payload['billing_cycle'],
+        ], 409);
+    }
+
+    // Retired hosted-invoice purchase — see createSubscription.
+    private function createHostedInvoiceSubscription(User $user, array $payload)
     {
         $business = $this->businessRepository->findByOwnerId($user->id);
 
@@ -185,6 +335,15 @@ class SubscriptionService
         }
 
         $plan = $this->subscriptionPlanRepository->findByUuid($payload['subscription_plan_uuid']);
+
+        // A smaller plan (e.g. a downgrade taking effect at renewal) can only
+        // be bought once the business fits inside its limits.
+        if ($overLimits = $this->planSwitchService->overLimits($business, $plan)) {
+            return response()->json([
+                'message' => implode(' ', $overLimits) . ' Remove branches or accounts first, or pick a bigger plan.',
+                'over_limits' => $overLimits,
+            ], 422);
+        }
 
         $billingCycle = $payload['billing_cycle'];
         $amount = $billingCycle === 'Monthly' ? $plan->monthly_price : $plan->yearly_price;
@@ -245,11 +404,33 @@ class SubscriptionService
         ?string $paymentChannel,
         float $paidAmount
     ): bool {
+        // Xendit retries and can deliver the same callback twice at once.
+        // Without a lock both deliveries could read the pending intent before
+        // either clears it, and create two subscriptions and two billings.
+        // The second delivery waits here, then finds the intent gone and
+        // no-ops below.
+        return Cache::lock('activate-subscription:' . $referenceId, 30)
+            ->block(10, fn () => $this->activateSubscriptionFromPaymentLocked(
+                $referenceId, $invoiceId, $paymentMethod, $paymentChannel, $paidAmount,
+            ));
+    }
+
+    private function activateSubscriptionFromPaymentLocked(
+        string $referenceId,
+        string $invoiceId,
+        ?string $paymentMethod,
+        ?string $paymentChannel,
+        float $paidAmount
+    ): bool {
         $intent = Cache::get(self::PENDING_CACHE_PREFIX . $referenceId);
 
         if (! $intent) {
             Log::warning('xendit.webhook.unknown_intent', ['reference_id' => $referenceId]);
             return false;
+        }
+
+        if (($intent['type'] ?? 'new') === 'upgrade') {
+            return $this->activateUpgradeFromPayment($intent, $referenceId, $invoiceId, $paymentMethod, $paymentChannel, $paidAmount);
         }
 
         $subscription = DB::transaction(function () use ($intent, $invoiceId, $paymentMethod, $paymentChannel, $paidAmount, $referenceId) {
@@ -272,6 +453,9 @@ class SubscriptionService
                 'status' => 'Paid',
                 'issued_at' => now(),
                 'paid_at' => now(),
+                // Kept on the invoice, since a later upgrade changes the
+                // subscription's plan (BillingResource::description).
+                'remarks' => (SubscriptionPlan::find($intent['subscription_plan_id'])?->name ?? 'Plan') . " Plan Subscription ({$intent['billing_cycle']})",
             ]);
 
             $this->paymentRepository->create([
@@ -302,6 +486,60 @@ class SubscriptionService
         }
 
         return true;
+    }
+
+    // A paid upgrade: the plan switches now (PlanSwitchService::applyUpgrade),
+    // and the difference is recorded as a Paid billing on the same
+    // subscription — so it counts toward "paid this term" for any further
+    // upgrade. Same idempotency as a new subscription: the intent is dropped
+    // once applied, so the webhook and the confirm fallback can't both apply.
+    private function activateUpgradeFromPayment(array $intent, string $referenceId, string $invoiceId, ?string $paymentMethod, ?string $paymentChannel, float $paidAmount): bool
+    {
+        $applied = DB::transaction(function () use ($intent, $referenceId, $invoiceId, $paymentMethod, $paymentChannel, $paidAmount) {
+            $subscription = Subscription::with('plan')->lockForUpdate()->find($intent['subscription_id']);
+            if (! $subscription) {
+                Log::warning('xendit.upgrade.subscription_missing', ['reference_id' => $referenceId]);
+
+                return null;
+            }
+
+            $billing = $this->billingRepository->create([
+                'subscription_id' => $subscription->id,
+                'spa_business_id' => $intent['spa_business_id'],
+                'billing_type' => 'Subscription',
+                'billing_number' => $this->billingRepository->generateBillingNumber(),
+                'amount' => $intent['amount'],
+                'status' => 'Paid',
+                'issued_at' => now(),
+                'paid_at' => now(),
+                'remarks' => 'Upgrade: ' . ($intent['from_plan_name'] ?? 'previous plan') . ' → ' . ($intent['to_plan_name'] ?? 'new plan'),
+            ]);
+
+            $this->paymentRepository->create([
+                'billing_id' => $billing->id,
+                'spa_business_id' => $intent['spa_business_id'],
+                'payment_method' => $this->mapChannelToPaymentMethod($paymentMethod, $paymentChannel),
+                'gateway_provider' => 'Xendit',
+                'gateway_reference' => $invoiceId,
+                'reference_number' => $referenceId,
+                'amount' => $paidAmount,
+                'payment_status' => 'Paid',
+                'paid_at' => now(),
+            ]);
+
+            $this->planSwitchService->applyUpgrade($subscription, $intent['subscription_plan_id']);
+
+            return $subscription;
+        });
+
+        Cache::forget(self::PENDING_CACHE_PREFIX . $referenceId);
+        Cache::forget(self::PENDING_BUSINESS_CACHE_PREFIX . $intent['spa_business_id']);
+
+        if ($applied?->business) {
+            $this->notificationService->paymentReceived($applied->business, $paidAmount, $this->adminUsersRepository->allAdministrators());
+        }
+
+        return (bool) $applied;
     }
 
     // Self-healing check run on every getCurrentSubscription() call: if this

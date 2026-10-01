@@ -2,6 +2,8 @@
 
 namespace App\Http\Requests\Business;
 
+use Illuminate\Validation\Rules\Password;
+
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -43,7 +45,7 @@ class AccountRequest extends FormRequest
             // client, on create or update.
             'spa_branch_uuid' => ['prohibited'],
 
-            'password' => [$isCreate ? 'required' : 'nullable', 'string', 'min:8'],
+            'password' => [$isCreate ? 'required' : 'nullable', 'string', Password::defaults()],
 
             'account_status' => ['sometimes', Rule::in(['Active', 'Inactive', 'Suspended'])],
 

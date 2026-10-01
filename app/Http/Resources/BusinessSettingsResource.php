@@ -48,6 +48,7 @@ class BusinessSettingsResource extends JsonResource
             'staff_policy' => $settings->section('staff_policy'),
             'booking_defaults' => $settings->section('booking_defaults'),
             'notifications' => $settings->section('notifications'),
+            'programs' => $settings->section('programs'),
 
             // Starting permissions for new Manager / Front Officer accounts.
             // Every key the role can have is listed, so the UI knows the set.

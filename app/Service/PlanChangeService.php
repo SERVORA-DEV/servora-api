@@ -26,7 +26,7 @@ class PlanChangeService
     // Feature flags compared in describeChanges(), with display labels.
     private const FEATURES = [
         'package_access' => 'Packages',
-        'reward_access' => 'Rewards',
+        'reward_access' => 'Customer programs',
         'review_access' => 'Reviews',
         'report_access' => 'Reports',
         'report_export' => 'Report export',

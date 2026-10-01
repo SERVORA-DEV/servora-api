@@ -107,6 +107,14 @@ class AccountRepository
             $account->update($userData);
         }
 
+        // Suspending a login, or the owner setting a new password, has to end
+        // the sessions already open — otherwise a suspended staff member who
+        // is signed in keeps working until their token happens to expire.
+        $blocked = in_array($userData['account_status'] ?? null, ['Suspended', 'Inactive'], true);
+        if ($blocked || isset($userData['password'])) {
+            $account->tokens()->delete();
+        }
+
         if (isset($payload['permission'])) {
             $allowedKeys = config('permission.' . $account->role, []);
             $filtered = Arr::only($payload['permission'], $allowedKeys);

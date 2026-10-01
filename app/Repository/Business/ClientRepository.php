@@ -12,7 +12,9 @@ class ClientRepository
     // standalone client lookup.
     public function search(int $spaBusinessId, ?string $query, int $perPage = 15, ?array $branchIds = null)
     {
-        return Client::with(['user', 'preferredTherapist'])
+        return Client::with(['user', 'preferredTherapist', 'activeMembership.program'])
+            ->withCount(['vouchers as vouchers_available_count' => fn ($q) => $q->where('status', 'available')
+                ->where(fn ($e) => $e->whereNull('expires_at')->orWhere('expires_at', '>', now()))])
             ->where('spa_business_id', $spaBusinessId)
             ->where('is_active', true)
             ->when($branchIds !== null, fn ($q) => $this->scopeToBranches($q, $branchIds))
@@ -51,7 +53,9 @@ class ClientRepository
     // clients — anyone else 404s, same as a client of another business.
     public function findByUuidForBusiness(string $uuid, int $spaBusinessId, ?array $branchIds = null)
     {
-        return Client::with(['user', 'preferredTherapist'])
+        return Client::with(['user', 'preferredTherapist', 'activeMembership.program'])
+            ->withCount(['vouchers as vouchers_available_count' => fn ($q) => $q->where('status', 'available')
+                ->where(fn ($e) => $e->whereNull('expires_at')->orWhere('expires_at', '>', now()))])
             ->where('uuid', $uuid)
             ->where('spa_business_id', $spaBusinessId)
             ->when($branchIds !== null, fn ($q) => $this->scopeToBranches($q, $branchIds))

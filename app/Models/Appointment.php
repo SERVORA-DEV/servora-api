@@ -81,7 +81,6 @@ class Appointment extends Model
         'subtotal',
         'discount_amount',
         'total_amount',
-        'reward_redemption_id',
     ];
 
     protected function casts(): array

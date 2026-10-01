@@ -1,0 +1,153 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\Billing;
+use App\Models\SpaBranch;
+use App\Models\SpaBusiness;
+use App\Models\Subscription;
+use App\Models\SubscriptionPlan;
+use App\Models\SystemSetting;
+use App\Models\User;
+use App\Service\SubscriptionService;
+use App\Service\XenditService;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Laravel\Sanctum\Sanctum;
+use Mockery;
+use Tests\TestCase;
+
+// An owner switching their live plan under the admin's Subscription Policy
+// (PlanSwitchService): an upgrade charges new price − paid this term and
+// applies at once; a downgrade waits for the next billing. Xendit is mocked.
+//
+// Postgres only (see TherapistAvailabilityTest for why):
+//   php artisan test --filter=SubscriptionPlanSwitchTest
+class SubscriptionPlanSwitchTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private User $owner;
+    private SpaBusiness $business;
+    private SubscriptionPlan $basic;
+    private SubscriptionPlan $pro;
+    private Subscription $subscription;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $xendit = Mockery::mock(XenditService::class);
+        $xendit->shouldReceive('createInvoice')->andReturnUsing(fn ($id, $amount) => [
+            'invoice_url' => "https://example.invalid/{$id}", 'status' => 'PENDING', 'amount' => $amount,
+        ]);
+        $xendit->shouldReceive('getInvoiceByExternalId')->andReturn(null);
+        $this->app->instance(XenditService::class, $xendit);
+
+        SystemSetting::current()->update(['plan_changes_enabled' => true, 'upgrade_cutoff_days' => 1, 'downgrade_notice_days' => 3]);
+
+        $this->owner = User::factory()->create(['role' => 'business_owner']);
+        $this->business = SpaBusiness::factory()->create(['owner_id' => $this->owner->id]);
+        $this->basic = $this->plan('Basic', 'Basic', 500, 1);
+        $this->pro = $this->plan('Pro', 'Premium', 1500, 5);
+
+        $this->subscription = Subscription::create([
+            'spa_business_id' => $this->business->id,
+            'subscription_plan_id' => $this->basic->id,
+            'billing_cycle' => 'Monthly',
+            'starts_at' => now()->subDays(10),
+            'expires_at' => now()->addDays(20),
+            'status' => 'Active',
+        ]);
+        Billing::create([
+            'subscription_id' => $this->subscription->id, 'spa_business_id' => $this->business->id,
+            'billing_type' => 'Subscription', 'billing_number' => 'BIL-' . uniqid(),
+            'amount' => 500, 'status' => 'Paid', 'issued_at' => now(), 'paid_at' => now(),
+        ]);
+
+        Sanctum::actingAs($this->owner);
+    }
+
+    private function plan(string $name, string $category, float $monthly, int $branches): SubscriptionPlan
+    {
+        return SubscriptionPlan::create([
+            'category' => $category, 'name' => $name, 'monthly_price' => $monthly, 'yearly_price' => $monthly * 10,
+            'billing_cycle' => 'Both', 'max_branches' => $branches, 'max_user_accounts' => 10, 'is_active' => true,
+        ]);
+    }
+
+    private function change(SubscriptionPlan $plan, string $cycle = 'Monthly', string $method = 'postJson')
+    {
+        return $this->{$method}('/api/business/subscription/change', ['subscription_plan_uuid' => $plan->uuid, 'billing_cycle' => $cycle]);
+    }
+
+    public function test_an_upgrade_costs_the_difference_and_applies_once_paid(): void
+    {
+        $this->getJson("/api/business/subscription/change/quote?subscription_plan_uuid={$this->pro->uuid}&billing_cycle=Monthly")
+            ->assertOk()
+            ->assertJsonPath('data.type', 'upgrade')
+            ->assertJsonPath('data.amount_due', 1000);
+
+        $reference = $this->change($this->pro)->assertOk()->assertJsonPath('amount_due', 1000)->json('reference_id');
+        $expires = $this->subscription->expires_at;
+
+        $this->assertTrue(app(SubscriptionService::class)->activateSubscriptionFromPayment($reference, 'inv_1', 'EWALLET', 'PH_GCASH', 1000));
+
+        $this->subscription->refresh();
+        $this->assertSame($this->pro->id, $this->subscription->subscription_plan_id);
+        $this->assertTrue($this->subscription->expires_at->equalTo($expires));
+        $this->assertEquals(1500, $this->subscription->billings()->where('status', 'Paid')->sum('amount'));
+
+        // The webhook and the confirm fallback can't both apply it.
+        $this->assertFalse(app(SubscriptionService::class)->activateSubscriptionFromPayment($reference, 'inv_1', 'EWALLET', 'PH_GCASH', 1000));
+    }
+
+    public function test_a_downgrade_waits_for_the_next_billing_and_can_be_undone(): void
+    {
+        $this->subscription->update(['subscription_plan_id' => $this->pro->id]);
+
+        $this->change($this->basic)->assertOk()->assertJsonPath('type', 'downgrade');
+        $this->subscription->refresh();
+        $this->assertSame($this->pro->id, $this->subscription->subscription_plan_id);
+        $this->assertSame($this->basic->id, $this->subscription->scheduled_plan_id);
+        $this->getJson('/api/business/subscription')->assertJsonPath('scheduled_change.plan.name', 'Basic');
+
+        $this->deleteJson('/api/business/subscription/change')->assertOk();
+        $this->assertNull($this->subscription->fresh()->scheduled_plan_id);
+    }
+
+    public function test_deadlines_before_renewal_are_enforced(): void
+    {
+        $this->subscription->update(['expires_at' => now()->addHours(12)]);
+        $this->change($this->pro)->assertStatus(422);
+
+        $this->subscription->update(['subscription_plan_id' => $this->pro->id, 'expires_at' => now()->addDays(2)]);
+        $this->change($this->basic)->assertStatus(422);
+    }
+
+    public function test_plan_changes_can_be_switched_off(): void
+    {
+        SystemSetting::current()->update(['plan_changes_enabled' => false]);
+
+        $this->change($this->pro)->assertStatus(422);
+    }
+
+    public function test_an_over_limit_downgrade_is_warned_and_its_renewal_refused(): void
+    {
+        $this->subscription->update(['subscription_plan_id' => $this->pro->id]);
+        SpaBranch::factory()->count(2)->create(['spa_business_id' => $this->business->id]);
+
+        $this->change($this->basic)->assertOk()->assertJsonCount(1, 'over_limits');
+
+        $this->subscription->update(['expires_at' => now()->subDay()]);
+        $this->postJson('/api/business/subscription', ['subscription_plan_uuid' => $this->basic->uuid, 'billing_cycle' => 'Monthly'])
+            ->assertStatus(422)
+            ->assertJsonCount(1, 'over_limits');
+    }
+
+    public function test_owners_cannot_edit_their_subscription_row(): void
+    {
+        $this->putJson("/api/business/subscription/{$this->subscription->uuid}", ['subscription_plan_id' => $this->pro->id])
+            ->assertNotFound();
+        $this->assertSame($this->basic->id, $this->subscription->fresh()->subscription_plan_id);
+    }
+}

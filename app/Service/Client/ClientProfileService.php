@@ -35,6 +35,12 @@ class ClientProfileService
             'onboarding_completed_at' => $user->onboarding_completed_at ?? now(),
         ];
 
+        // Birthday vouchers (customer programs) read this; left as-is when
+        // the app doesn't send it.
+        if (array_key_exists('birth_date', $payload)) {
+            $data['birth_date'] = $payload['birth_date'] ?: null;
+        }
+
         // The email an account signed up with is immutable here: it is the
         // login identifier and the key for password_reset_tokens and
         // email_verification_otps, and it has already been OTP-verified.
