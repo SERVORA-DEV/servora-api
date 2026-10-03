@@ -23,7 +23,7 @@ class SubscriptionPlanRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'category' => 'required|in:Basic,Premium,Enterprise',
+            'category' => 'required|in:Basic,Premium,Enterprise,Trial',
 
             'name' => 'required|string|max:100',
             'description' => 'nullable|string',

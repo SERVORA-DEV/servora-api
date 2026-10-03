@@ -31,6 +31,10 @@ class SubscriptionPlanResource extends JsonResource
             // (SubscriptionPlanService::markMostPopular) — replaces the old
             // hard-coded "Premium".
             'is_most_popular' => (bool) ($this->is_most_popular ?? false),
+
+            // The Free Trial plan, and how long a trial lasts (config/trial.php).
+            'is_trial' => $this->isTrial(),
+            'trial_days' => $this->when($this->isTrial(), fn () => (int) config('trial.days')),
         ];
     }
 }

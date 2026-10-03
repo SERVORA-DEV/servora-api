@@ -81,7 +81,6 @@ class ServiceRequest extends FormRequest
             'variants.*.uuid' => 'nullable|uuid',
             'variants.*.duration_minutes' => 'required_with:variants|integer|min:1',
             'variants.*.price' => 'required_with:variants|numeric|min:0',
-            'variants.*.loyalty_points' => 'nullable|integer|min:0',
         ];
     }
 

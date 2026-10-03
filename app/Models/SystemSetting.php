@@ -14,9 +14,10 @@ class SystemSetting extends Model
         'almost_due_repeat_every_days',
         // Subscription Policy — see PlanSwitchService.
         'plan_changes_enabled',
-        'upgrade_cutoff_days',
-        'downgrade_notice_days',
+        'plan_change_grace_days',
     ];
+
+    public const DEFAULT_PLAN_CHANGE_GRACE_DAYS = 7;
 
     protected function casts(): array
     {
@@ -27,9 +28,16 @@ class SystemSetting extends Model
             'almost_due_repeat_enabled' => 'boolean',
             'almost_due_repeat_every_days' => 'integer',
             'plan_changes_enabled' => 'boolean',
-            'upgrade_cutoff_days' => 'integer',
-            'downgrade_notice_days' => 'integer',
+            'plan_change_grace_days' => 'integer',
         ];
+    }
+
+    // Days after subscribing in which an owner may change plan. Falls back to
+    // the default when the column isn't there yet (migration not run), so the
+    // policy still works instead of treating the window as zero days.
+    public function planChangeGraceDays(): int
+    {
+        return (int) ($this->plan_change_grace_days ?? self::DEFAULT_PLAN_CHANGE_GRACE_DAYS);
     }
 
     // Singleton accessor — creates the one row with defaults on first read
@@ -43,8 +51,7 @@ class SystemSetting extends Model
             'almost_due_repeat_enabled' => true,
             'almost_due_repeat_every_days' => 1,
             'plan_changes_enabled' => true,
-            'upgrade_cutoff_days' => 1,
-            'downgrade_notice_days' => 3,
+            'plan_change_grace_days' => self::DEFAULT_PLAN_CHANGE_GRACE_DAYS,
         ]);
     }
 }

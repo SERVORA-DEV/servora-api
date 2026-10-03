@@ -49,6 +49,12 @@ class SubscriptionController extends Controller
 
     // Owner upgrading (pay the difference, applies now) or downgrading
     // (applies at the next billing) — see PlanSwitchService.
+    // Start the one free trial (config/trial.php).
+    public function startTrial(Request $request)
+    {
+        return $this->subscriptionService->startTrial($request->user());
+    }
+
     public function quotePlanChange(PlanSwitchRequest $request)
     {
         return $this->subscriptionService->quotePlanChange($request->user(), $request->validated());

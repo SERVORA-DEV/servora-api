@@ -14,15 +14,18 @@ use Carbon\Carbon;
 // An owner moving their live subscription to another plan, under the
 // admin's Subscription Policy (Settings → Subscription Policy):
 //
+//  - Grace period — for `plan_change_grace_days` after the term starts
+//    (subscribing or renewing; each term is its own subscription row) the
+//    owner may upgrade or downgrade. After that the plan is locked until its
+//    due date (expires_at), where they renew on whichever plan they like.
 //  - Upgrade — the new plan costs more than they've paid for this term.
 //    They pay the difference (new price − paid so far) and switch right
-//    away; the billing cycle and renewal date stay the same. Allowed until
-//    `upgrade_cutoff_days` before the term ends.
+//    away; the billing cycle and due date stay the same, and the grace
+//    period does not restart.
 //  - Downgrade — anything else (a cheaper/equal plan, or another billing
 //    cycle). Nothing is charged now: they keep the current plan until
-//    expires_at and their next payment is for the new one. Must be asked
-//    for at least `downgrade_notice_days` before the term ends, and can be
-//    taken back until then.
+//    expires_at and their next payment is for the new one. It can be taken
+//    back any time before the due date, grace period or not.
 //
 // There's no cancellation or refund — the system handles neither.
 class PlanSwitchService
@@ -67,7 +70,9 @@ class PlanSwitchService
             'over_limits' => $isUpgrade ? [] : $this->overLimits($subscription->business, $target),
         ];
 
-        $reason = $this->blockedReason($subscription, $target, $cycle, $isUpgrade, $settings);
+        $reason = $target->isTrial()
+            ? 'The free trial isn\'t a plan you can switch to.'
+            : $this->blockedReason($subscription, $target, $cycle, $isUpgrade, $settings);
         if ($reason) {
             $quote['allowed'] = false;
             $quote['blocked_reason'] = $reason;
@@ -189,21 +194,29 @@ class PlanSwitchService
         ];
     }
 
-    // The policy as it applies to this subscription — last day for each
-    // kind of change — for the owner's pages.
+    // The policy as it applies to this subscription — when its grace period
+    // ends and when the plan is due — for the owner's pages.
     public function presentPolicy(Subscription $subscription): array
     {
         $settings = SystemSetting::current();
-        $expires = $subscription->expires_at;
 
         return [
             'plan_changes_enabled' => $settings->plan_changes_enabled,
-            'upgrade_cutoff_days' => $settings->upgrade_cutoff_days,
-            'downgrade_notice_days' => $settings->downgrade_notice_days,
-            'upgrade_until' => $expires?->copy()->subDays($settings->upgrade_cutoff_days),
-            'downgrade_until' => $expires?->copy()->subDays($settings->downgrade_notice_days),
+            'grace_days' => $settings->planChangeGraceDays(),
+            'change_until' => $this->graceEndsAt($subscription, $settings),
+            'due_at' => $subscription->expires_at,
             'paid_this_term' => $this->paidThisTerm($subscription),
         ];
+    }
+
+    // The moment this term's grace period ends: its start plus the admin's
+    // number of days. A row with no start date falls back to when it was
+    // created.
+    public function graceEndsAt(Subscription $subscription, ?SystemSetting $settings = null): ?Carbon
+    {
+        $start = $subscription->starts_at ?? $subscription->created_at;
+
+        return $start?->copy()->addDays(($settings ?? SystemSetting::current())->planChangeGraceDays());
     }
 
     public static function price(SubscriptionPlan $plan, string $cycle): ?float
@@ -243,21 +256,18 @@ class PlanSwitchService
         }
 
         $expires = $subscription->expires_at;
-        if ($isUpgrade) {
-            $until = $expires?->copy()->subDays($settings->upgrade_cutoff_days);
-            if ($until && now()->gte($until)) {
-                return "Upgrades close {$this->days($settings->upgrade_cutoff_days)} before your renewal on {$expires->format('F j, Y')}. You can pick a new plan when you renew.";
-            }
-
-            return null;
+        if (! $isUpgrade && ! $expires) {
+            return "Your plan has no due date, so there's no next billing to change.";
         }
 
-        if (! $expires) {
-            return "Your plan has no renewal date, so there's no next billing to change.";
-        }
-        $until = $expires->copy()->subDays($settings->downgrade_notice_days);
-        if (now()->gte($until)) {
-            return "Downgrades must be requested at least {$this->days($settings->downgrade_notice_days)} before your renewal on {$expires->format('F j, Y')}. You can pick a new plan when you renew.";
+        // One grace period for upgrades and downgrades alike.
+        $until = $this->graceEndsAt($subscription, $settings);
+        if ($until && now()->gte($until)) {
+            $window = "Plan changes were open for the first {$this->days($settings->planChangeGraceDays())} after you subscribed (until {$until->format('F j, Y')}).";
+
+            return $expires
+                ? "{$window} You can choose a different plan when your plan is due on {$expires->format('F j, Y')}."
+                : $window;
         }
 
         return null;

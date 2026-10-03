@@ -37,8 +37,7 @@ class SystemSettingService
                 'almost_due_repeat_enabled' => $settings->almost_due_repeat_enabled,
                 'almost_due_repeat_every_days' => $settings->almost_due_repeat_every_days,
                 'plan_changes_enabled' => $settings->plan_changes_enabled,
-                'upgrade_cutoff_days' => $settings->upgrade_cutoff_days,
-                'downgrade_notice_days' => $settings->downgrade_notice_days,
+                'plan_change_grace_days' => $settings->planChangeGraceDays(),
             ],
         ];
     }

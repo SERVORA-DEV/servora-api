@@ -9,20 +9,19 @@ use App\Models\ClientMembership;
 use App\Models\ClientPointEntry;
 use App\Models\ClientVoucher;
 use App\Models\CustomerProgram;
-use App\Models\SpaBusinessSetting;
-use App\Models\SystemSetting;
+use App\Support\AppCache;
 use App\Models\User;
 use App\Repository\NotificationRepository;
-use App\Repository\SubscriptionRepository;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 // What a client actually gets from a business's customer programs:
 //
-//   onBillPaid()      a paid appointment bill earns loyalty points (per ₱ paid,
-//                     plus each service's/package's bonus points) and any vouchers whose condition it meets (spend in one
-//                     visit, every Nth visit, first visit)
+//   onBillPaid()      a paid appointment bill earns loyalty points (per ₱ paid
+//                     — nothing is added per service or package) and any
+//                     vouchers whose condition it meets (spend in one visit,
+//                     every Nth visit, first visit)
 //   onBillReopened()  a voided/refunded bill gives those back
 //   redeemPoints()    points → a "Redeem loyalty points" voucher
 //   issueMembershipVouchers()  the vouchers a membership bundles, per period
@@ -33,10 +32,7 @@ use Illuminate\Support\Facades\DB;
 // from what's already been issued.
 class ProgramRewardService
 {
-    public function __construct(
-        private NotificationRepository $notifications,
-        private SubscriptionRepository $subscriptions,
-    )
+    public function __construct(private NotificationRepository $notifications)
     {
     }
 
@@ -45,6 +41,7 @@ class ProgramRewardService
     // Programs run only while the owner's switch is on AND their plan
     // includes them. After a downgrade nothing is earned, redeemed or shown
     // to clients, but every balance is kept for when they upgrade again.
+    // Both answers come from AppCache (no query once warm).
     public function enabledFor(int $businessId): bool
     {
         return $this->switchedOn($businessId) && $this->planAllows($businessId);
@@ -53,16 +50,14 @@ class ProgramRewardService
     /** The owner's Customer Programs switch on its own. */
     public function switchedOn(int $businessId): bool
     {
-        $settings = SpaBusinessSetting::where('spa_business_id', $businessId)->first();
+        $settings = AppCache::businessSettings($businessId);
 
         return (bool) ($settings?->section('programs')['enabled'] ?? false);
     }
 
     public function planAllows(int $businessId): bool
     {
-        $subscription = $this->subscriptions->findActiveOrInGraceForBusiness($businessId, SystemSetting::current()->subscription_grace_period_days);
-
-        return (bool) $subscription?->plan?->reward_access;
+        return AppCache::planAllows($businessId, 'reward_access');
     }
 
     /** Active programs of a business offered at a branch. */
@@ -96,7 +91,7 @@ class ProgramRewardService
         $earned = [];
 
         $loyalty = $programs->firstWhere('type', 'loyalty');
-        if ($loyalty && ($points = $this->creditPoints($client, $billing, $loyalty, $appointment)) > 0) {
+        if ($loyalty && ($points = $this->creditPoints($client, $billing, $loyalty)) > 0) {
             $earned[] = number_format($points) . ' points';
         }
 
@@ -162,15 +157,18 @@ class ProgramRewardService
         }
     }
 
-    private function creditPoints(Client $client, Billing $billing, CustomerProgram $loyalty, Appointment $appointment): int
+    // Points come from the amount paid only (points per ₱). Services and
+    // packages used to carry their own "bonus points"; those are no longer
+    // awarded — the old values are still in service_variants.loyalty_points /
+    // packages.loyalty_points but nothing reads them.
+    private function creditPoints(Client $client, Billing $billing, CustomerProgram $loyalty): int
     {
         if (ClientPointEntry::where('billing_id', $billing->id)->where('type', 'earn')->exists()) {
             return 0;
         }
 
         $rate = (float) $loyalty->value('pointsPerPeso', 0);
-        $bonus = $this->bonusPoints($appointment);
-        $points = (int) floor((float) $billing->amount * $rate + 1e-9) + $bonus;
+        $points = (int) floor((float) $billing->amount * $rate + 1e-9);
         if ($points <= 0) {
             return 0;
         }
@@ -182,7 +180,7 @@ class ProgramRewardService
             'points' => $points,
             'remaining' => $points,
             'expires_at' => $this->addPeriod(now(), $loyalty->value('expiryMonths', '12 months')),
-            'note' => "Bill {$billing->billing_number}" . ($bonus > 0 ? ' (incl. ' . number_format($bonus) . ' bonus)' : ''),
+            'note' => "Bill {$billing->billing_number}",
         ]);
         $client->update([
             'current_points' => $client->current_points + $points,
@@ -190,29 +188,6 @@ class ProgramRewardService
         ]);
 
         return $points;
-    }
-
-    // The owner's per-service "Bonus points" (service_variants.loyalty_points,
-    // stamped on each line as points_earned when it's added) and per-package
-    // ones. A package with its own bonus replaces its services' bonuses;
-    // without one, its services' bonuses count. Cancelled lines earn nothing.
-    public function bonusPoints(Appointment $appointment): int
-    {
-        $lines = $appointment->services()->where('status', '!=', 'Cancelled')
-            ->get(['source_appointment_package_id', 'points_earned']);
-
-        $bonus = (int) $lines->whereNull('source_appointment_package_id')->sum('points_earned');
-
-        foreach ($appointment->packages()->with('package:id,loyalty_points')->get() as $bought) {
-            $live = $lines->where('source_appointment_package_id', $bought->id);
-            if ($live->isEmpty()) {
-                continue;
-            }
-            $own = $bought->package?->loyalty_points;
-            $bonus += $own !== null ? (int) $own * max(1, (int) $bought->quantity) : (int) $live->sum('points_earned');
-        }
-
-        return max(0, $bonus);
     }
 
     // ── Points → voucher ──────────────────────────────────────────────────

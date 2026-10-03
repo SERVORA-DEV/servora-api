@@ -179,6 +179,11 @@ class SubscriptionRenewalService
             return response()->json(['message' => 'Auto-renew is off. Renew manually before your plan ends.', 'auto_renew' => false]);
         }
 
+        // A free trial never charges anyone: it ends, and the owner picks a plan.
+        if ($subscription->is_trial) {
+            return response()->json(['message' => 'Auto-renew starts once you choose a plan. Your free trial is never charged.'], 422);
+        }
+
         if ($subscription->isEndingByChoice()) {
             return response()->json(['message' => 'You chose to let this plan end, so it can\'t auto-renew. Pick a plan to continue after it ends.'], 422);
         }

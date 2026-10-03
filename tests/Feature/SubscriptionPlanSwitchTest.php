@@ -17,8 +17,10 @@ use Mockery;
 use Tests\TestCase;
 
 // An owner switching their live plan under the admin's Subscription Policy
-// (PlanSwitchService): an upgrade charges new price − paid this term and
-// applies at once; a downgrade waits for the next billing. Xendit is mocked.
+// (PlanSwitchService): changes are open for a grace period after subscribing,
+// then locked until the due date. Inside it, an upgrade charges new price −
+// paid this term and applies at once; a downgrade waits for the next billing.
+// Xendit is mocked.
 //
 // Postgres only (see TherapistAvailabilityTest for why):
 //   php artisan test --filter=SubscriptionPlanSwitchTest
@@ -43,7 +45,7 @@ class SubscriptionPlanSwitchTest extends TestCase
         $xendit->shouldReceive('getInvoiceByExternalId')->andReturn(null);
         $this->app->instance(XenditService::class, $xendit);
 
-        SystemSetting::current()->update(['plan_changes_enabled' => true, 'upgrade_cutoff_days' => 1, 'downgrade_notice_days' => 3]);
+        SystemSetting::current()->update(['plan_changes_enabled' => true, 'plan_change_grace_days' => 7]);
 
         $this->owner = User::factory()->create(['role' => 'business_owner']);
         $this->business = SpaBusiness::factory()->create(['owner_id' => $this->owner->id]);
@@ -54,8 +56,9 @@ class SubscriptionPlanSwitchTest extends TestCase
             'spa_business_id' => $this->business->id,
             'subscription_plan_id' => $this->basic->id,
             'billing_cycle' => 'Monthly',
-            'starts_at' => now()->subDays(10),
-            'expires_at' => now()->addDays(20),
+            // Two days into a 30-day term: inside the 7-day grace period.
+            'starts_at' => now()->subDays(2),
+            'expires_at' => now()->addDays(28),
             'status' => 'Active',
         ]);
         Billing::create([
@@ -115,13 +118,50 @@ class SubscriptionPlanSwitchTest extends TestCase
         $this->assertNull($this->subscription->fresh()->scheduled_plan_id);
     }
 
-    public function test_deadlines_before_renewal_are_enforced(): void
+    public function test_changes_are_locked_once_the_grace_period_has_passed(): void
     {
-        $this->subscription->update(['expires_at' => now()->addHours(12)]);
-        $this->change($this->pro)->assertStatus(422);
+        $this->subscription->update(['starts_at' => now()->subDays(8), 'expires_at' => now()->addDays(22)]);
 
-        $this->subscription->update(['subscription_plan_id' => $this->pro->id, 'expires_at' => now()->addDays(2)]);
+        // Upgrade refused...
+        $this->change($this->pro)->assertStatus(422);
+        $this->assertSame($this->basic->id, $this->subscription->fresh()->subscription_plan_id);
+
+        // ...and so is a downgrade.
+        $this->subscription->update(['subscription_plan_id' => $this->pro->id]);
         $this->change($this->basic)->assertStatus(422);
+        $this->assertNull($this->subscription->fresh()->scheduled_plan_id);
+
+        $this->getJson("/api/business/subscription/change/quote?subscription_plan_uuid={$this->basic->uuid}&billing_cycle=Monthly")
+            ->assertOk()
+            ->assertJsonPath('data.allowed', false);
+    }
+
+    public function test_the_grace_period_follows_the_admin_setting(): void
+    {
+        $this->subscription->update(['starts_at' => now()->subDays(8), 'expires_at' => now()->addDays(22)]);
+        SystemSetting::current()->update(['plan_change_grace_days' => 14]);
+
+        $this->change($this->pro)->assertOk();
+    }
+
+    public function test_a_scheduled_downgrade_can_still_be_taken_back_after_the_grace_period(): void
+    {
+        $this->subscription->update(['subscription_plan_id' => $this->pro->id]);
+        $this->change($this->basic)->assertOk();
+
+        // The grace period passes with the downgrade still scheduled.
+        $this->subscription->update(['starts_at' => now()->subDays(10), 'expires_at' => now()->addDays(20)]);
+
+        $this->deleteJson('/api/business/subscription/change')->assertOk();
+        $this->assertNull($this->subscription->fresh()->scheduled_plan_id);
+    }
+
+    public function test_the_owner_is_told_when_the_grace_period_ends(): void
+    {
+        $policy = $this->getJson('/api/business/subscription')->assertOk()->json('plan_policy');
+
+        $this->assertSame(7, $policy['grace_days']);
+        $this->assertTrue($this->subscription->starts_at->copy()->addDays(7)->equalTo($policy['change_until']));
     }
 
     public function test_plan_changes_can_be_switched_off(): void

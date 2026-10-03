@@ -89,13 +89,15 @@ class SpaBranchRepository
     // 404s (not 403s) for anything that doesn't match, matching the
     // anti-enumeration posture of findByUuidForBranches below: a stranger
     // can't tell "wrong uuid" apart from "real branch, just not public yet".
-    public function publicFindByUuid(string $uuid): SpaBranch
+    // $with: the spa page needs photos; slots, reviews and favorites don't,
+    // and every relation is another round trip to the database.
+    public function publicFindByUuid(string $uuid, array $with = ['business', 'schedules', 'coverPhoto', 'photos']): SpaBranch
     {
         return SpaBranch::where('uuid', $uuid)
             ->where('verification_status', 'Verified')
             ->where('operating_status', 'Active')
             ->where('listing_visible', true)
-            ->with(['business', 'schedules', 'coverPhoto', 'photos'])
+            ->with($with)
             ->firstOrFail();
     }
 

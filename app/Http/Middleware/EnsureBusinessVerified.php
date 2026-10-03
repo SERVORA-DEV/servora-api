@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Repository\SpaBusinessRepository;
+use App\Support\AppCache;
 use App\Support\OwnerVerificationStatus;
 use Closure;
 use Illuminate\Http\Request;
@@ -32,9 +33,8 @@ class EnsureBusinessVerified
         // ownerIdentityVerification row of their own, so resolve through
         // the business's owner either way.
         // The signed-in owner is that user already — no need to load them again.
-        $owner = $user->role === 'business_owner' && $business?->owner_id === $user->id ? $user : $business?->owner;
-
-        $identityStatus = $owner?->ownerIdentityVerification?->status ?? 'Unregistered';
+        // Cached per owner (AppCache) — this runs on every owner/manager request.
+        $identityStatus = $business?->owner_id ? AppCache::identityStatus($business->owner_id) : 'Unregistered';
         $businessStatus = $business?->verification_status ?? 'Unregistered';
         $overall = OwnerVerificationStatus::compute($identityStatus, $businessStatus);
 

@@ -58,7 +58,7 @@ class ClientAccountService
 
     public function addFavorite(User $user, string $branchUuid)
     {
-        $branch = $this->branches->publicFindByUuid($branchUuid);
+        $branch = $this->branches->publicFindByUuid($branchUuid, []);
         ClientFavorite::firstOrCreate(['user_id' => $user->id, 'spa_branch_id' => $branch->id]);
 
         return response()->json(['data' => ['branch_uuid' => $branch->uuid, 'is_favorite' => true]]);

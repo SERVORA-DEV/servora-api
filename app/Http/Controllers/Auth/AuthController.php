@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\ForgetPasswordRequest;
+use App\Http\Requests\Auth\GoogleLoginRequest;
 use App\Http\Requests\Auth\TwoFactorLoginEmailCodeRequest;
 use App\Http\Requests\Auth\TwoFactorLoginVerifyRequest;
 use App\Http\Requests\Auth\ResendRegistrationOtpRequest;
@@ -30,6 +31,18 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         return $this->userService->login($request);
+    }
+
+    public function loginWithGoogle(GoogleLoginRequest $request)
+    {
+        return $this->userService->loginWithGoogle($request);
+    }
+
+    public function verificationStatus(Request $request)
+    {
+        $data = $request->validate(['status_token' => ['required', 'string', 'max:100']]);
+
+        return $this->userService->verificationStatus($data['status_token']);
     }
 
     public function verifyTwoFactorLogin(TwoFactorLoginVerifyRequest $request)

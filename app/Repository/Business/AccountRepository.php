@@ -120,6 +120,8 @@ class AccountRepository
             $filtered = Arr::only($payload['permission'], $allowedKeys);
             if ($filtered) {
                 $account->permission()->update($filtered);
+                // A query update fires no model event — drop the cached row.
+                \App\Support\AppCache::forget("user:{$account->id}:perm");
             }
         }
 

@@ -29,6 +29,8 @@ class Subscription extends Model
         'scheduled_at',
 
         'billing_cycle',
+        // Free trial (config/trial.php) — see SubscriptionService::startTrial.
+        'is_trial',
 
         'starts_at',
         'expires_at',
@@ -59,6 +61,7 @@ class Subscription extends Model
             'plan_change_responded_at' => 'datetime',
             'scheduled_at' => 'datetime',
 
+            'is_trial' => 'boolean',
             'auto_renew' => 'boolean',
             'renewal_attempts' => 'integer',
             'last_renewal_attempt_at' => 'datetime',

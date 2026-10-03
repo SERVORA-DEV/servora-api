@@ -54,6 +54,14 @@ class SubscriptionPlan extends Model
         ];
     }
 
+    // The Free Trial plan: never sold, never switched to, always free.
+    public const TRIAL_CATEGORY = 'Trial';
+
+    public function isTrial(): bool
+    {
+        return $this->category === self::TRIAL_CATEGORY;
+    }
+
     public function subscriptions()
     {
         return $this->hasMany(Subscription::class, 'subscription_plan_id');

@@ -23,8 +23,8 @@ class UpdateSystemSettingRequest extends FormRequest
             'almost_due_repeat_every_days' => 'sometimes|required|integer|min:1|max:14',
             // Subscription Policy (PlanSwitchService).
             'plan_changes_enabled' => 'sometimes|boolean',
-            'upgrade_cutoff_days' => 'sometimes|required|integer|min:0|max:30',
-            'downgrade_notice_days' => 'sometimes|required|integer|min:0|max:30',
+            // Days after subscribing in which an owner may change plan.
+            'plan_change_grace_days' => 'sometimes|required|integer|min:1|max:60',
         ];
     }
 }

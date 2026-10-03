@@ -50,12 +50,14 @@ class SharedEmailAcrossRolesTest extends TestCase
             'email' => self::EMAIL,
             'password' => 'client-pass-1',
             'password_confirmation' => 'client-pass-1',
+            'terms_accepted' => true,
         ])->assertCreated();
 
         $this->postJson('/api/business/administrator/register', [
             'email' => self::EMAIL,
             'password' => 'owner-pass-1',
             'password_confirmation' => 'owner-pass-1',
+            'terms_accepted' => true,
         ])->assertCreated();
 
         $this->assertSame(2, User::where('email', self::EMAIL)->count());
@@ -68,6 +70,7 @@ class SharedEmailAcrossRolesTest extends TestCase
             'email' => self::EMAIL,
             'password' => 'another-pass-1',
             'password_confirmation' => 'another-pass-1',
+            'terms_accepted' => true,
         ])->assertUnprocessable()->assertJsonValidationErrors('email');
 
         $this->client();
@@ -75,6 +78,7 @@ class SharedEmailAcrossRolesTest extends TestCase
             'email' => self::EMAIL,
             'password' => 'another-pass-1',
             'password_confirmation' => 'another-pass-1',
+            'terms_accepted' => true,
         ])->assertUnprocessable()->assertJsonValidationErrors('email');
     }
 

@@ -13,6 +13,31 @@ class SubscriptionPlanSeeder extends Seeder
     public function run(): void
     {
         $plans = [
+            // The free trial's own plan (config/trial.php): Basic's limits,
+            // never sold.
+            [
+                'category' => 'Trial',
+                'name' => 'Free Trial',
+                'description' => 'Try SERVORA with your own spa before you choose a plan.',
+
+                'monthly_price' => 0,
+                'yearly_price' => null,
+
+                'billing_cycle' => 'Monthly',
+
+                'max_branches' => 1,
+                'max_user_accounts' => 2,
+
+                'package_access' => false,
+                'reward_access' => false,
+                'review_access' => true,
+                'report_access' => true,
+                'report_export' => false,
+                'mobile_app_access' => false,
+
+                'is_active' => true,
+            ],
+
             [
                 'category' => 'Basic',
                 'name' => 'Basic',

@@ -33,6 +33,13 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Keeps AppCache (settings, subscriptions, permissions, public spa
+        // pages) in step with writes.
+        \App\Support\CacheInvalidation::register();
+
+        // Skips Sanctum's last_used_at UPDATE when it was touched recently.
+        \Laravel\Sanctum\Sanctum::usePersonalAccessTokenModel(\App\Models\PersonalAccessToken::class);
+
         // Site-wide default for every password rule (Password::defaults()).
         Password::defaults(fn () => Password::min(10)->mixedCase()->numbers());
 

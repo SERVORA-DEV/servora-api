@@ -42,9 +42,13 @@ class ServiceTemplateService
     // and without the adoption counts the admin listing carries.
     public function listForOwners(?string $category = null)
     {
-        return ServiceTemplateResource::collection(
+        // The same catalog for every owner — cached until a template changes
+        // (AppCache 'templates' version, bumped by CacheInvalidation).
+        $key = 'templates:owners:' . ($category ?? 'all') . ':v' . \App\Support\AppCache::version('templates');
+
+        return response()->json(\App\Support\AppCache::remember($key, 3600, fn () => ServiceTemplateResource::collection(
             $this->serviceTemplateRepository->activeForOwners($category)
-        );
+        )->response()->getData(true)));
     }
 
     public function getTemplate(string $uuid)

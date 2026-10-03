@@ -56,8 +56,12 @@ class BookingPolicy
 
     private static function resolve(SpaBranch $branch): array
     {
-        $branch->loadMissing('business.settings');
-        $defaults = $branch->business?->settings?->section('booking_defaults')
+        // The business's settings come from AppCache unless already loaded —
+        // a spa list would otherwise query them once per business.
+        $settings = $branch->relationLoaded('business') && $branch->business?->relationLoaded('settings')
+            ? $branch->business->settings
+            : \App\Support\AppCache::businessSettings($branch->spa_business_id);
+        $defaults = $settings?->section('booking_defaults')
             ?? SpaBusinessSetting::DEFAULTS['booking_defaults'];
         $overrides = (array) ($branch->booking_overrides ?? []);
 

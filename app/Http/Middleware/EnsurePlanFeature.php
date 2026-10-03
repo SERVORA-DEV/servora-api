@@ -2,9 +2,8 @@
 
 namespace App\Http\Middleware;
 
-use App\Models\SystemSetting;
+use App\Support\AppCache;
 use App\Repository\SpaBusinessRepository;
-use App\Repository\SubscriptionRepository;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -18,18 +17,13 @@ class EnsurePlanFeature
 {
     public function __construct(
         private SpaBusinessRepository $spaBusinessRepository,
-        private SubscriptionRepository $subscriptionRepository,
     ) {}
 
     public function handle(Request $request, Closure $next, string $feature): Response
     {
         $business = $request->user() ? $this->spaBusinessRepository->findForUser($request->user()) : null;
-        $graceDays = SystemSetting::current()->subscription_grace_period_days;
-        $subscription = $business
-            ? $this->subscriptionRepository->findActiveOrInGraceForBusiness($business->id, $graceDays)
-            : null;
 
-        if (! $subscription?->plan?->{$feature}) {
+        if (! $business || ! AppCache::planAllows($business->id, $feature)) {
             return response()->json([
                 'message' => 'Your plan doesn\'t include customer programs. Upgrade to use them.',
                 'code' => 'PLAN_FEATURE_REQUIRED',

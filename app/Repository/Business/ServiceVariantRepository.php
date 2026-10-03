@@ -23,7 +23,6 @@ class ServiceVariantRepository
             $attrs = [
                 'duration_minutes' => $row['duration_minutes'],
                 'price' => $row['price'],
-                'loyalty_points' => $row['loyalty_points'] ?? null,
             ];
 
             if (! empty($row['uuid']) && $existing->has($row['uuid'])) {

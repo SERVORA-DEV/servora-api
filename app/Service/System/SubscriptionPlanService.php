@@ -3,6 +3,7 @@
 namespace App\Service\System;
 
 use App\Models\Subscription;
+use App\Models\SubscriptionPlan;
 use App\Repository\System\SubscriptionPlanRepository;
 use App\Http\Resources\SubscriptionPlanResource;
 use App\Repository\AuditLogRepository;
@@ -43,10 +44,18 @@ class SubscriptionPlanService
 
     public function listOfActiveSubscriptionPlan(int $perPage = 15)
     {
-        $collection = $this->subscriptionPlanRepository->paginateActivePlan($perPage);
-        $this->markMostPopular($collection);
+        // Public pricing — the same for everyone, so cached until a plan or
+        // subscription changes (AppCache 'plans-public' version).
+        $request = request();
+        $key = sprintf('plans:public:%d:%d:%s:v%d', $perPage, (int) $request->input('page', 1),
+            md5($request->getSchemeAndHttpHost()), \App\Support\AppCache::version('plans-public'));
 
-        return SubscriptionPlanResource::collection($collection);
+        return response()->json(\App\Support\AppCache::remember($key, 600, function () use ($perPage) {
+            $collection = $this->subscriptionPlanRepository->paginateActivePlan($perPage);
+            $this->markMostPopular($collection);
+
+            return SubscriptionPlanResource::collection($collection)->response()->getData(true);
+        }));
     }
 
     // "Most Popular" is earned: the active plan of whichever tier has the
@@ -71,6 +80,7 @@ class SubscriptionPlanService
      */
     public function createSubscriptionPlan(array $payload)
     {
+        $payload = $this->withTrialPricing($payload, $payload['category']);
         $existingActive = $this->subscriptionPlanRepository->findActiveByCategory($payload['category']);
 
         if ($existingActive) {
@@ -126,7 +136,7 @@ class SubscriptionPlanService
     public function updateSubscriptionPlan(string $uuid, array $payload)
     {
         $plan = $this->subscriptionPlanRepository->findByUuid($uuid);
-        $payload = Arr::except($payload, ['category']);
+        $payload = $this->withTrialPricing(Arr::except($payload, ['category']), $plan->category);
         [$old, $new] = $this->auditLogRepository->diff($plan->only($plan->getFillable()), $payload);
         $changed = array_keys($new ?? []);
 
@@ -157,7 +167,10 @@ class SubscriptionPlanService
             ]);
         }
 
-        if ($this->subscriptionPlanRepository->hasSubscribers($plan)) {
+        // The Free Trial plan isn't something owners paid for, so there are no
+        // terms to protect: it is edited in place, and businesses on a trial
+        // get the change straight away (no version, no accept/decline prompt).
+        if ($this->subscriptionPlanRepository->hasSubscribers($plan) && ! $plan->isTrial()) {
             // An older version kept only for the owners still on it — its
             // terms are what they paid for.
             if (! $plan->is_active) {
@@ -199,9 +212,26 @@ class SubscriptionPlanService
         ]);
     }
 
+    // The Free Trial plan is never sold: whatever the form sends, it is saved
+    // as free with no yearly price.
+    private function withTrialPricing(array $payload, string $category): array
+    {
+        if ($category !== SubscriptionPlan::TRIAL_CATEGORY) {
+            return $payload;
+        }
+
+        return array_merge($payload, ['monthly_price' => 0, 'yearly_price' => null, 'billing_cycle' => 'Monthly']);
+    }
+
     public function deleteSubscriptionPlan(string $uuid)
     {
         $plan = $this->subscriptionPlanRepository->findByUuid($uuid);
+
+        if ($plan->isTrial()) {
+            return response()->json([
+                'message' => 'The Free Trial plan can\'t be deleted. Deactivate it to stop offering the free trial.',
+            ], 422);
+        }
 
         // Subscriptions, invoices and scheduled renewals point at this plan;
         // deleting it would leave them showing "Unknown plan".

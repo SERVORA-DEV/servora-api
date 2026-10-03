@@ -67,6 +67,10 @@ class User extends Authenticatable implements MustVerifyEmail
 
         'personal_email',
         'personal_email_verified_at',
+
+        // Agreement to the Terms + Privacy Policy at sign-up (config/legal.php).
+        'terms_accepted_at',
+        'terms_version',
     ];
 
     protected $hidden = [
@@ -81,6 +85,8 @@ class User extends Authenticatable implements MustVerifyEmail
     {
         return [
             'email_verified_at' => 'datetime',
+            'terms_accepted_at' => 'datetime',
+            'trial_started_at' => 'datetime',
             'phone_verified_at' => 'datetime',
             'onboarding_completed_at' => 'datetime',
             'two_factor_confirmed_at' => 'datetime',

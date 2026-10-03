@@ -122,6 +122,7 @@ class SubscriptionService
             return response()->json([
                 'has_subscription' => false,
                 'message' => 'No subscription found for this business yet.',
+                'trial' => $this->presentTrial($user, $business->id, null),
                 'billings' => $billings,
                 'payment_methods' => $this->checkoutService->methodsFor($business),
                 'billing_address' => $this->checkoutService->addressFor($business),
@@ -135,6 +136,7 @@ class SubscriptionService
         // No grace for a subscription the owner chose to let end (declined
         // an updated plan — see PlanChangeService).
         $isLapsed = $subscription->status === 'Active'
+            && ! $subscription->is_trial
             && ! $subscription->isEndingByChoice()
             && $subscription->expires_at !== null
             && $subscription->expires_at->isPast();
@@ -147,6 +149,7 @@ class SubscriptionService
         return response()->json([
             'has_subscription' => true,
             'subscription' => new SubscriptionResource($subscription),
+            'trial' => $this->presentTrial($user, $business->id, $subscription),
             'billings' => $billings,
             // Current usage against the plan's limits — counted live off
             // branches/accounts rather than stored on the subscription row,
@@ -174,6 +177,112 @@ class SubscriptionService
                 'last_attempt_at' => $subscription->last_renewal_attempt_at,
             ],
         ], 200);
+    }
+
+    // ── Free trial (config/trial.php) ───────────────────────────────────
+
+    // What the Plans page needs to offer, or show, the trial.
+    private function presentTrial(User $owner, int $businessId, ?Subscription $latest): array
+    {
+        $active = (bool) ($latest?->is_trial && $latest->status === 'Active' && $latest->expires_at?->isFuture());
+        $plan = $this->trialPlan();
+
+        return [
+            // Only an owner who has never taken the trial, for a business that
+            // has never had a subscription of any kind.
+            'available' => config('trial.enabled') && $plan !== null && $latest === null
+                && ! $this->ownerHasUsedTrial($owner)
+                && ! $this->subscriptionRepository->hasAnyForBusiness($businessId),
+            'days' => (int) config('trial.days'),
+            'plan_name' => $plan?->name,
+            'active' => $active,
+            'ends_at' => $active ? $latest->expires_at : null,
+            'used' => (bool) $latest?->is_trial || $this->ownerHasUsedTrial($owner) || $this->subscriptionRepository->hasUsedTrial($businessId),
+        ];
+    }
+
+    // One free trial per owner account, ever. The stamp on the account is the
+    // rule; the lookup across every business the owner has had (removed ones
+    // included) covers trials taken before the stamp existed.
+    private function ownerHasUsedTrial(User $owner): bool
+    {
+        if ($owner->trial_started_at !== null) {
+            return true;
+        }
+
+        return Subscription::withTrashed()
+            ->where('is_trial', true)
+            ->whereIn('spa_business_id', \App\Models\SpaBusiness::withTrashed()->where('owner_id', $owner->id)->select('id'))
+            ->exists();
+    }
+
+    private function trialPlan(): ?SubscriptionPlan
+    {
+        return SubscriptionPlan::where('category', config('trial.plan_category'))
+            ->where('is_active', true)
+            ->latest()
+            ->first();
+    }
+
+    // POST business/subscription/trial — starts the one free trial. Nothing
+    // is charged and no invoice is created; the row is an Active subscription
+    // flagged is_trial, so every plan gate treats it like the real thing
+    // until it ends.
+    public function startTrial(User $user)
+    {
+        if (! config('trial.enabled')) {
+            return response()->json(['message' => 'The free trial is not available right now.'], 422);
+        }
+
+        $business = $this->businessRepository->findByOwnerId($user->id);
+        if (! $business) {
+            return response()->json(['message' => 'No spa business found for this account.'], 422);
+        }
+
+        // These routes sit outside verified.business (checkout must stay
+        // reachable), so the trial checks it itself.
+        if ($business->verification_status !== 'Verified') {
+            return response()->json(['message' => 'Your business needs to be verified before the free trial can start.'], 422);
+        }
+
+        $plan = $this->trialPlan();
+        if (! $plan) {
+            return response()->json(['message' => 'The free trial is not available right now.'], 422);
+        }
+
+        // Two clicks (or two tabs) must not create two trials — locked per
+        // owner, since the limit is one trial per owner account.
+        return Cache::store('durable')->lock('start-trial:owner:' . $user->id, 15)->block(5, function () use ($user, $business, $plan) {
+            $user->refresh();
+            if ($this->ownerHasUsedTrial($user)) {
+                return response()->json(['message' => 'You have already used your free trial. Choose a plan to continue.'], 422);
+            }
+            if ($this->subscriptionRepository->hasAnyForBusiness($business->id)) {
+                return response()->json(['message' => 'The free trial is only for businesses that have not had a plan yet. Choose a plan to continue.'], 422);
+            }
+
+            $days = max(1, (int) config('trial.days'));
+            // The trial and the stamp that says it was used go in together.
+            $subscription = DB::transaction(function () use ($user, $business, $plan, $days) {
+                $user->forceFill(['trial_started_at' => now()])->save();
+
+                return $this->subscriptionRepository->create([
+                    'spa_business_id' => $business->id,
+                    'subscription_plan_id' => $plan->id,
+                    'billing_cycle' => null,
+                    'is_trial' => true,
+                    'starts_at' => now(),
+                    'expires_at' => now()->addDays($days),
+                    'auto_renew' => false,
+                    'status' => 'Active',
+                ]);
+            });
+
+            return response()->json([
+                'message' => "Your {$days}-day free trial of the {$plan->name} plan has started.",
+                'trial' => $this->presentTrial($user, $business->id, $subscription),
+            ], 201);
+        });
     }
 
     // GET /business/subscription/capacity — the plan's branch/account limits
@@ -275,7 +384,7 @@ class SubscriptionService
             return [null, null, response()->json(['message' => 'No spa business found for this account.'], 422)];
         }
 
-        $subscription = $this->subscriptionRepository->findActiveForBusiness($business->id);
+        $subscription = $this->subscriptionRepository->findPaidActiveForBusiness($business->id);
         if (! $subscription) {
             return [null, null, response()->json(['message' => 'You have no active plan to change. Choose a plan to subscribe.'], 422)];
         }
@@ -361,14 +470,14 @@ class SubscriptionService
         // customer who pays after the cache entry expires has their PAID
         // webhook arrive to find no intent to activate, and it silently
         // no-ops (see activateSubscriptionFromPayment's unknown_intent log).
-        Cache::put(self::PENDING_CACHE_PREFIX . $referenceId, [
+        Cache::store('durable')->put(self::PENDING_CACHE_PREFIX . $referenceId, [
             'spa_business_id' => $business->id,
             'subscription_plan_id' => $plan->id,
             'billing_cycle' => $billingCycle,
             'amount' => $amount,
         ], now()->addDay());
 
-        Cache::put(self::PENDING_BUSINESS_CACHE_PREFIX . $business->id, $referenceId, now()->addDay());
+        Cache::store('durable')->put(self::PENDING_BUSINESS_CACHE_PREFIX . $business->id, $referenceId, now()->addDay());
 
         $frontendUrl = config('app.frontend_url');
 
@@ -409,7 +518,7 @@ class SubscriptionService
         // either clears it, and create two subscriptions and two billings.
         // The second delivery waits here, then finds the intent gone and
         // no-ops below.
-        return Cache::lock('activate-subscription:' . $referenceId, 30)
+        return Cache::store('durable')->lock('activate-subscription:' . $referenceId, 30)
             ->block(10, fn () => $this->activateSubscriptionFromPaymentLocked(
                 $referenceId, $invoiceId, $paymentMethod, $paymentChannel, $paidAmount,
             ));
@@ -422,7 +531,7 @@ class SubscriptionService
         ?string $paymentChannel,
         float $paidAmount
     ): bool {
-        $intent = Cache::get(self::PENDING_CACHE_PREFIX . $referenceId);
+        $intent = Cache::store('durable')->get(self::PENDING_CACHE_PREFIX . $referenceId);
 
         if (! $intent) {
             Log::warning('xendit.webhook.unknown_intent', ['reference_id' => $referenceId]);
@@ -473,8 +582,8 @@ class SubscriptionService
             return $subscription;
         });
 
-        Cache::forget(self::PENDING_CACHE_PREFIX . $referenceId);
-        Cache::forget(self::PENDING_BUSINESS_CACHE_PREFIX . $intent['spa_business_id']);
+        Cache::store('durable')->forget(self::PENDING_CACHE_PREFIX . $referenceId);
+        Cache::store('durable')->forget(self::PENDING_BUSINESS_CACHE_PREFIX . $intent['spa_business_id']);
 
         // Admin-facing notifications for a real, webhook-confirmed payment —
         // one subscription-started fact and one payment-received fact.
@@ -532,8 +641,8 @@ class SubscriptionService
             return $subscription;
         });
 
-        Cache::forget(self::PENDING_CACHE_PREFIX . $referenceId);
-        Cache::forget(self::PENDING_BUSINESS_CACHE_PREFIX . $intent['spa_business_id']);
+        Cache::store('durable')->forget(self::PENDING_CACHE_PREFIX . $referenceId);
+        Cache::store('durable')->forget(self::PENDING_BUSINESS_CACHE_PREFIX . $intent['spa_business_id']);
 
         if ($applied?->business) {
             $this->notificationService->paymentReceived($applied->business, $paidAmount, $this->adminUsersRepository->allAdministrators());
@@ -551,16 +660,16 @@ class SubscriptionService
     // call never fired (lost sessionStorage, closed tab, etc).
     private function resolvePendingPaymentForBusiness(int $businessId): void
     {
-        $referenceId = Cache::get(self::PENDING_BUSINESS_CACHE_PREFIX . $businessId);
+        $referenceId = Cache::store('durable')->get(self::PENDING_BUSINESS_CACHE_PREFIX . $businessId);
 
         if (! $referenceId) {
             return;
         }
 
-        $intent = Cache::get(self::PENDING_CACHE_PREFIX . $referenceId);
+        $intent = Cache::store('durable')->get(self::PENDING_CACHE_PREFIX . $referenceId);
 
         if (! $intent) {
-            Cache::forget(self::PENDING_BUSINESS_CACHE_PREFIX . $businessId);
+            Cache::store('durable')->forget(self::PENDING_BUSINESS_CACHE_PREFIX . $businessId);
             return;
         }
 
@@ -596,7 +705,7 @@ class SubscriptionService
     {
         Log::info('xendit.confirm.requested', ['reference_id' => $referenceId]);
 
-        $intent = Cache::get(self::PENDING_CACHE_PREFIX . $referenceId);
+        $intent = Cache::store('durable')->get(self::PENDING_CACHE_PREFIX . $referenceId);
 
         if (! $intent) {
             $business = $this->businessRepository->findByOwnerId($user->id);

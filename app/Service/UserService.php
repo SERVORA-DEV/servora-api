@@ -17,6 +17,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Http\JsonResponse;
@@ -40,6 +41,12 @@ class UserService
     // like PENDING_CACHE_PREFIX in SubscriptionService parks a payment
     // intent between "checkout started" and "webhook confirms it" — nothing
     // is issued until the second factor is verified.
+    // Lets the sign-up page notice the moment its own verification link is
+    // clicked (possibly on another device): registration hands back a random
+    // token, and only that token can ask "is this account verified yet?".
+    private const VERIFICATION_WATCH_PREFIX = 'verification_watch:';
+    private const VERIFICATION_WATCH_HOURS = 24;
+
     private const TWO_FACTOR_CHALLENGE_PREFIX = 'two_factor_challenge:';
     private const TWO_FACTOR_CHALLENGE_EXPIRY_MINUTES = 10;
 
@@ -149,26 +156,160 @@ class UserService
         }
 
         if ($user->two_factor_confirmed_at !== null) {
-            $challengeToken = Str::random(64);
-
-            Cache::put(
-                self::TWO_FACTOR_CHALLENGE_PREFIX . $challengeToken,
-                ['user_id' => $user->id, 'attempts' => 0],
-                now()->addMinutes(self::TWO_FACTOR_CHALLENGE_EXPIRY_MINUTES),
-            );
-
-            return response()->json([
-                'requires_two_factor' => true,
-                'challenge_token' => $challengeToken,
-                'email' => $user->email,
-                'personal_email_available' => $user->personal_email_verified_at !== null,
-            ], 200);
+            return $this->twoFactorChallengeResponse($user);
         }
 
         return response()->json([
             'user' => new UserResource($user),
             'token' => $this->issueLoginToken($user, $payload, 'password'),
         ], 200);
+    }
+
+    // Parks a 2FA challenge instead of issuing a token — shared by password
+    // login above and Google sign-in below, so neither can skip the second
+    // factor on an account that has it enabled.
+    private function twoFactorChallengeResponse(User $user): JsonResponse
+    {
+        $challengeToken = Str::random(64);
+
+        Cache::store('durable')->put(
+            self::TWO_FACTOR_CHALLENGE_PREFIX . $challengeToken,
+            ['user_id' => $user->id, 'attempts' => 0],
+            now()->addMinutes(self::TWO_FACTOR_CHALLENGE_EXPIRY_MINUTES),
+        );
+
+        return response()->json([
+            'requires_two_factor' => true,
+            'challenge_token' => $challengeToken,
+            'email' => $user->email,
+            'personal_email_available' => $user->personal_email_verified_at !== null,
+        ], 200);
+    }
+
+    /**
+     * "Continue with Google" on the owner sign-in / sign-up pages. The web app
+     * sends the ID token Google gave the browser; nothing in it is trusted
+     * until Google confirms it was issued for our client ID.
+     *
+     * Owners only: a new email becomes a business_owner account (already
+     * verified — Google vouches for the address); an existing owner is signed
+     * in. Administrators and staff keep password sign-in.
+     */
+    public function loginWithGoogle(Request $request)
+    {
+        $clientId = config('services.google.client_id');
+
+        if (empty($clientId)) {
+            return response()->json(['message' => 'Google sign-in is not available.'], 503);
+        }
+
+        $claims = $this->verifyGoogleIdToken((string) $request->input('credential'), $clientId);
+
+        if ($claims === null) {
+            return response()->json([
+                'message' => 'We could not verify your Google account. Please try again.',
+            ], 401);
+        }
+
+        $user = $this->userRepository->findByEmail($claims['email'], User::AUDIENCE_WEB);
+
+        if (! $user) {
+            // A new account needs the Terms agreed to, which only the sign-up
+            // page collects. From the sign-in page there's nothing to sign in
+            // to yet, so say so instead of quietly creating one.
+            if (! $request->boolean('terms_accepted')) {
+                return response()->json([
+                    'message' => 'There is no Servora account for this Google email yet. Create one from the sign-up page.',
+                    'needs_signup' => true,
+                ], 404);
+            }
+
+            // The password is never shown or used: the owner signs in with
+            // Google, and can set a real one through "Forgot password".
+            $user = $this->createBusinessOwner([
+                'email' => $claims['email'],
+                'password' => Str::random(40),
+            ] + $this->termsStamp());
+
+            $user->markEmailAsVerified();
+            $user->account_status = 'Active';
+            $user->save();
+
+            return response()->json([
+                'user' => new UserResource($user->fresh()),
+                'token' => $this->issueLoginToken($user, $request, 'google'),
+            ], 201);
+        }
+
+        if ($user->role !== 'business_owner') {
+            return response()->json([
+                'message' => 'Google sign-in is for business owner accounts. Please sign in with your email and password.',
+            ], 403);
+        }
+
+        if (in_array($user->account_status, ['Inactive', 'Suspended'], true)) {
+            return response()->json([
+                'message' => 'This account has been deactivated. Contact an administrator to reactivate it.'
+            ], 403);
+        }
+
+        if (! $user->hasVerifiedEmail()) {
+            // Someone registered this email with a password but never proved
+            // they own it. Google just proved who does, so the unverified
+            // password is thrown away — otherwise whoever typed it could
+            // still sign in to the real owner's account.
+            $user->password = Str::random(40);
+            $user->markEmailAsVerified();
+            $user->account_status = 'Active';
+            $user->save();
+        }
+
+        if ($user->two_factor_confirmed_at !== null) {
+            return $this->twoFactorChallengeResponse($user);
+        }
+
+        return response()->json([
+            'user' => new UserResource($user),
+            'token' => $this->issueLoginToken($user, $request, 'google'),
+        ], 200);
+    }
+
+    // Asks Google whether the ID token is genuine, then checks it was issued
+    // for this app, by Google, for a Google-verified email, and hasn't
+    // expired. Returns the claims, or null on any doubt.
+    private function verifyGoogleIdToken(string $idToken, string $clientId): ?array
+    {
+        if ($idToken === '') {
+            return null;
+        }
+
+        try {
+            $response = Http::timeout(8)->get('https://oauth2.googleapis.com/tokeninfo', [
+                'id_token' => $idToken,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Google token verification request failed', ['exception' => $e->getMessage()]);
+
+            return null;
+        }
+
+        if (! $response->ok()) {
+            return null;
+        }
+
+        $claims = $response->json();
+
+        if (! is_array($claims)
+            || ($claims['aud'] ?? null) !== $clientId
+            || ! in_array($claims['iss'] ?? null, ['accounts.google.com', 'https://accounts.google.com'], true)
+            || ! in_array($claims['email_verified'] ?? null, [true, 'true'], true)
+            || empty($claims['email'])
+            || (int) ($claims['exp'] ?? 0) < time()
+        ) {
+            return null;
+        }
+
+        return $claims;
     }
 
     // The one place a login session is created, for both a plain password
@@ -208,7 +349,7 @@ class UserService
     public function verifyTwoFactorLogin(object $payload)
     {
         $key = self::TWO_FACTOR_CHALLENGE_PREFIX . $payload->challenge_token;
-        $challenge = Cache::get($key);
+        $challenge = Cache::store('durable')->get($key);
 
         if (! $challenge) {
             return response()->json([
@@ -231,11 +372,11 @@ class UserService
             $timestamp = $this->google2fa->verifyKeyNewer(
                 $user->two_factor_secret,
                 $code,
-                (int) Cache::get($lastKey, 0),
+                (int) Cache::store('durable')->get($lastKey, 0),
             );
 
             if ($timestamp !== false) {
-                Cache::put($lastKey, $timestamp, now()->addMinutes(5));
+                Cache::store('durable')->put($lastKey, $timestamp, now()->addMinutes(5));
                 $method = 'authenticator';
             }
         }
@@ -262,7 +403,7 @@ class UserService
             $challenge['attempts'] = ($challenge['attempts'] ?? 0) + 1;
 
             if ($challenge['attempts'] >= self::TWO_FACTOR_MAX_ATTEMPTS) {
-                Cache::forget($key);
+                Cache::store('durable')->forget($key);
 
                 return response()->json([
                     'message' => 'Too many incorrect codes. Please sign in again.',
@@ -271,7 +412,7 @@ class UserService
             }
 
             // Cache::put resets the TTL — fine, since attempts are capped.
-            Cache::put($key, $challenge, now()->addMinutes(self::TWO_FACTOR_CHALLENGE_EXPIRY_MINUTES));
+            Cache::store('durable')->put($key, $challenge, now()->addMinutes(self::TWO_FACTOR_CHALLENGE_EXPIRY_MINUTES));
 
             $remaining = self::TWO_FACTOR_MAX_ATTEMPTS - $challenge['attempts'];
 
@@ -281,7 +422,7 @@ class UserService
             ], 422);
         }
 
-        Cache::forget($key);
+        Cache::store('durable')->forget($key);
 
         $response = [
             'user' => new UserResource($user),
@@ -305,7 +446,7 @@ class UserService
     public function requestTwoFactorEmailCode(object $payload)
     {
         $key = self::TWO_FACTOR_CHALLENGE_PREFIX . $payload->challenge_token;
-        $challenge = Cache::get($key);
+        $challenge = Cache::store('durable')->get($key);
 
         if (! $challenge) {
             return response()->json([
@@ -339,7 +480,7 @@ class UserService
         $challenge['email_otp_hash'] = Hash::make($otp);
         $challenge['email_otp_created_at'] = now()->toISOString();
 
-        Cache::put($key, $challenge, now()->addMinutes(self::TWO_FACTOR_CHALLENGE_EXPIRY_MINUTES));
+        Cache::store('durable')->put($key, $challenge, now()->addMinutes(self::TWO_FACTOR_CHALLENGE_EXPIRY_MINUTES));
 
         $sent = $this->deliver(
             $user->personal_email,
@@ -543,11 +684,13 @@ class UserService
         return response()->json(['message' => $message], 422);
     }
 
-    public function registerBusinessUser(array $payload){
-
+    // Creates the owner account and its permission row together — shared by
+    // email registration below and first-time Google sign-in.
+    private function createBusinessOwner(array $payload): User
+    {
         $payload['role'] = 'business_owner';
 
-        $user = DB::transaction(function () use ($payload) {
+        return DB::transaction(function () use ($payload) {
             $user = $this->userRepository->create($payload);
 
             // Owners get full authority over their own business by default —
@@ -558,6 +701,18 @@ class UserService
 
             return $user;
         });
+    }
+
+    // When and which version of the Terms + Privacy Policy a new account
+    // agreed to. The request classes have already required the agreement.
+    private function termsStamp(): array
+    {
+        return ['terms_accepted_at' => now(), 'terms_version' => config('legal.version')];
+    }
+
+    public function registerBusinessUser(array $payload){
+
+        $user = $this->createBusinessOwner($payload + $this->termsStamp());
 
         // Local dev used to auto-verify owner accounts to skip email delivery,
         // which meant the verification link was never exercised anywhere.
@@ -587,14 +742,48 @@ class UserService
             // success screen on this. Always false now that nothing
             // auto-verifies; kept so that contract doesn't change.
             'verified' => false,
+            // For POST /auth/verification-status — see verificationStatus().
+            'status_token' => $this->issueVerificationWatchToken($user),
             'message' => $sent
                 ? 'Registration successful. Please check your email to verify your account.'
                 : 'Registration successful, but we could not send your verification email. Please use the resend option to try again.',
         ], 201);
     }
 
+    private function issueVerificationWatchToken(User $user): string
+    {
+        $token = Str::random(48);
+
+        Cache::store('durable')->put(
+            self::VERIFICATION_WATCH_PREFIX . $token,
+            $user->id,
+            now()->addHours(self::VERIFICATION_WATCH_HOURS),
+        );
+
+        return $token;
+    }
+
+    // Polled by the sign-up page while it shows "check your inbox". Answers
+    // only for the token registration issued — never by email — so it can't
+    // be used to find out which addresses have accounts. An unknown or
+    // expired token just reads as "not verified".
+    public function verificationStatus(string $token)
+    {
+        $key = self::VERIFICATION_WATCH_PREFIX . $token;
+        $userId = Cache::store('durable')->get($key);
+        $user = $userId ? User::find($userId) : null;
+        $verified = (bool) $user?->hasVerifiedEmail();
+
+        if ($verified) {
+            Cache::store('durable')->forget($key);
+        }
+
+        return response()->json(['verified' => $verified], 200);
+    }
+
     public function registerClientUser(array $payload)
     {
+        // terms_accepted was only there to be validated; never a column.
         $existing = $this->userRepository->findByEmail($payload['email'], User::AUDIENCE_MOBILE);
 
         if ($existing) {
@@ -611,8 +800,10 @@ class UserService
             // forgot what they first chose can use "forgot password" once
             // verified.
             $user = $existing;
+            $user->update($this->termsStamp());
         } else {
-            $user = $this->userRepository->create(array_merge($payload, ['role' => 'client']));
+            unset($payload['terms_accepted']);
+            $user = $this->userRepository->create(array_merge($payload, ['role' => 'client'], $this->termsStamp()));
         }
 
         // Client (mobile) registration always requires OTP email

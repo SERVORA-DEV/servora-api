@@ -16,8 +16,6 @@ use App\Repository\Business\ClientRepository;
 use App\Repository\BillingRepository;
 use App\Repository\PaymentRepository;
 use App\Repository\SpaBusinessRepository;
-use App\Repository\SubscriptionRepository;
-use App\Models\SystemSetting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
@@ -40,7 +38,6 @@ class CustomerProgramService
         private BillingService $billingService,
         private ProgramRewardService $rewards,
         private BusinessSettingsService $settingsService,
-        private SubscriptionRepository $subscriptionRepository,
     ) {
     }
 
@@ -62,7 +59,7 @@ class CustomerProgramService
             ->orderBy('created_at')
             ->get();
 
-        $subscription = $this->subscriptionRepository->findActiveOrInGraceForBusiness($business->id, SystemSetting::current()->subscription_grace_period_days);
+        $subscription = \App\Support\AppCache::activeSubscription($business->id);
 
         return response()->json(['data' => [
             'enabled' => $this->rewards->switchedOn($business->id),
@@ -70,8 +67,9 @@ class CustomerProgramService
             // gated by plan.feature:reward_access).
             'plan_allows' => (bool) $subscription?->plan?->reward_access,
             'programs' => $programs->map(fn ($p) => (new CustomerProgramResource($p))->onlyBranches($branchIds)->resolve())->values(),
-            // Services whose options earn bonus points (Loyalty tab).
-            'bonus_services' => $isOwner ? $this->bonusServices($business->id, null, 20) : [],
+            // Per-service bonus points were removed (points come from the
+            // amount paid only). Key kept so older clients don't break.
+            'bonus_services' => [],
         ]]);
     }
 
@@ -169,6 +167,8 @@ class CustomerProgramService
         $offered
             ? $program->branches()->syncWithoutDetaching([$branch->id])
             : $program->branches()->detach($branch->id);
+        // A pivot change fires no model event: the spa page shows programs.
+        \App\Support\AppCache::bumpBusiness($business->id);
 
         return (new CustomerProgramResource($program->load(['branches', 'items'])))
             ->onlyBranches($user->role === 'business_owner' ? null : $this->branchIds($user));
@@ -436,7 +436,9 @@ class CustomerProgramService
                 'expiry' => $loyalty->value('expiryMonths', '12 months'),
                 'expiring_points' => (int) ($expiring?->points ?? 0),
                 'expiring_at' => $expiring?->first_at ? \Illuminate\Support\Carbon::parse($expiring->first_at)->toIso8601String() : null,
-                'bonus' => $this->bonusServices($client->spa_business_id, $branchId),
+                // Always empty now — see bonus_services above. The mobile
+                // app hides its "bonus" list when this is empty.
+                'bonus' => [],
             ] : null,
             'wallet' => $wallet->filter(fn ($v) => $v->program)->map(fn ($v) => [
                 'uuid' => $v->uuid,
@@ -493,28 +495,6 @@ class CustomerProgramService
         };
     }
 
-    // Services that earn bonus points on top of the per-₱ points (the
-    // owner's per-option "Bonus points"), best first — at one branch when
-    // given. One row per service with its highest option's bonus.
-    private function bonusServices(int $businessId, ?int $branchId, int $limit = 6): array
-    {
-        return \App\Models\ServiceVariant::query()
-            ->join('services', 'services.id', '=', 'service_variants.service_id')
-            ->where('services.spa_business_id', $businessId)
-            ->where('services.is_active', true)
-            ->whereNull('services.deleted_at')
-            ->where('service_variants.loyalty_points', '>', 0)
-            ->when($branchId, fn ($q) => $q->whereHas('branchServices', fn ($b) => $b->where('spa_branch_id', $branchId)->where('is_available', true)))
-            ->groupBy('services.id', 'services.name')
-            ->selectRaw('services.name AS name, MAX(service_variants.loyalty_points) AS points')
-            ->orderByDesc('points')
-            ->orderBy('services.name')
-            ->limit($limit)
-            ->get()
-            ->map(fn ($r) => ['name' => $r->name, 'points' => (int) $r->points])
-            ->all();
-    }
-
     public function dealText(CustomerProgram $p): string
     {
         $deal = $p->value('dealType', '₱ off');
@@ -542,7 +522,7 @@ class CustomerProgramService
     // does the plan allow it, what runs, and how much it's used. Read-only.
     public function adminOverview(SpaBusiness $business): array
     {
-        $subscription = $this->subscriptionRepository->findActiveOrInGraceForBusiness($business->id, SystemSetting::current()->subscription_grace_period_days);
+        $subscription = \App\Support\AppCache::activeSubscription($business->id);
         $branchCount = $business->branches()->count();
         $clientIds = Client::where('spa_business_id', $business->id)->select('id');
 

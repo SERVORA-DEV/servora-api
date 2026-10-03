@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Support\AdminPermissions;
+use App\Support\AppCache;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -25,6 +26,13 @@ class EnsurePermission
     {
         $user = $request->user();
         $allowed = $user ? config('permission.' . $user->role, []) : [];
+
+        // The account's own permission row, from AppCache instead of a query
+        // on every request (later $user->permission reads reuse it).
+        if ($user && ! $user->relationLoaded('permission')
+            && ($user->role === 'system_administrator' || in_array($user->role, self::ACCOUNT_ROLES, true))) {
+            $user->setRelation('permission', AppCache::permission($user->id));
+        }
 
         if (! in_array($key, $allowed, true)) {
             abort(403, 'You do not have permission to perform this action.');

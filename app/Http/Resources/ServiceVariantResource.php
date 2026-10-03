@@ -18,7 +18,6 @@ class ServiceVariantResource extends JsonResource
             'uuid' => $this->uuid,
             'duration_minutes' => $this->duration_minutes,
             'price' => (float) $this->price,
-            'loyalty_points' => $this->loyalty_points !== null ? (int) $this->loyalty_points : null,
             // Not the variant's own concept — a variant is just a duration/
             // price option of its Service, so its status always mirrors the
             // parent's is_active (see ServiceResource, which sets this

@@ -39,6 +39,13 @@ return [
     // its own getenv() lookup: that bypasses Laravel's env handling entirely,
     // so it can't be overridden per-environment in tests and depends on the
     // variable reaching the PHP process (not guaranteed under every SAPI).
+    // "Continue with Google" on the web app's owner sign-in. Must be the same
+    // OAuth client ID the frontend uses — it is the audience every Google ID
+    // token is checked against (UserService::verifyGoogleIdToken).
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+    ],
+
     'cloudinary' => [
         'url' => env('CLOUDINARY_URL'),
     ],

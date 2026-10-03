@@ -4,6 +4,7 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Auth\AuthController;
+use App\Http\Controllers\LegalController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\System\SubscriptionPlanController;
@@ -53,8 +54,14 @@ use App\Http\Controllers\Client\ClientRewardsController;
 use App\Http\Controllers\Client\ClientBookingController;
 use App\Http\Controllers\Client\ClientProfileController;
 
+// Terms of Service + Privacy Policy, shown by the web and mobile apps.
+Route::get('/legal', [LegalController::class, 'show']);
+
 // authentication part
 Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:auth-login');
+// "Continue with Google" for business owners (sign-in and sign-up) — see
+// UserService::loginWithGoogle. Per-IP, since there is no email input to key on.
+Route::post('/auth/google', [AuthController::class, 'loginWithGoogle'])->middleware('throttle:20,1');
 // Per-IP throttles on top of UserService's per-challenge attempt cap.
 Route::post('/auth/two-factor/verify', [AuthController::class, 'verifyTwoFactorLogin'])->middleware('throttle:10,1');
 Route::post('/auth/two-factor/request-email-code', [AuthController::class, 'requestTwoFactorEmailCode'])->middleware('throttle:5,1');
@@ -64,6 +71,10 @@ Route::post('/auth/forget-password/verify-otp', [AuthController::class, 'verifyF
 Route::post('/auth/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:auth-otp');
 Route::post('/auth/resend-verification', [EmailVerificationController::class, 'resend'])
     ->middleware('throttle:6,1');
+// Polled by the sign-up page so it updates the moment the emailed link is
+// clicked — see UserService::verificationStatus.
+Route::post('/auth/verification-status', [AuthController::class, 'verificationStatus'])
+    ->middleware('throttle:60,1');
 Route::post('/auth/verify-registration-otp', [AuthController::class, 'verifyRegistrationOtp'])
     ->middleware('throttle:10,1');
 Route::post('/auth/resend-registration-otp', [AuthController::class, 'resendRegistrationOtp'])
@@ -572,6 +583,9 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Accounts pages' Plan Capacity card (the full subscription
                 // read also settles payments and loads billing history).
                 Route::get('subscription/capacity', [SubscriptionController::class, 'capacity']);
+
+                // Start the one free trial (config/trial.php).
+                Route::post('subscription/trial', [SubscriptionController::class, 'startTrial'])->middleware('throttle:10,1');
 
                 Route::get('subscription/change/quote', [SubscriptionController::class, 'quotePlanChange']);
                 Route::post('subscription/change', [SubscriptionController::class, 'changePlan']);

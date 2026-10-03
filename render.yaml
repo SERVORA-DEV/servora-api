@@ -56,11 +56,12 @@ services:
       - key: DB_SSLMODE
         value: require
 
-      # Both DB-backed on purpose: Render's disk is ephemeral, and
-      # SubscriptionService caches a pending-business reference for a day
-      # that must survive a restart.
+      # Cache on local disk: fast, and losing it on a restart is harmless.
+      # What must survive a restart (SubscriptionService's pending checkout
+      # intents and lock, 2FA challenges) uses the DB-backed 'durable'
+      # store (config/cache.php). Sessions stay DB-backed.
       - key: CACHE_STORE
-        value: database
+        value: file
       - key: SESSION_DRIVER
         value: database
       - key: QUEUE_CONNECTION

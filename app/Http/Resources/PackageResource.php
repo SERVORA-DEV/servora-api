@@ -21,7 +21,6 @@ class PackageResource extends JsonResource
             'description' => $this->description,
             'duration_minutes' => $this->duration_minutes,
             'default_price' => (float) $this->default_price,
-            'loyalty_points' => $this->loyalty_points !== null ? (int) $this->loyalty_points : null,
             'is_active' => (bool) $this->is_active,
 
             // Line items, with the original (pre-bundle) price so the

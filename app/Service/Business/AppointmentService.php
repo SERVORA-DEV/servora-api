@@ -1646,7 +1646,7 @@ class AppointmentService
                 'sort_order' => $nextSort + $index + 1,
                 'unit_price' => $componentPrice,
                 'subtotal' => $componentPrice * $componentQty,
-                'points_earned' => ($variant->loyalty_points ?? 0) * $componentQty,
+                'points_earned' => 0,
             ]);
         }
 
@@ -1719,7 +1719,7 @@ class AppointmentService
                     'unit_price' => $price,
                     'discount_amount' => $item['discount_amount'] ?? 0,
                     'subtotal' => $price * $quantity,
-                    'points_earned' => ($variant->loyalty_points ?? 0) * $quantity,
+                    'points_earned' => 0,
                     'notes' => $item['notes'] ?? null,
                     'sort_order' => $sortOrder,
                 ]);
@@ -1737,7 +1737,7 @@ class AppointmentService
             'unit_price' => $price,
             'discount_amount' => $item['discount_amount'] ?? 0,
             'subtotal' => $price * $quantity,
-            'points_earned' => ($variant->loyalty_points ?? 0) * $quantity,
+            'points_earned' => 0,
             'notes' => $item['notes'] ?? null,
         ]);
     }

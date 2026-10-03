@@ -14,6 +14,10 @@ use App\Http\Resources\NearbySpaResource;
 use App\Http\Resources\BranchDetailResource;
 use App\Http\Resources\PublicTherapistAvailabilityResource;
 use App\Service\Client\BookingPolicy;
+use App\Support\AppCache;
+use App\Support\BranchHoursCalculator;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 use App\Service\NotificationService;
 use App\Services\DocumentUploadService;
 use App\Services\ImageUploadService;
@@ -59,14 +63,37 @@ class SpaBranchService
         $radiusKm = min(max($radiusKm ?? 15, 1), 100);
         $limit = min(max($limit ?? 20, 1), 50);
 
-        // The query already keeps only bookable branches (MarketplaceReadiness);
-        // online booking lives in settings JSON, so that part is checked here.
-        $branches = $this->spaBranchRepository->nearby($lat, $lng, $radiusKm, $limit)
-            ->filter(fn ($b) => MarketplaceReadiness::acceptsOnlineBooking($b))
-            ->values();
-        app(ReviewRepository::class)->attachRatings($branches);
+        // Cached for 2 minutes per ~100 m of location (AppCache). Any change
+        // to any listed spa bumps the marketplace version, so edits show up
+        // at once. Open-now is recomputed on every request below.
+        $key = sprintf('nearby:%.3f:%.3f:%s:%d:m%d', $lat, $lng, $radiusKm, $limit, AppCache::version('marketplace'));
+        $cached = AppCache::remember($key, 120, function () use ($lat, $lng, $radiusKm, $limit) {
+            // The query already keeps only bookable branches (MarketplaceReadiness);
+            // online booking lives in settings JSON, so that part is checked here.
+            $branches = $this->spaBranchRepository->nearby($lat, $lng, $radiusKm, $limit)
+                ->filter(fn ($b) => MarketplaceReadiness::acceptsOnlineBooking($b))
+                ->values();
+            app(ReviewRepository::class)->attachRatings($branches);
 
-        return NearbySpaResource::collection($branches);
+            return [
+                'data' => NearbySpaResource::collection($branches)->resolve(request()),
+                'schedules' => $branches->map(fn ($b) => $b->relationLoaded('schedules') ? $b->schedules : null)->all(),
+            ];
+        });
+
+        $now = Carbon::now();
+        $data = $cached['data'];
+        foreach ($data as $i => $row) {
+            $schedules = $cached['schedules'][$i] ?? null;
+            if ($schedules !== null) {
+                $hours = BranchHoursCalculator::resolve($schedules, $now);
+                $data[$i]['is_open_now'] = $hours['is_open_now'];
+                $data[$i]['opens_at'] = $hours['opens_at'];
+                $data[$i]['closes_at'] = $hours['closes_at'];
+            }
+        }
+
+        return response()->json(['data' => $data]);
     }
 
     // Backs GET /spas/{uuid} — public, no auth. publicFindByUuid() 404s for
@@ -74,18 +101,41 @@ class SpaBranchService
     // packages/therapists.
     public function publicShow(string $uuid)
     {
-        $branch = $this->spaBranchRepository->publicFindByUuid($uuid);
-        app(ReviewRepository::class)->attachRatings([$branch]);
+        // The page is the same for every visitor, so it's cached (AppCache)
+        // under the business's version: any change the owner makes to the
+        // branch, catalog, staff, programs or settings — or a new review —
+        // gives it a new key. Opening hours' "open now" is recomputed per
+        // request.
+        $businessId = AppCache::remember("branch:{$uuid}:biz", 86400,
+            fn () => DB::table('spa_branches')->where('uuid', $uuid)->value('spa_business_id'));
+        if (! $businessId) {
+            $this->spaBranchRepository->publicFindByUuid($uuid); // 404s
 
-        $services = $this->spaBranchRepository->publicServicesForBranch($branch->id);
-        $packages = $this->spaBranchRepository->publicPackagesForBranch($branch->id);
-        // Branch Settings → Marketplace → Show therapist profiles: off keeps
-        // the roster private, and bookings are auto-assigned.
-        $therapists = $branch->displaySettings()['show_therapist_profiles']
-            ? $this->spaBranchRepository->publicTherapistsForBranch($branch->id)
-            : collect();
+            return null;
+        }
 
-        return new BranchDetailResource($branch, $services, $packages, $therapists);
+        $cached = AppCache::remember("spa:{$uuid}:v" . AppCache::businessVersion($businessId), 600, function () use ($uuid) {
+            $branch = $this->spaBranchRepository->publicFindByUuid($uuid);
+            app(ReviewRepository::class)->attachRatings([$branch]);
+
+            $services = $this->spaBranchRepository->publicServicesForBranch($branch->id);
+            $packages = $this->spaBranchRepository->publicPackagesForBranch($branch->id);
+            // Branch Settings → Marketplace → Show therapist profiles: off keeps
+            // the roster private, and bookings are auto-assigned.
+            $therapists = $branch->displaySettings()['show_therapist_profiles']
+                ? $this->spaBranchRepository->publicTherapistsForBranch($branch->id)
+                : collect();
+
+            return [
+                'data' => (new BranchDetailResource($branch, $services, $packages, $therapists))->resolve(request()),
+                'schedules' => $branch->schedules,
+            ];
+        });
+
+        $data = $cached['data'];
+        $data['hours'] = BranchHoursCalculator::resolve($cached['schedules'], Carbon::now());
+
+        return response()->json(['data' => $data]);
     }
 
     // Backs GET /spas/{uuid}/therapists — public, no auth. Answers "which
@@ -102,7 +152,7 @@ class SpaBranchService
     // therapist who isn't rostered can't be booked either way.
     public function publicTherapistAvailability(string $uuid, array $query)
     {
-        $branch = $this->spaBranchRepository->publicFindByUuid($uuid);
+        $branch = $this->spaBranchRepository->publicFindByUuid($uuid, ['business', 'schedules']);
 
         $date = $query['date'];
         $time = $query['time'];
@@ -137,7 +187,7 @@ class SpaBranchService
     // in client's own booking, so rescheduling doesn't collide with itself.
     public function publicSlots(string $uuid, array $query, ?User $user = null): array
     {
-        $branch = $this->spaBranchRepository->publicFindByUuid($uuid);
+        $branch = $this->spaBranchRepository->publicFindByUuid($uuid, ['business', 'schedules']);
 
         // Not ready for bookings (no therapist, no hours…): offer no times,
         // with the same message the booking endpoint would give.
@@ -188,7 +238,7 @@ class SpaBranchService
     // someone else's schedule.
     public function publicTherapistDaysOff(string $uuid, string $staffUuid, array $query): array
     {
-        $branch = $this->spaBranchRepository->publicFindByUuid($uuid);
+        $branch = $this->spaBranchRepository->publicFindByUuid($uuid, ['business', 'schedules']);
 
         $staff = $this->spaBranchRepository
             ->publicTherapistsForBranch($branch->id)
@@ -518,7 +568,7 @@ class SpaBranchService
     // guard as the branch page it's shown on.
     public function publicReviews(string $uuid)
     {
-        $branch = $this->spaBranchRepository->publicFindByUuid($uuid);
+        $branch = $this->spaBranchRepository->publicFindByUuid($uuid, []);
         $display = $branch->displaySettings();
 
         // Branch Settings → Marketplace → Reviews: hidden reviews come back as

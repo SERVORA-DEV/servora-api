@@ -33,6 +33,9 @@ class SubscriptionPlanRepository
     {
         return self::live(Subscription::query())
             ->join('subscription_plans', 'subscription_plans.id', '=', 'subscriptions.subscription_plan_id')
+            // Paying subscribers only — a free trial isn't a vote for a tier.
+            ->where('subscriptions.is_trial', false)
+            ->where('subscription_plans.category', '!=', SubscriptionPlan::TRIAL_CATEGORY)
             ->groupBy('subscription_plans.category')
             ->orderByRaw('count(*) desc')
             ->orderByRaw('max(subscriptions.created_at) desc')
@@ -59,10 +62,15 @@ class SubscriptionPlanRepository
             ->first();
     }
 
+    // The public line-up. The Free Trial plan is only listed while the trial
+    // is switched on and it is the plan a trial runs on (config/trial.php).
     public function paginateActivePlan(int $perPage = 15)
     {
+        $offersTrialPlan = config('trial.enabled') && config('trial.plan_category') === SubscriptionPlan::TRIAL_CATEGORY;
+
         return SubscriptionPlan::withCount('subscriptions')
         ->where('is_active', true)
+        ->when(! $offersTrialPlan, fn ($query) => $query->where('category', '!=', SubscriptionPlan::TRIAL_CATEGORY))
         ->latest()
         ->paginate($perPage);
     }

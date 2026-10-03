@@ -99,8 +99,13 @@ class CheckoutService
         if (! $plan) {
             return [null, $cycle, 0.0, 'Choose a plan first.', []];
         }
+        if ($plan->isTrial()) {
+            return [$plan, $cycle, 0.0, 'The free trial isn\'t a plan you can buy. Choose Basic, Premium or Enterprise.', []];
+        }
 
-        $live = $this->subscriptions->findActiveForBusiness($business->id);
+        // A free trial isn't a paid term: it can't be upgraded, and it doesn't
+        // block buying a plan (which replaces it — see startTerm).
+        $live = $this->subscriptions->findPaidActiveForBusiness($business->id);
 
         if ($purpose === 'upgrade') {
             if (! $live) {
@@ -396,9 +401,13 @@ class CheckoutService
             'status' => 'Active',
         ]);
 
-        // The old term is settled: no more renewal attempts on it.
+        // The old term is settled: no more renewal attempts on it. A free
+        // trial ends the moment a plan is paid for.
         if ($previous && $previous->id !== $subscription->id) {
             $previous->update(['auto_renew' => false, 'renewal_failure_reason' => null]);
+            if ($previous->is_trial && $previous->status === 'Active') {
+                $previous->update(['status' => 'Expired']);
+            }
         }
 
         return $subscription;
@@ -423,7 +432,7 @@ class CheckoutService
     private function useNewMethod(SpaBusiness $business, ?BusinessPaymentMethod $method, bool $enableAutoRenew): ?Subscription
     {
         $live = $this->subscriptions->findActiveOrInGraceForBusiness($business->id, \App\Models\SystemSetting::current()->subscription_grace_period_days);
-        if ($live && $method && ($live->auto_renew || ($enableAutoRenew && ! $live->isEndingByChoice()))) {
+        if ($live && ! $live->is_trial && $method && ($live->auto_renew || ($enableAutoRenew && ! $live->isEndingByChoice()))) {
             $live->update(['auto_renew' => true, 'payment_method_id' => $method->id, 'renewal_failure_reason' => null]);
         }
 

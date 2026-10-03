@@ -2,9 +2,8 @@
 
 namespace App\Http\Middleware;
 
-use App\Models\SystemSetting;
+use App\Support\AppCache;
 use App\Repository\SpaBusinessRepository;
-use App\Repository\SubscriptionRepository;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -25,7 +24,6 @@ class EnsureBusinessSubscribed
 {
     public function __construct(
         private SpaBusinessRepository $spaBusinessRepository,
-        private SubscriptionRepository $subscriptionRepository,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
@@ -37,11 +35,9 @@ class EnsureBusinessSubscribed
         }
 
         $business = $this->spaBusinessRepository->findForUser($user);
-        $graceDays = SystemSetting::current()->subscription_grace_period_days;
 
-        $activeSubscription = $business
-            ? $this->subscriptionRepository->findActiveOrInGraceForBusiness($business->id, $graceDays)
-            : null;
+        // Cached (AppCache) — this runs on every owner request.
+        $activeSubscription = $business ? AppCache::activeSubscription($business->id) : null;
 
         if (! $activeSubscription) {
             return response()->json([

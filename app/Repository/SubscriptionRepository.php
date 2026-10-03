@@ -58,6 +58,31 @@ class SubscriptionRepository
             ->first();
     }
 
+    // The live subscription the business has PAID for — a free trial doesn't
+    // count. Used where a trial must not stand in the way: buying a plan
+    // during (or after) a trial, and upgrade / downgrade, which only make
+    // sense on a paid term.
+    public function findPaidActiveForBusiness(int $spaBusinessId)
+    {
+        $subscription = $this->findActiveForBusiness($spaBusinessId);
+
+        return $subscription && ! $subscription->is_trial ? $subscription : null;
+    }
+
+    // One free trial per business, ever (soft-deleted rows included).
+    public function hasUsedTrial(int $spaBusinessId): bool
+    {
+        return Subscription::withTrashed()
+            ->where('spa_business_id', $spaBusinessId)
+            ->where('is_trial', true)
+            ->exists();
+    }
+
+    public function hasAnyForBusiness(int $spaBusinessId): bool
+    {
+        return Subscription::withTrashed()->where('spa_business_id', $spaBusinessId)->exists();
+    }
+
     // Same as findActiveForBusiness, but a lapsed subscription still counts
     // as active for $graceDays past its own expires_at — the grace-period
     // extension to real access (see EnsureBusinessSubscribed). Kept as its
@@ -76,7 +101,9 @@ class SubscriptionRepository
                 $query->whereNull('expires_at')
                     ->orWhere('expires_at', '>', now())
                     ->orWhere(function ($query) use ($graceDays) {
+                        // A free trial ends exactly at expires_at too.
                         $query->where('expires_at', '>', now()->subDays($graceDays))
+                            ->where('is_trial', false)
                             ->where(fn ($q) => $this->notDeclined($q));
                     });
             })
@@ -108,6 +135,7 @@ class SubscriptionRepository
         return Subscription::with(['business.owner', 'business.settings', 'plan', 'pendingPlan', 'scheduledPlan', 'paymentMethod'])
             ->whereIn('id', $latestIdsPerBusiness)
             ->where('status', 'Active')
+            ->where('is_trial', false)
             ->where(fn ($q) => $this->notDeclined($q))
             ->whereNotNull('expires_at')
             ->whereBetween('expires_at', [$windowStart, now()->addDays($daysBefore)])
@@ -166,6 +194,7 @@ class SubscriptionRepository
         // A subscription the owner chose to let end isn't "overdue".
         return Subscription::whereIn('id', $latestIdsPerBusiness)
             ->where('status', 'Active')
+            ->where('is_trial', false)
             ->where(fn ($q) => $this->notDeclined($q))
             ->whereNotNull('expires_at')
             ->where('expires_at', '<', now()->subDays($graceDays))
