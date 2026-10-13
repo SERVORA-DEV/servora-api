@@ -7,6 +7,7 @@ use App\Http\Requests\Business\AppointmentServiceRequest;
 use App\Http\Requests\Business\FacilityAssignmentRequest;
 use App\Http\Requests\Business\TherapistAssignmentRequest;
 use App\Service\Business\AppointmentService;
+use App\Service\Business\ServiceExtensionService;
 use Illuminate\Http\Request;
 
 // Everything scoped to one specific booked service (or one specific
@@ -54,6 +55,29 @@ class AppointmentServiceController extends Controller
     public function completeService(Request $request, string $uuid)
     {
         return $this->appointmentService->completeService($request->user(), $uuid);
+    }
+
+    // A service in progress, moved to a longer length of the same service.
+    public function extendOptions(Request $request, string $uuid, ServiceExtensionService $extension)
+    {
+        return $extension->options($request->user(), $uuid);
+    }
+
+    public function extendService(Request $request, string $uuid, ServiceExtensionService $extension)
+    {
+        $payload = $request->validate(['service_variant_uuid' => 'required|uuid']);
+
+        return $extension->extend($request->user(), $uuid, $payload);
+    }
+
+    // An add-on put on this service (hot stones on the massage) — one of
+    // the owner's add-ons that is available for it. See
+    // AppointmentService::addAddon.
+    public function addAddon(Request $request, string $uuid)
+    {
+        $payload = $request->validate(['addon_uuid' => 'required|uuid']);
+
+        return $this->appointmentService->addAddon($request->user(), $uuid, $payload);
     }
 
     // uuid here is the appointment's uuid (route: appointment/{uuid}/additional-services)

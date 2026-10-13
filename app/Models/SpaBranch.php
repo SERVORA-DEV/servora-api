@@ -43,6 +43,8 @@ class SpaBranch extends Model
 
         'verification_status',
         'operating_status',
+        // Put on hold by a smaller plan (PlanFitService); null = not on hold.
+        'plan_hold_at',
 
         'listing_visible',
         'promo_text',
@@ -67,7 +69,6 @@ class SpaBranch extends Model
         'show_therapist_profiles' => true,
         'show_available_slots' => true,
         'show_room_availability' => false,
-        'allow_online_payment' => false,
         'allow_promo_codes' => true,
         'show_reviews' => true,
         'show_rating_badge' => true,
@@ -83,6 +84,7 @@ class SpaBranch extends Model
 
             'reopens_at' => 'date',
             'verified_at' => 'datetime',
+            'plan_hold_at' => 'datetime',
 
             'permit_issue_date' => 'date',
             'permit_expiration_date' => 'date',
@@ -113,6 +115,12 @@ class SpaBranch extends Model
     public function schedules()
     {
         return $this->hasMany(BranchSchedule::class, 'spa_branch_id');
+    }
+
+    // Temporary closures outside the weekly hours (see App\Support\BranchClosures).
+    public function closures()
+    {
+        return $this->hasMany(BranchClosure::class, 'spa_branch_id');
     }
 
     // Any account (Manager or Front Officer) assigned to a staff member at

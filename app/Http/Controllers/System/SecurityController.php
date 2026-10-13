@@ -49,11 +49,6 @@ class SecurityController extends Controller
         return $this->securityService->disableTwoFactor($request->user(), $request->validated());
     }
 
-    public function regenerateRecoveryCodes(TwoFactorStepUpRequest $request)
-    {
-        return $this->securityService->regenerateRecoveryCodes($request->user(), $request->validated());
-    }
-
     public function submitPersonalEmail(PersonalEmailRequest $request)
     {
         return $this->securityService->submitPersonalEmail($request->user(), $request->validated());

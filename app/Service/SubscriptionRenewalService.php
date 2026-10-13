@@ -33,6 +33,7 @@ class SubscriptionRenewalService
         private SpaBusinessRepository $businesses,
         private PlanSwitchService $planSwitch,
         private NotificationService $notifications,
+        private PlanFitService $fit,
     ) {}
 
     /** @return array{attempted: int, renewed: int, failed: int} */
@@ -90,8 +91,17 @@ class SubscriptionRenewalService
             $method->isExpired() => "Your saved {$method->label} has expired. Add a new payment method.",
             default => null,
         };
+        // Using more than the plan allows: renew only with a choice of what
+        // to keep that is still valid today (PlanFitService). Without the
+        // hold columns (migration not run) it is refused, as before.
+        $keep = $this->fit->ready() ? $subscription->scheduled_keep : null;
         if (! $problem && ($over = $this->planSwitch->overLimits($subscription->business, $plan))) {
-            $problem = implode(' ', $over) . ' Remove branches or accounts, or choose a bigger plan, to renew.';
+            $problems = $this->fit->ready() ? $this->fit->problems($subscription->business, $plan, $keep) : $over;
+            if ($problems) {
+                $problem = $this->fit->ready()
+                    ? implode(' ', $over) . " Choose what to keep to renew on {$plan->name}: " . $problems[0]
+                    : implode(' ', $over) . ' Remove branches or accounts, or choose a bigger plan, to renew.';
+            }
         }
         if ($problem) {
             $this->fail($subscription, $problem);
@@ -110,6 +120,8 @@ class SubscriptionRenewalService
             'vat_amount' => CheckoutService::vatOf($amount),
             'payment_method_id' => $method->id,
             'reference_id' => 'SRV-RENEW-' . Str::uuid(),
+            // Applied when the new term starts (CheckoutService::startTerm).
+            'meta' => $keep ? ['keep' => $keep] : null,
         ]);
 
         $this->checkout->chargeSession($session, $method, "{$plan->name} Plan Renewal ({$cycle})");

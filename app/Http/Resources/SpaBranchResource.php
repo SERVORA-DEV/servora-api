@@ -54,6 +54,9 @@ class SpaBranchResource extends JsonResource
 
             'verification_status' => $this->verification_status,
             'operating_status' => $this->operating_status,
+            // Switched off by a smaller plan (PlanFitService), not by the
+            // owner: it can only come back when the plan has room.
+            'on_hold' => (bool) $this->plan_hold_at,
 
             // Branch Settings: marketplace listing on/off, and the booking
             // rules this branch sets instead of the business defaults.
@@ -62,6 +65,9 @@ class SpaBranchResource extends JsonResource
 
             'closure_note' => $this->closure_note,
             'reopens_at' => $this->reopens_at,
+            // The temporary closure running now, or the next one coming up
+            // (only on the lists that load it).
+            'closure' => $this->relationLoaded('closures') ? \App\Support\BranchClosures::notice($this->closures) : null,
 
             'verified_by' => $this->verified_by,
             'verified_at' => $this->verified_at,
@@ -86,6 +92,15 @@ class SpaBranchResource extends JsonResource
             }),
 
             'schedules' => $this->whenLoaded('schedules'),
+
+            // The branch list's card numbers — only present when the query
+            // counted them (SpaBranchRepository::paginateForBranches).
+            'staff_count' => $this->whenCounted('staff'),
+            'rooms_count' => $this->whenCounted('facilities'),
+            'manager_name' => $this->when(
+                array_key_exists('manager_name', $this->resource->getAttributes()),
+                fn () => $this->resource->getAttribute('manager_name'),
+            ),
 
             // Full detail-page relations — only present when the caller
             // eager-loads them (see BranchRepository::findByUuid); the
@@ -120,7 +135,12 @@ class SpaBranchResource extends JsonResource
             'services' => $this->whenLoaded('branchServices', function () {
                 return $this->branchServices->map(fn ($bs) => [
                     'service_variant_uuid' => $bs->serviceVariant?->uuid,
+                    // The service this length belongs to, so a list can show
+                    // one service with its lengths side by side.
+                    'service_uuid' => $bs->serviceVariant?->service?->uuid,
                     'service_name' => $bs->serviceVariant?->service?->name,
+                    'category' => $bs->serviceVariant?->service?->category,
+                    'service_type' => \App\Support\ServiceKind::of($bs->serviceVariant?->service?->service_type),
                     'duration_minutes' => $bs->serviceVariant?->duration_minutes,
                     'price' => $bs->custom_price !== null
                         ? (float) $bs->custom_price

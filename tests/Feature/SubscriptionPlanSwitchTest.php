@@ -45,7 +45,7 @@ class SubscriptionPlanSwitchTest extends TestCase
         $xendit->shouldReceive('getInvoiceByExternalId')->andReturn(null);
         $this->app->instance(XenditService::class, $xendit);
 
-        SystemSetting::current()->update(['plan_changes_enabled' => true, 'plan_change_grace_days' => 7]);
+        SystemSetting::current()->update(['plan_changes_enabled' => true]);
 
         $this->owner = User::factory()->create(['role' => 'business_owner']);
         $this->business = SpaBusiness::factory()->create(['owner_id' => $this->owner->id]);
@@ -118,50 +118,43 @@ class SubscriptionPlanSwitchTest extends TestCase
         $this->assertNull($this->subscription->fresh()->scheduled_plan_id);
     }
 
-    public function test_changes_are_locked_once_the_grace_period_has_passed(): void
+    public function test_an_upgrade_is_allowed_at_any_point_in_the_term(): void
     {
-        $this->subscription->update(['starts_at' => now()->subDays(8), 'expires_at' => now()->addDays(22)]);
-
-        // Upgrade refused...
-        $this->change($this->pro)->assertStatus(422);
-        $this->assertSame($this->basic->id, $this->subscription->fresh()->subscription_plan_id);
-
-        // ...and so is a downgrade.
-        $this->subscription->update(['subscription_plan_id' => $this->pro->id]);
-        $this->change($this->basic)->assertStatus(422);
-        $this->assertNull($this->subscription->fresh()->scheduled_plan_id);
-
-        $this->getJson("/api/business/subscription/change/quote?subscription_plan_uuid={$this->basic->uuid}&billing_cycle=Monthly")
-            ->assertOk()
-            ->assertJsonPath('data.allowed', false);
-    }
-
-    public function test_the_grace_period_follows_the_admin_setting(): void
-    {
-        $this->subscription->update(['starts_at' => now()->subDays(8), 'expires_at' => now()->addDays(22)]);
-        SystemSetting::current()->update(['plan_change_grace_days' => 14]);
+        // Three weeks in, a week before the due date.
+        $this->subscription->update(['starts_at' => now()->subDays(23), 'expires_at' => now()->addDays(7)]);
 
         $this->change($this->pro)->assertOk();
+        $this->getJson("/api/business/subscription/change/quote?subscription_plan_uuid={$this->pro->uuid}&billing_cycle=Monthly")
+            ->assertOk()
+            ->assertJsonPath('data.allowed', true);
     }
 
-    public function test_a_scheduled_downgrade_can_still_be_taken_back_after_the_grace_period(): void
+    public function test_a_downgrade_can_be_scheduled_any_time_before_the_due_date(): void
     {
-        $this->subscription->update(['subscription_plan_id' => $this->pro->id]);
+        $this->subscription->update(['subscription_plan_id' => $this->pro->id, 'starts_at' => now()->subDays(29), 'expires_at' => now()->addDay()]);
+
         $this->change($this->basic)->assertOk();
+        $this->assertSame($this->basic->id, $this->subscription->fresh()->scheduled_plan_id);
 
-        // The grace period passes with the downgrade still scheduled.
-        $this->subscription->update(['starts_at' => now()->subDays(10), 'expires_at' => now()->addDays(20)]);
-
+        // ...and taken back just as late.
         $this->deleteJson('/api/business/subscription/change')->assertOk();
         $this->assertNull($this->subscription->fresh()->scheduled_plan_id);
     }
 
-    public function test_the_owner_is_told_when_the_grace_period_ends(): void
+    public function test_once_the_plan_has_ended_they_renew_instead_of_switching(): void
+    {
+        $this->subscription->update(['starts_at' => now()->subDays(31), 'expires_at' => now()->subDay()]);
+
+        $this->change($this->pro)->assertStatus(422);
+    }
+
+    public function test_the_owner_is_told_when_the_plan_is_due(): void
     {
         $policy = $this->getJson('/api/business/subscription')->assertOk()->json('plan_policy');
 
-        $this->assertSame(7, $policy['grace_days']);
-        $this->assertTrue($this->subscription->starts_at->copy()->addDays(7)->equalTo($policy['change_until']));
+        $this->assertTrue($policy['plan_changes_enabled']);
+        $this->assertTrue($this->subscription->expires_at->equalTo($policy['due_at']));
+        $this->assertArrayNotHasKey('change_until', $policy);
     }
 
     public function test_plan_changes_can_be_switched_off(): void

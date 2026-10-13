@@ -22,7 +22,7 @@ class AppointmentController extends Controller
 
     public function index(Request $request)
     {
-        $filters = $request->only(['date', 'date_from', 'date_to', 'status', 'client_uuid']);
+        $filters = $request->only(['date', 'date_from', 'date_to', 'status', 'client_uuid', 'staff_uuid']);
         return $this->appointmentService->listAppointments($request->user(), $filters, $request->input('per_page', 15));
     }
 
@@ -79,6 +79,15 @@ class AppointmentController extends Controller
     public function removeService(Request $request, string $uuid)
     {
         return $this->appointmentService->removeService($request->user(), $uuid);
+    }
+
+    // A service that has started or finished, taken off the visit — always
+    // with a reason (kept on the line).
+    public function voidService(Request $request, string $uuid)
+    {
+        $payload = $request->validate(['reason' => 'required|string|min:3|max:255']);
+
+        return $this->appointmentService->voidService($request->user(), $uuid, $payload);
     }
 
     public function addPackage(AppointmentPackageRequest $request, string $uuid)

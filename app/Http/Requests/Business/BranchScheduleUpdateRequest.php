@@ -24,7 +24,7 @@ class BranchScheduleUpdateRequest extends FormRequest
      * rules, so either would silently be dropped from the payload even if
      * sent.
      *
-     * No after:opening_time / after:break_start on the closing/end times —
+     * No after:opening_time on the closing time —
      * see BranchScheduleRequest for why (overnight hours support).
      *
      * @return array<string, ValidationRule|array<mixed>|string>
@@ -34,9 +34,6 @@ class BranchScheduleUpdateRequest extends FormRequest
         return [
             'opening_time' => 'nullable|date_format:H:i',
             'closing_time' => 'nullable|date_format:H:i',
-
-            'break_start' => 'nullable|date_format:H:i',
-            'break_end' => 'nullable|date_format:H:i',
 
             'is_closed' => 'sometimes|boolean',
         ];

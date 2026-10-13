@@ -64,6 +64,24 @@ class TherapistAssignmentRepository
         );
     }
 
+    // A service nobody performs (a sauna) started with no room picked: the
+    // row that carries when it started and ended, with neither staff nor
+    // room on it. Same staff_id => null key as assignRoomOnly(), so a room
+    // that was picked and then removed is reused, not doubled.
+    public function openSpace(int $appointmentServiceId): TherapistAssignment
+    {
+        return TherapistAssignment::updateOrCreate(
+            ['appointment_service_id' => $appointmentServiceId, 'staff_id' => null],
+            [
+                'facility_id' => null,
+                'assignment_status' => 'Assigned',
+                'assigned_at' => now(),
+                'started_at' => null,
+                'completed_at' => null,
+            ]
+        );
+    }
+
     public function findByUuidForService(string $uuid, int $appointmentServiceId)
     {
         return TherapistAssignment::where('uuid', $uuid)

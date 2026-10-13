@@ -13,7 +13,7 @@ class PackageRepository
     public function paginateForBusiness(int $spaBusinessId, array $branchIds, int $perPage = 15)
     {
         return Package::with([
-            'packageServiceItems.serviceVariant.service',
+            ...Package::contents(),
             'branchPackages' => fn ($q) => $q->whereIn('spa_branch_id', $branchIds)->with('branch'),
         ])
             ->where('spa_business_id', $spaBusinessId)
@@ -35,7 +35,7 @@ class PackageRepository
     // eager-loaded — see ServiceRepository::findByUuidForBusiness.
     public function findByUuidForBusiness(string $uuid, int $spaBusinessId, ?array $branchIds = null)
     {
-        $query = Package::with('packageServiceItems.serviceVariant.service')
+        $query = Package::with(Package::contents())
             ->where('uuid', $uuid)
             ->where('spa_business_id', $spaBusinessId);
 
@@ -50,7 +50,7 @@ class PackageRepository
     {
         $model = $this->findByUuid($uuid);
         $model->update($payload);
-        return $model->load('packageServiceItems.serviceVariant.service');
+        return $model->load(Package::contents());
     }
 
     public function delete(string $uuid)

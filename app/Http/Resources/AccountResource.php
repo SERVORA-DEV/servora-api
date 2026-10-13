@@ -35,6 +35,8 @@ class AccountResource extends JsonResource
             'spa_branch_uuid' => $this->staff?->branch?->uuid,
             'branch_name' => $this->staff?->branch?->branch_name,
             'account_status' => $this->account_status,
+            // Suspended by a smaller plan (PlanFitService), not by the owner.
+            'on_hold' => (bool) $this->plan_hold_at,
             'created_at' => $this->created_at,
 
             'permission' => $this->permission !== null

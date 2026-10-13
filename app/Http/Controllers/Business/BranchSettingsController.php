@@ -5,8 +5,8 @@ namespace App\Http\Controllers\Business;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Business\BranchSettings\BranchBookingPolicyRequest;
 use App\Http\Requests\Business\BranchSettings\BranchMarketplaceRequest;
+use App\Http\Requests\Business\BranchSettings\BranchPhotoOrderRequest;
 use App\Http\Requests\Business\BranchSettings\BranchPhotoUploadRequest;
-use App\Http\Requests\Business\SpaBranchPermitRequest;
 use App\Service\Business\BranchSettingsService;
 use Illuminate\Http\Request;
 
@@ -39,6 +39,11 @@ class BranchSettingsController extends Controller
         return $this->branchSettingsService->setCover($request->user(), $uuid, $photo);
     }
 
+    public function reorderPhotos(BranchPhotoOrderRequest $request, string $uuid)
+    {
+        return $this->branchSettingsService->reorderPhotos($request->user(), $uuid, $request->validated()['photos']);
+    }
+
     public function updateBookingPolicy(BranchBookingPolicyRequest $request, string $uuid)
     {
         return $this->branchSettingsService->updateBookingPolicy($request->user(), $uuid, $request->validated()['overrides'] ?? []);
@@ -49,14 +54,4 @@ class BranchSettingsController extends Controller
         return $this->branchSettingsService->reviewsSummary($request->user(), $uuid);
     }
 
-    public function renewPermit(SpaBranchPermitRequest $request, string $uuid)
-    {
-        return $this->branchSettingsService->renewPermit(
-            $request->user(),
-            $uuid,
-            $request->validated(),
-            $request->file('permit_document'),
-            $request,
-        );
-    }
 }

@@ -96,6 +96,11 @@ class SpaBranchController extends Controller
         return $this->spaBranchService->updateSpaBranch($request->user(), $uuid, $request->validated());
     }
 
+    public function bringBack(Request $request, string $uuid)
+    {
+        return $this->spaBranchService->bringBack($request->user(), $uuid);
+    }
+
     public function destroy(Request $request, string $uuid)
     {
         $this->spaBranchService->deleteSpaBranch($request->user(), $uuid);

@@ -34,6 +34,10 @@ class UserResource extends JsonResource
         $data['has_active_subscription'] = null;
         $data['staff_name'] = null;
         $data['branch_name'] = null;
+        // The business a manager / front officer works for. Their sign-in
+        // page is that business's own (/login/{business_uuid}), so the web
+        // app needs it to send them back there on logout.
+        $data['business_uuid'] = null;
 
         // Settings → Security state — computed here rather than left for the
         // frontend to infer from raw timestamps, same reasoning as the
@@ -63,6 +67,7 @@ class UserResource extends JsonResource
             // settings endpoint that normally supplies this is owner-only.
             $branch = $staff->branch;
             $business = $branch?->business;
+            $data['business_uuid'] = $business?->uuid;
             $data['letterhead'] = $business ? [
                 'business_name' => $business->business_name,
                 'business_logo_url' => \App\Services\ImageUploadService::url($business->business_logo),

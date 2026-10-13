@@ -21,7 +21,7 @@ class BranchScheduleRequest extends FormRequest
     }
 
     /**
-     * No after:opening_time / after:break_start on the closing/end times —
+     * No after:opening_time on the closing time —
      * these columns are plain times-of-day with no "next day" flag, and a
      * same-day comparison would reject perfectly valid overnight hours
      * (e.g. open 22:00, close 02:00 for a late-night branch — see the
@@ -39,9 +39,6 @@ class BranchScheduleRequest extends FormRequest
 
             'opening_time' => 'nullable|date_format:H:i',
             'closing_time' => 'nullable|date_format:H:i',
-
-            'break_start' => 'nullable|date_format:H:i',
-            'break_end' => 'nullable|date_format:H:i',
 
             'is_closed' => 'sometimes|boolean',
         ];

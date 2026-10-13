@@ -9,6 +9,7 @@ use App\Models\SpaBranch;
 use App\Models\Staff;
 use App\Models\StaffSchedule;
 use App\Service\Business\AppointmentAvailabilityService;
+use App\Support\BranchClosures;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -51,7 +52,7 @@ class BookingSlotService
 
         $day = $this->dayWindow($branch->id, $date);
         if ($day['closed']) {
-            $result['closed_reason'] = 'The spa is closed on this day.';
+            $result['closed_reason'] = $day['reason'] ?? 'The spa is closed on this day.';
 
             return $result;
         }
@@ -68,7 +69,7 @@ class BookingSlotService
         for ($start = $day['open']->copy(); $start->lt($day['close']) && $start->isSameDay($day['open']); $start->addMinutes(self::STEP_MINUTES)) {
             $end = $start->copy()->addMinutes($duration);
 
-            if ($end->gt($day['close']) || $this->overlapsBreak($day, $start, $end)) {
+            if ($end->gt($day['close']) || $this->closureProblem($day, $start, $end)) {
                 continue;
             }
             if (BookingPolicy::startTimeProblem($policy, $start)) {
@@ -93,7 +94,7 @@ class BookingSlotService
         $duration = max($duration, 1);
         $day = $this->dayWindow($branch->id, $date);
         if ($day['closed']) {
-            return 'The spa is closed on this day.';
+            return $day['reason'] ?? 'The spa is closed on this day.';
         }
 
         $start = Carbon::parse("{$date} {$time}");
@@ -105,8 +106,8 @@ class BookingSlotService
         if ($end->gt($day['close'])) {
             return 'Your services would run past closing time. Please pick an earlier time.';
         }
-        if ($this->overlapsBreak($day, $start, $end)) {
-            return "That time runs into the spa's break. Please pick another time.";
+        if ($closed = $this->closureProblem($day, $start, $end)) {
+            return $closed . ' Please pick another time.';
         }
 
         $problem = $this->capacityProblem($this->loadDay($branch, $date, $excludeAppointmentId), $date, $start, $end, $therapist);
@@ -141,21 +142,24 @@ class BookingSlotService
             $close->addDay();
         }
 
-        $break = null;
-        if ($schedule?->break_start && $schedule?->break_end) {
-            $breakStart = Carbon::parse("{$date} {$schedule->break_start}");
-            $breakEnd = Carbon::parse("{$date} {$schedule->break_end}");
-            if ($breakEnd->gt($breakStart)) {
-                $break = [$breakStart, $breakEnd];
+        // Temporary closures that touch this day's hours. One over the whole
+        // working day reads as a closed day, with its reason.
+        $closures = BranchClosures::overlapping($branchId, $open, $close);
+        foreach ($closures as $closure) {
+            if ($closure->starts_at->lte($open) && $closure->ends_at->gte($close)) {
+                return ['closed' => true, 'reason' => BranchClosures::refusal($closure, 'spa')];
             }
         }
 
-        return ['closed' => false, 'open' => $open, 'close' => $close, 'break' => $break];
+        return ['closed' => false, 'open' => $open, 'close' => $close, 'closures' => $closures];
     }
 
-    private function overlapsBreak(array $day, Carbon $start, Carbon $end): bool
+    // Why [$start, $end) can't be booked because of a temporary closure, or null.
+    private function closureProblem(array $day, Carbon $start, Carbon $end): ?string
     {
-        return $day['break'] && $start->lt($day['break'][1]) && $end->gt($day['break'][0]);
+        $closure = $day['closures']->first(fn ($c) => $start->lt($c->ends_at) && $end->gt($c->starts_at));
+
+        return $closure ? BranchClosures::refusal($closure, 'spa') : null;
     }
 
     // Therapists, their shifts and leave, and the day's bookings as busy
@@ -253,13 +257,6 @@ class BookingSlotService
             $shiftEnd = Carbon::parse("{$date} {$row->end_time}");
             if ($start->lt($shiftStart) || $end->gt($shiftEnd)) {
                 continue;
-            }
-            if ($row->break_start && $row->break_end) {
-                $breakStart = Carbon::parse("{$date} {$row->break_start}");
-                $breakEnd = Carbon::parse("{$date} {$row->break_end}");
-                if ($start->lt($breakEnd) && $end->gt($breakStart)) {
-                    continue;
-                }
             }
 
             return true;

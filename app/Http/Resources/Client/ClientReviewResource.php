@@ -25,7 +25,7 @@ class ClientReviewResource extends JsonResource
             'appointment_uuid' => $appointment?->uuid,
             'appointment_date' => $appointment ? optional($appointment->appointment_date)->format('Y-m-d') : null,
             'services' => $appointment && $appointment->relationLoaded('services')
-                ? $appointment->services->map(fn ($s) => $s->serviceVariant?->service?->name)->filter()->unique()->values()
+                ? $appointment->services->map(fn ($s) => $s->displayName())->filter()->unique()->values()
                 : [],
             'branch' => $branch ? [
                 'uuid' => $branch->uuid,

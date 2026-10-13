@@ -27,6 +27,14 @@ class StaffResource extends JsonResource
             'birth_date' => $this->birth_date,
             'hire_date' => $this->hire_date,
             'role' => $this->role,
+            // What they do, main one first (App\Support\StaffSpecialty).
+            'specialties' => $this->resource->specialtyList(),
+            // Their own commission rate; null: the standard one (which comes
+            // beside the list, as `commission` — StaffService). What someone
+            // is paid is for the owner and managers only.
+            'commission_rate' => in_array($request->user()?->role, ['business_owner', 'manager'], true)
+                ? $this->resource->ownCommissionRate()
+                : null,
             'employment_type' => $this->employment_type,
             'status' => $this->status,
             'emergency_contact_name' => $this->emergency_contact_name,

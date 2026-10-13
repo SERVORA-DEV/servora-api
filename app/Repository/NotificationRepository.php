@@ -33,6 +33,23 @@ class NotificationRepository
     }
 
     // Scoped to $userId in the WHERE, like markReadForUser below.
+    // The newest notification $userId hasn't read yet, from the last
+    // $minutes, with one of these titles and a message starting with
+    // $startsWith (the name of whoever made the change). Lets a run of saves
+    // by one person become one notification instead of many
+    // (ManagerChangeNotifier).
+    public function recentUnreadFrom(int $userId, array $titles, string $startsWith, int $minutes): ?Notification
+    {
+        return Notification::where('user_id', $userId)
+            ->whereIn('title', $titles)
+            ->where('is_read', false)
+            ->where('created_at', '>=', now()->subMinutes($minutes))
+            ->orderByDesc('id')
+            ->limit(10)
+            ->get()
+            ->first(fn (Notification $n) => str_starts_with($n->message, $startsWith));
+    }
+
     public function findForUser(int $userId, int $id): ?Notification
     {
         return Notification::where('id', $id)->where('user_id', $userId)->first();

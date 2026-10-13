@@ -51,6 +51,7 @@ class CheckoutService
         private PlanSwitchService $planSwitch,
         private NotificationService $notifications,
         private AdminUsersRepository $admins,
+        private PlanFitService $fit,
     ) {}
 
     public static function vatOf(float $amount): float
@@ -67,13 +68,19 @@ class CheckoutService
     public function quote(User $owner, string $purpose, ?string $planUuid, ?string $cycle): array
     {
         $business = $this->businessOf($owner);
+        $purpose = $this->buyingAs($business->id, $purpose);
         [$plan, $cycle, $amount, $blocked, $lines] = $this->price($business, $purpose, $planUuid, $cycle);
         $live = $this->subscriptions->findActiveForBusiness($business->id);
+        // The demo lock (XenditService): a key that isn't a test key.
+        $blocked ??= $this->xendit->blockedReason();
 
         return [
             'purpose' => $purpose,
             'allowed' => $blocked === null,
             'blocked_reason' => $blocked,
+            // Xendit's test mode: nothing real is charged, and the page says
+            // so (with the test card to use).
+            'demo' => $this->xendit->isTestMode(),
             'plan' => $plan ? new SubscriptionPlanResource($plan) : null,
             'billing_cycle' => $cycle,
             'amount' => $amount,
@@ -82,10 +89,30 @@ class CheckoutService
             'lines' => $lines,
             'current_plan' => $live?->plan?->name,
             'renews_at' => $live?->expires_at,
+            // Buying a plan during the free trial ends the trial there and
+            // then (startTerm): the days left are NOT carried over. Sent so
+            // the page can say so before the owner pays.
+            'trial_ends_at' => $purpose !== 'save_method' && $live?->is_trial && $live->expires_at?->isFuture() ? $live->expires_at : null,
+            // Buying a plan smaller than what the business uses: what the
+            // owner has to choose to keep before paying (PlanFitService).
+            'fit' => $plan && in_array($purpose, ['subscribe', 'renew'], true) ? $this->fit->fit($business, $plan, now()) : null,
             'auto_renew' => (bool) $live?->auto_renew,
             'payment_methods' => $this->methodsFor($business),
             'billing_address' => $this->addressFor($business),
         ];
+    }
+
+    // Buying a plan is a renewal only for a business that has paid for one
+    // before. Coming off the free trial (running or ended) is a first
+    // subscription, whatever the page asked for: the trial was never bought.
+    // $before: for a checkout already made, what it was at the time.
+    private function buyingAs(int $businessId, string $purpose, ?\DateTimeInterface $before = null): string
+    {
+        if (! in_array($purpose, ['subscribe', 'renew'], true)) {
+            return $purpose;
+        }
+
+        return $this->subscriptions->hasHadPaidPlan($businessId, $before) ? 'renew' : 'subscribe';
     }
 
     // [plan, cycle, amount due, blocked reason or null, summary lines].
@@ -130,7 +157,10 @@ class CheckoutService
             $price === null => "The {$plan->name} plan isn't offered with {$cycle} billing.",
             default => null,
         };
-        if (! $blocked && ($over = $this->planSwitch->overLimits($business, $plan))) {
+        // Over the plan's limits: with the hold columns the owner chooses
+        // what to keep at checkout (start() checks it); without them (the
+        // migration not run) it is refused, as before.
+        if (! $blocked && ! $this->fit->ready() && ($over = $this->planSwitch->overLimits($business, $plan))) {
             $blocked = implode(' ', $over) . ' Remove branches or accounts first, or pick a bigger plan.';
         }
 
@@ -152,13 +182,24 @@ class CheckoutService
     public function start(User $owner, array $payload, ?string $requestOrigin): array
     {
         $business = $this->businessOf($owner);
-        $purpose = $payload['purpose'];
+        $purpose = $this->buyingAs($business->id, $payload['purpose']);
         [$plan, $cycle, $amount, $blocked] = $this->price($business, $purpose, $payload['plan_uuid'] ?? null, $payload['billing_cycle'] ?? null);
         if ($blocked) {
             abort(422, $blocked);
         }
         if ($purpose !== 'save_method' && $amount <= 0) {
             abort(422, 'There is nothing to pay.');
+        }
+        if ($reason = $this->xendit->blockedReason()) {
+            abort(503, $reason);
+        }
+        // Nothing is charged until what to keep on a smaller plan is settled.
+        $keep = null;
+        if ($plan && in_array($purpose, ['subscribe', 'renew'], true)) {
+            $keep = $payload['keep'] ?? null;
+            if ($problems = $this->fit->problems($business, $plan, $keep, now())) {
+                abort(422, $problems[0]);
+            }
         }
 
         $address = $this->saveAddress($business, $payload['billing_address']);
@@ -177,6 +218,7 @@ class CheckoutService
             'save_method' => $purpose === 'save_method' || $wantsAutoRenew || (bool) ($payload['save_method'] ?? false),
             'enable_auto_renew' => $wantsAutoRenew,
             'reference_id' => 'SRV-' . Str::uuid(),
+            'meta' => $keep ? ['keep' => $keep] : null,
         ]);
 
         if (($payload['method'] ?? null) === 'saved') {
@@ -199,7 +241,8 @@ class CheckoutService
                 'currency' => 'PHP',
                 'country' => 'PH',
                 'allow_save_payment_method' => $purpose === 'save_method' ? null : ($session->save_method ? 'FORCED' : 'DISABLED'),
-                'allowed_payment_channels' => self::CHANNELS,
+                // GCash pays once; Xendit can't save it to charge again.
+                'allowed_payment_channels' => $session->save_method ? array_values(array_diff(self::CHANNELS, ['GCASH'])) : self::CHANNELS,
                 'capture_method' => $purpose === 'save_method' ? null : 'AUTOMATIC',
                 'description' => $description,
                 'metadata' => ['servora_checkout' => $session->uuid, 'purpose' => $purpose],
@@ -288,17 +331,46 @@ class CheckoutService
         try {
             if ($session->xendit_session_id) {
                 $xs = $this->xendit->getSession($session->xendit_session_id);
-                match ($xs['status'] ?? null) {
-                    'COMPLETED' => $this->complete($session, $xs),
-                    'EXPIRED', 'CANCELED' => $session->update(['status' => 'expired', 'failure_reason' => 'The payment wasn\'t finished in time.']),
-                    default => null,
-                };
+                $status = $xs['status'] ?? null;
+                if ($status === 'COMPLETED') {
+                    $this->complete($session, $xs);
+                } elseif ($done = $this->settledOutsideSession($session, $xs)) {
+                    $this->complete($session, $done);
+                } elseif (in_array($status, ['EXPIRED', 'CANCELED'], true)) {
+                    $session->update(['status' => 'expired', 'failure_reason' => 'The payment wasn\'t finished in time.']);
+                }
             } elseif ($session->xendit_payment_request_id) {
                 $this->settleFromPaymentRequest($session, $this->xendit->getPaymentRequest($session->xendit_payment_request_id));
             }
         } catch (XenditRequestException $e) {
             Log::warning('checkout.refresh_failed', ['session' => $session->uuid, 'error' => $e->getMessage()]);
         }
+    }
+
+    // A wallet (Maya, GCash) is approved on the wallet's own page, away from
+    // ours. Xendit only marks the SESSION completed once its form, back on
+    // our page, sees it through — which never happens when the owner isn't
+    // sent back there (Xendit has no return address for localhost) or comes
+    // back another way. The work is done all the same: the session names the
+    // payment token or payment request it led to, and that is what is asked
+    // about here. Null: nothing has gone through yet.
+    private function settledOutsideSession(CheckoutSession $session, array $xs): ?array
+    {
+        if ($session->purpose === 'save_method') {
+            $tokenId = $xs['latest_payment_token_id'] ?? null;
+            $token = $tokenId ? $this->xendit->getPaymentToken($tokenId) : null;
+
+            return ($token['status'] ?? null) === 'ACTIVE'
+                ? ['payment_token_id' => $tokenId, 'payment_request_id' => null, 'channel_code' => $token['channel_code'] ?? null]
+                : null;
+        }
+
+        $requestId = $xs['latest_payment_request_id'] ?? null;
+        $pr = $requestId ? $this->xendit->getPaymentRequest($requestId) : null;
+
+        return ($pr['status'] ?? null) === 'SUCCEEDED'
+            ? ['payment_request_id' => $requestId, 'payment_token_id' => $pr['payment_token_id'] ?? null, 'channel_code' => $pr['channel_code'] ?? null]
+            : null;
     }
 
     private function settleFromPaymentRequest(CheckoutSession $session, array $pr): void
@@ -410,6 +482,13 @@ class CheckoutService
             }
         }
 
+        // The term has started on this plan: what doesn't fit goes on hold
+        // (the owner's choice came with the payment), or earlier holds are
+        // released if the plan has room for them again.
+        if ($plan = SubscriptionPlan::find($session->subscription_plan_id)) {
+            $this->fit->settle($business, $plan, $session->meta['keep'] ?? null);
+        }
+
         return $subscription;
     }
 
@@ -487,8 +566,15 @@ class CheckoutService
         $admins = $this->admins->allAdministrators();
         $subscription?->loadMissing('plan');
 
+        // One notification per purchase: buying a plan says what was paid
+        // itself; any other payment gets "Payment Received".
         if (in_array($session->purpose, ['subscribe', 'renew'], true) && $subscription?->plan) {
-            $this->notifications->subscriptionActivated($business, $subscription->plan, $subscription->billing_cycle, $admins);
+            $this->notifications->subscriptionActivated(
+                $business, $subscription->plan, $subscription->billing_cycle, $admins,
+                (float) $session->amount, $session->purpose === 'renew',
+            );
+
+            return;
         }
         if ($session->purpose === 'auto_renew' && $subscription) {
             $this->notifications->subscriptionAutoRenewed($subscription, (float) $session->amount);
@@ -644,6 +730,13 @@ class CheckoutService
         $candidate = $requestOrigin && parse_url($requestOrigin, PHP_URL_HOST) === $frontendHost ? rtrim($requestOrigin, '/') : $frontend;
 
         if (! str_starts_with($candidate, 'https://')) {
+            // The page IS on HTTPS, just not at the address this API is set
+            // up for (in development: the PC's network IP instead of
+            // localhost). Say where to open it, not "use HTTPS".
+            if ($requestOrigin && str_starts_with($requestOrigin, 'https://') && $frontendHost) {
+                $port = parse_url($frontend, PHP_URL_PORT);
+                abort(422, "Open the checkout at https://{$frontendHost}" . ($port ? ":{$port}" : '') . ' instead. The secure payment form only loads at the address Servora is set up for.');
+            }
             abort(422, 'The checkout must be opened over HTTPS for the secure payment form to load.');
         }
 
@@ -684,7 +777,9 @@ class CheckoutService
     {
         return [
             'uuid' => $session->uuid,
-            'purpose' => $session->purpose,
+            // Worked out again for a checkout saved as a renewal when it was
+            // the first paid plan (bought during the free trial).
+            'purpose' => $this->buyingAs($session->spa_business_id, $session->purpose, $session->created_at),
             'status' => $session->status,
             'failure_reason' => $session->failure_reason,
             'amount' => (float) $session->amount,

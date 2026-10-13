@@ -44,13 +44,15 @@ class FrontOfficeDashboardService
 
         // The database is a network round trip away and the front desk keeps
         // this page open, so the payload is kept briefly (short enough that
-        // the queue and schedule still read as live).
+        // the queue and schedule still read as live). The page asks again
+        // every 15 seconds: kept for less than that, so each of its checks
+        // gets a fresh answer, while several desks on one branch share it.
         $key = sprintf('frontoffice:dashboard:%d:%s', $branch->id, Carbon::today()->toDateString());
 
         return Cache::remember($key, self::CACHE_TTL_SECONDS, fn () => $this->buildOverview($user, $branch));
     }
 
-    private const CACHE_TTL_SECONDS = 15;
+    private const CACHE_TTL_SECONDS = 10;
 
     private function buildOverview(User $user, $branch): array
     {
@@ -229,7 +231,7 @@ class FrontOfficeDashboardService
 
         $serviceLabel = $services->count() > 1
             ? $services->count().' services'
-            : ($services->first()?->serviceVariant?->service?->name ?? 'Service');
+            : ($services->first()?->displayName() ?? 'Service');
 
         $assignments = $services->flatMap(fn ($service) => $service->therapistAssignments);
 
@@ -322,7 +324,7 @@ class FrontOfficeDashboardService
     private function roleLabel(?string $role): string
     {
         return match ($role) {
-            'therapist' => 'Therapist',
+            'therapist' => 'Staff',
             'manager' => 'Manager',
             'frontdesk', 'front_officer' => 'Front desk',
             default => ucfirst(str_replace('_', ' ', (string) $role)),

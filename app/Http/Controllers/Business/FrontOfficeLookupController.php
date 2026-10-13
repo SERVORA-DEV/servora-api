@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
+use App\Service\Business\BookingBoardService;
 use App\Service\Business\FrontOfficeLookupService;
 use Illuminate\Http\Request;
 
@@ -56,14 +57,41 @@ class FrontOfficeLookupController extends Controller
         return $this->frontOfficeLookupService->packages($request->user());
     }
 
+    public function addons(Request $request)
+    {
+        return $this->frontOfficeLookupService->addons($request->user());
+    }
+
     public function schedule(Request $request)
     {
         return $this->frontOfficeLookupService->schedule($request->user());
+    }
+
+    public function scannerLink(Request $request)
+    {
+        return $this->frontOfficeLookupService->scannerLink($request->user());
+    }
+
+    public function replaceScannerLink(Request $request)
+    {
+        return $this->frontOfficeLookupService->scannerLink($request->user(), true);
     }
 
     public function busyTimes(Request $request)
     {
         $request->validate(['date' => 'required|date']);
         return $this->frontOfficeLookupService->busyTimes($request->user(), $request->input('date'));
+    }
+
+    // The New Appointment page: one day, with who can take a visit of this
+    // length at each start time.
+    public function bookingBoard(Request $request, BookingBoardService $bookingBoardService)
+    {
+        $data = $request->validate([
+            'date' => 'required|date_format:Y-m-d',
+            'duration' => 'nullable|integer|min:15|max:720',
+        ]);
+
+        return $bookingBoardService->board($request->user(), $data['date'], (int) ($data['duration'] ?? 60));
     }
 }

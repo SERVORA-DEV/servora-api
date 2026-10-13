@@ -2,6 +2,9 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Models\Client;
+use App\Support\ClientProfile;
+use App\Support\StaffGender;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -32,6 +35,13 @@ class AppointmentRequest extends FormRequest
             'source' => ['sometimes', Rule::in(['Mobile', 'Front Desk'])],
             'remarks' => 'nullable|string',
 
+            // Home service (HomeServiceRules checks the place and the area).
+            'service_location' => ['sometimes', Rule::in(['In Spa', 'Home Service'])],
+            'home_address' => 'nullable|required_if:service_location,Home Service|string|max:500',
+            'home_address_notes' => 'nullable|string|max:500',
+            'home_latitude' => 'nullable|required_if:service_location,Home Service|numeric|between:-90,90',
+            'home_longitude' => 'nullable|required_if:service_location,Home Service|numeric|between:-180,180',
+
             // Minimal — see ClientRequest's docblock; clients only stores
             // simple operational attributes.
             'client_uuid' => ['required_without:client', 'prohibits:client', 'uuid', 'exists:clients,uuid'],
@@ -40,14 +50,39 @@ class AppointmentRequest extends FormRequest
             'client.last_name' => 'required_with:client|string|max:100',
             'client.phone_number' => 'nullable|string|max:20',
             'client.email' => 'nullable|email|max:255',
+            // The spa's own record of them (App\Support\ClientProfile):
+            // gender is asked of every new client, age is optional.
+            'client.gender' => [Client::hasProfile() ? 'required_with:client' : 'nullable', Rule::in(ClientProfile::GENDERS)],
+            'client.age' => 'nullable|integer|min:0|max:' . ClientProfile::OLDEST,
+            // For a client already on file: what their record is missing,
+            // filled in with the booking. Never replaces what is there.
+            'client_update' => 'sometimes|array',
+            'client_update.gender' => ['nullable', Rule::in(ClientProfile::GENDERS)],
+            'client_update.age' => 'nullable|integer|min:0|max:' . ClientProfile::OLDEST,
+            'client_update.phone_number' => 'nullable|string|max:20',
 
             'requested_therapist_uuid' => 'nullable|uuid|exists:staff,uuid',
+            // The staff gender the client would rather have — advice for
+            // whoever assigns (App\Support\StaffGender).
+            'preferred_staff_gender' => ['nullable', Rule::in(StaffGender::PREFERENCES)],
 
             'services' => 'sometimes|array',
             'services.*.service_variant_uuid' => 'required_with:services|uuid|exists:service_variants,uuid',
             'services.*.quantity' => 'nullable|integer|min:1',
             'services.*.discount_amount' => 'nullable|numeric|min:0',
             'services.*.notes' => 'nullable|string',
+
+            // A package booked with the appointment (the New Appointment
+            // page's menu lists them beside the services).
+            'package_uuid' => 'nullable|uuid|exists:packages,uuid',
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'client.gender.required_with' => 'Choose the client\'s gender.',
+            'client.gender.in' => 'Choose Male or Female.',
         ];
     }
 }

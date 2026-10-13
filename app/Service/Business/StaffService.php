@@ -3,12 +3,16 @@
 namespace App\Service\Business;
 
 use App\Models\Service;
+use App\Models\Staff;
 use App\Models\User;
 use App\Repository\Business\StaffRepository;
 use App\Repository\Business\StaffServiceRepository as StaffQualificationRepository;
 use App\Repository\Business\SpaBranchRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Http\Resources\StaffResource;
+use App\Models\SpaBusiness;
+use App\Support\CommissionShare;
+use App\Support\StaffSpecialty;
 
 class StaffService
 {
@@ -22,6 +26,8 @@ class StaffService
         SpaBranchRepository $spaBranchRepository,
         SpaBusinessRepository $spaBusinessRepository,
         StaffQualificationRepository $staffQualificationRepository,
+        private ManagerChangeNotifier $managerChanges,
+        private CommissionCalculator $commissionCalculator,
     ) {
         $this->staffRepository = $staffRepository;
         $this->spaBranchRepository = $spaBranchRepository;
@@ -36,7 +42,22 @@ class StaffService
     // list/view/create/update/delete staff at their own branch.
     private function branchIds(User $user): array
     {
-        return $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
+        return $this->spaBusinessRepository->branchIdsForUser($user);
+    }
+
+    // For an owner who asked to hear when a manager changes the staff.
+    // $what follows the manager's name; {name} and {branch} are filled in.
+    private function staffChanged(User $user, Staff $staff, string $title, string $what, bool $gone = false): void
+    {
+        $this->managerChanges->tell(
+            $user, fn () => $staff->branch, ManagerChangeNotifier::STAFF, $title,
+            fn () => strtr($what, [
+                '{name}' => trim("{$staff->first_name} {$staff->last_name}") ?: 'an employee',
+                '{branch}' => $staff->branch->branch_name,
+            ]),
+            // A click opens the employee, unless they were just removed.
+            reference: $gone ? null : $staff->uuid,
+        );
     }
 
     public function listStaff(User $user, int $perPage = 15)
@@ -48,7 +69,92 @@ class StaffService
         }
 
         $collection = $this->staffRepository->paginateForBranches($this->branchIds($user), $perPage);
-        return StaffResource::collection($collection);
+        return StaffResource::collection($collection)->additional($this->standardCommission($business));
+    }
+
+    // The standard commission (Staff Policies), beside every staff answer:
+    // what someone with no rate of their own earns, and whether a custom one
+    // can be set at all yet.
+    private function standardCommission(SpaBusiness $business): array
+    {
+        $rule = $this->commissionCalculator->describe($business);
+
+        return ['commission' => [
+            'enabled' => $rule['enabled'],
+            'type' => $rule['type'],
+            'standard_rate' => $rule['standard_rate'],
+            'custom_allowed' => Staff::hasCustomCommission(),
+        ]];
+    }
+
+    private function answer(Staff $staff, SpaBusiness $business): StaffResource
+    {
+        return (new StaffResource($staff))->additional($this->standardCommission($business));
+    }
+
+    // Someone's own commission rate on its way to the database: left out
+    // until the column exists; none for a manager or the front desk; for
+    // staff, the number sent, which must fit the kind the standard is (a 422
+    // in place of the payload when it doesn't). Blank means the standard.
+    private function withCommission(array $payload, ?Staff $existing, SpaBusiness $business)
+    {
+        if (! Staff::hasCustomCommission()) {
+            unset($payload['commission_rate']);
+
+            return $payload;
+        }
+
+        $role = $payload['role'] ?? $existing?->role;
+        if ($role !== StaffSpecialty::ROLE) {
+            // No longer someone who performs services: nothing of their own.
+            if (array_key_exists('commission_rate', $payload) || ($existing && $existing->commission_rate !== null)) {
+                $payload['commission_rate'] = null;
+            }
+
+            return $payload;
+        }
+        if (! array_key_exists('commission_rate', $payload)) {
+            return $payload;
+        }
+
+        $policy = $this->commissionCalculator->policy($business) ?? $business->settings?->section('staff_policy');
+        [$rate, $problem] = CommissionShare::clean($payload['commission_rate'], $policy['commission_type'] ?? 'percentage');
+        if ($problem) {
+            return response()->json(['message' => $problem, 'errors' => ['commission_rate' => [$problem]]], 422);
+        }
+        $payload['commission_rate'] = $rate;
+
+        return $payload;
+    }
+
+    // "Standard (15%)" / "20%" — someone's commission as a sentence reads it.
+    private function commissionWords(SpaBusiness $business, ?float $ownRate): string
+    {
+        $policy = $this->commissionCalculator->policy($business) ?? $business->settings?->section('staff_policy') ?? \App\Models\SpaBusinessSetting::DEFAULTS['staff_policy'];
+
+        return CommissionShare::describe($policy, $ownRate);
+    }
+
+    // What someone is paid is the owner's to know about, and nobody else's:
+    // a manager's change to it always reaches the owner, on its own.
+    private function commissionChanged(User $user, Staff $staff, SpaBusiness $business, ?float $before): void
+    {
+        $after = $staff->ownCommissionRate();
+        if ($before === $after) {
+            return;
+        }
+
+        $this->managerChanges->tellOwner(
+            $user, fn () => $staff->branch, 'Employee Changed',
+            fn () => sprintf(
+                "changed %s's commission from %s to %s at %s.",
+                trim("{$staff->first_name} {$staff->last_name}") ?: 'an employee',
+                $this->commissionWords($business, $before),
+                $this->commissionWords($business, $after),
+                $staff->branch->branch_name,
+            ),
+            reference: $staff->uuid,
+        );
     }
 
     /**
@@ -71,6 +177,15 @@ class StaffService
         $payload['spa_branch_id'] = $branch->id;
         $payload['status'] = $payload['status'] ?? 'active';
         unset($payload['spa_branch_uuid']);
+
+        $payload = $this->withSpecialties($payload, null);
+        if (! is_array($payload)) {
+            return $payload;
+        }
+        $payload = $this->withCommission($payload, null, $business);
+        if (! is_array($payload)) {
+            return $payload;
+        }
 
         // Auto-assign EMP-0001-style number when none was supplied — StaffRequest
         // already validated a manually-entered number for uniqueness, so this
@@ -96,7 +211,11 @@ class StaffService
             }
         }
 
-        return new StaffResource($model->load('branch'));
+        $this->staffChanged($user, $model, 'Employee Added', 'added {name} to the staff of {branch}.');
+        // Added with a rate of their own: the owner hears that too.
+        $this->commissionChanged($user, $model, $business, null);
+
+        return $this->answer($model->load('branch'), $business);
     }
 
     public function getStaff(User $user, string $uuid)
@@ -108,7 +227,7 @@ class StaffService
         }
 
         $model = $this->staffRepository->findByUuidForBranches($uuid, $this->branchIds($user));
-        return new StaffResource($model);
+        return $this->answer($model, $business);
     }
 
     public function updateStaff(User $user, string $uuid, array $payload)
@@ -142,9 +261,50 @@ class StaffService
         }
         unset($payload['spa_branch_uuid']);
 
+        $payload = $this->withSpecialties($payload, $existing);
+        if (! is_array($payload)) {
+            return $payload;
+        }
+        $payload = $this->withCommission($payload, $existing, $business);
+        if (! is_array($payload)) {
+            return $payload;
+        }
+        $rateBefore = $existing->ownCommissionRate();
+
         $model = $this->staffRepository->update($uuid, $payload);
 
-        return new StaffResource($model);
+        $this->staffChanged($user, $model, 'Employee Changed', "changed {name}'s details at {branch}.");
+        $this->commissionChanged($user, $model, $business, $rateBefore);
+
+        return $this->answer($model, $business);
+    }
+
+    // What the person does (App\Support\StaffSpecialty) on its way to the
+    // database: left out until the column exists; none for a manager or the
+    // front desk; for staff, what was sent — what they had, or "Therapist",
+    // when nothing was. Sending an empty list for someone who performs
+    // services is refused (a 422 in place of the payload).
+    private function withSpecialties(array $payload, ?Staff $existing)
+    {
+        if (! Staff::hasSpecialties()) {
+            unset($payload['specialties']);
+
+            return $payload;
+        }
+
+        $role = $payload['role'] ?? $existing?->role;
+        $sent = array_key_exists('specialties', $payload);
+        if ($role === \App\Support\StaffSpecialty::ROLE && $sent && ! \App\Support\StaffSpecialty::clean($payload['specialties'])) {
+            return response()->json(['message' => 'Choose at least one specialty.'], 422);
+        }
+        // Nothing to settle: a save that touches neither the role nor these.
+        if (! $sent && $existing && ! array_key_exists('role', $payload)) {
+            return $payload;
+        }
+
+        $payload['specialties'] = \App\Support\StaffSpecialty::forRole($role, $payload['specialties'] ?? null, $existing?->specialties) ?: null;
+
+        return $payload;
     }
 
     // Read-back for the manager's "Services They Can Perform" card. Kept as
@@ -191,7 +351,9 @@ class StaffService
 
         $this->staffQualificationRepository->sync($staff->id, $serviceIds);
 
-        return new StaffResource($staff->load('branch'));
+        $this->staffChanged($user, $staff, 'Employee Services Changed', 'changed which services {name} can perform at {branch}.');
+
+        return $this->answer($staff->load('branch'), $business);
     }
 
     public function deleteStaff(User $user, string $uuid)
@@ -211,6 +373,9 @@ class StaffService
         }
 
         $this->staffRepository->delete($uuid);
+
+        $this->staffChanged($user, $existing, 'Employee Removed', 'removed {name} from the staff of {branch}.', gone: true);
+
         return true;
     }
 }

@@ -42,6 +42,8 @@ class Payment extends Model
         'voided_by',
         // The staff member who took the payment.
         'received_by',
+        // Their name at the time (App\Support\History).
+        'received_by_name',
 
         'remarks',
     ];
@@ -57,6 +59,28 @@ class Payment extends Model
             'paid_at' => 'datetime',
             'voided_at' => 'datetime',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        static::saving(function (self $payment) {
+            if (\App\Support\History::ready() && ($payment->isDirty('received_by') || ($payment->received_by && $payment->received_by_name === null))) {
+                $payment->received_by_name = self::nameOf($payment->received_by ? User::with('staff')->find($payment->received_by) : null);
+            }
+        });
+    }
+
+    // Staff accounts are known by their employee record's name (see UserResource).
+    public static function nameOf(?User $user): ?string
+    {
+        if (! $user) {
+            return null;
+        }
+        $staff = $user->staff;
+
+        return \App\Support\History::person($staff?->first_name, $staff?->last_name)
+            ?? \App\Support\History::person($user->first_name, $user->last_name)
+            ?? $user->email;
     }
 
     public function receiver()

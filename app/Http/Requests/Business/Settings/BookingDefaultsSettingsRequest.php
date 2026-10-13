@@ -30,7 +30,11 @@ class BookingDefaultsSettingsRequest extends FormRequest
         return [
             'online_booking_enabled' => 'sometimes|boolean',
             'walk_in_enabled' => 'sometimes|boolean',
+            'reservation_enabled' => 'sometimes|boolean',
             'home_service_enabled' => 'sometimes|boolean',
+            'home_service_fee' => 'sometimes|required|integer|min:0|max:100000',
+            'home_service_radius_km' => 'sometimes|required|integer|min:1|max:200',
+            'home_service_min_minutes' => 'sometimes|required|integer|min:0|max:1440',
             'allow_therapist_selection' => 'sometimes|boolean',
             'auto_assign_therapist' => 'sometimes|boolean',
             'allow_reschedule' => 'sometimes|boolean',
@@ -39,14 +43,13 @@ class BookingDefaultsSettingsRequest extends FormRequest
             'booking_lead_time_minutes' => 'sometimes|required|integer|min:0|max:10080',
             'max_advance_booking_days' => 'sometimes|required|integer|min:1|max:365',
             'max_services_per_booking' => 'sometimes|required|integer|min:1|max:20',
+            'max_service_minutes_per_booking' => 'sometimes|required|integer|min:0|max:1440',
 
             'cancellation_window_hours' => 'sometimes|required|integer|min:0|max:720',
             'cancellation_policy_tier' => 'sometimes|required|in:flexible,moderate,strict',
             'no_show_policy' => 'sometimes|required|in:none,warn,suspend',
             'no_show_suspend_after' => 'sometimes|required|integer|min:1|max:20',
 
-            'require_deposit' => 'sometimes|boolean',
-            'deposit_percent' => 'sometimes|required|integer|min:1|max:100',
 
             'queue_enabled' => 'sometimes|boolean',
             'auto_assign_queue' => 'sometimes|boolean',

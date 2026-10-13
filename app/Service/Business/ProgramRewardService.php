@@ -10,6 +10,8 @@ use App\Models\ClientPointEntry;
 use App\Models\ClientVoucher;
 use App\Models\CustomerProgram;
 use App\Support\AppCache;
+use App\Support\LoyaltyEarning;
+use App\Support\VoucherTarget;
 use App\Models\User;
 use App\Repository\NotificationRepository;
 use Carbon\CarbonInterface;
@@ -21,7 +23,8 @@ use Illuminate\Support\Facades\DB;
 //   onBillPaid()      a paid appointment bill earns loyalty points (per ₱ paid
 //                     — nothing is added per service or package) and any
 //                     vouchers whose condition it meets (spend in one visit,
-//                     every Nth visit, first visit)
+//                     every Nth visit — or every Nth visit with certain
+//                     services, see App\Support\VoucherTarget — first visit)
 //   onBillReopened()  a voided/refunded bill gives those back
 //   redeemPoints()    points → a "Redeem loyalty points" voucher
 //   issueMembershipVouchers()  the vouchers a membership bundles, per period
@@ -90,18 +93,21 @@ class ProgramRewardService
         $programs = $this->offeredAt($billing->spa_business_id, $billing->spa_branch_id);
         $earned = [];
 
+        // Points are for clients who use the app (App\Support\LoyaltyEarning);
+        // the vouchers below are for everyone.
         $loyalty = $programs->firstWhere('type', 'loyalty');
-        if ($loyalty && ($points = $this->creditPoints($client, $billing, $loyalty)) > 0) {
+        if ($loyalty && LoyaltyEarning::earns($client->usesApp()) && ($points = $this->creditPoints($client, $billing, $loyalty)) > 0) {
             $earned[] = number_format($points) . ' points';
         }
 
-        $paidVisits = $this->paidVisits($client);
+        $visits = $this->paidVisitServices($client);
+        $paidVisits = count($visits);
         foreach ($programs->where('type', 'voucher') as $voucher) {
             $due = match ($voucher->condition_kind) {
                 'min_spend' => $voucher->condition_value && (float) $billing->amount + 0.004 >= $voucher->condition_value
                     && ! ClientVoucher::where('customer_program_id', $voucher->id)->where('source_billing_id', $billing->id)->where('status', '!=', 'cancelled')->exists() ? 1 : 0,
                 'visits' => $voucher->condition_value
-                    ? max(0, intdiv($paidVisits, $voucher->condition_value) - $this->issuedCount($client, $voucher, 'visits'))
+                    ? max(0, intdiv(VoucherTarget::visits(VoucherTarget::of($voucher->values, 'earn'), $visits), $voucher->condition_value) - $this->issuedCount($client, $voucher, 'visits'))
                     : 0,
                 'first_visit' => $paidVisits === 1 && $this->issuedCount($client, $voucher, 'first_visit') === 0 ? 1 : 0,
                 default => 0,
@@ -167,8 +173,9 @@ class ProgramRewardService
             return 0;
         }
 
-        $rate = (float) $loyalty->value('pointsPerPeso', 0);
-        $points = (int) floor((float) $billing->amount * $rate + 1e-9);
+        // Multiplied before dividing, so "1 point per ₱3" is exact.
+        $rule = $this->earnRule($loyalty);
+        $points = (int) floor((float) $billing->amount * $rule['points'] / $rule['per'] + 1e-9);
         if ($points <= 0) {
             return 0;
         }
@@ -190,6 +197,41 @@ class ProgramRewardService
         return $points;
     }
 
+    // ── The loyalty rules, read in one place ──────────────────────────────
+
+    /**
+     * How points are earned: `points` for every `per` pesos paid ("1 point
+     * per ₱10"). A program saved before the two numbers existed only has
+     * points per ₱1.
+     *
+     * @return array{points: float, per: float}
+     */
+    public function earnRule(CustomerProgram $loyalty): array
+    {
+        $points = (float) $loyalty->value('earnPoints', 0);
+        $per = (float) $loyalty->value('earnPerPesos', 0);
+        if ($points > 0 && $per > 0) {
+            return ['points' => $points, 'per' => $per];
+        }
+
+        return ['points' => max(0, (float) $loyalty->value('pointsPerPeso', 0)), 'per' => 1.0];
+    }
+
+    /** The most vouchers a client can get with points in one visit; 0 = no limit. */
+    public function redeemLimit(?CustomerProgram $loyalty): int
+    {
+        return max(0, (int) ($loyalty?->value('redeemPerVisit', 0) ?? 0));
+    }
+
+    /** Vouchers the client has already got with points today. A visit is a day. */
+    public function redeemedToday(Client $client): int
+    {
+        return ClientPointEntry::where('client_id', $client->id)
+            ->where('type', 'redeem')
+            ->where('created_at', '>=', now()->startOfDay())
+            ->count();
+    }
+
     // ── Points → voucher ──────────────────────────────────────────────────
 
     /** @return ClientVoucher|string the new voucher, or why it can't be redeemed */
@@ -208,15 +250,20 @@ class ProgramRewardService
         $cost = (int) $voucher->condition_value;
         $client = Client::whereKey($client->id)->lockForUpdate()->first();
         $loyalty = CustomerProgram::where('spa_business_id', $client->spa_business_id)->where('type', 'loyalty')->where('is_active', true)->first();
-        $minimum = (int) ($loyalty?->value('minRedeem', 0) ?? 0);
 
         if ($cost <= 0) {
             return 'This voucher has no points price set.';
         }
-        if ($client->current_points < max($cost, $minimum)) {
-            return $client->current_points < $cost
-                ? 'Not enough points — ' . number_format($cost - $client->current_points) . ' more needed.'
-                : 'Points can be redeemed from ' . number_format($minimum) . ' points.';
+        // The voucher's own price is the only bar: there is no separate
+        // "minimum points to redeem".
+        if ($client->current_points < $cost) {
+            return 'Not enough points — ' . number_format($cost - $client->current_points) . ' more needed.';
+        }
+        $limit = $this->redeemLimit($loyalty);
+        if ($limit > 0 && $this->redeemedToday($client) >= $limit) {
+            return $limit === 1
+                ? 'Only 1 voucher can be redeemed with points per visit. The next one can be redeemed on the next visit.'
+                : "Only {$limit} vouchers can be redeemed with points per visit. The next one can be redeemed on the next visit.";
         }
 
         // Spend the points that expire first.
@@ -282,12 +329,36 @@ class ProgramRewardService
 
     // ── Progress (for the client app's "how to earn") ─────────────────────
 
-    public function paidVisits(Client $client): int
+    // Every paid visit of a client, each as the services it had (cancelled
+    // ones left out; a visit with none left is still a visit). count() of it
+    // is the client's paid visits; a voucher that only counts visits with
+    // certain services reads the rest (VoucherTarget::visits()).
+    /** @return array<int, array<int, array{uuid: ?string, category: ?string}>> */
+    public function paidVisitServices(Client $client): array
     {
-        return Billing::where('billing_type', 'Appointment')
-            ->where('status', 'Paid')
-            ->whereIn('appointment_id', Appointment::where('client_id', $client->id)->select('id'))
-            ->count();
+        $rows = DB::table('billings')
+            ->join('appointments', 'appointments.id', '=', 'billings.appointment_id')
+            ->leftJoin('appointment_services', fn ($join) => $join
+                ->on('appointment_services.appointment_id', '=', 'appointments.id')
+                ->where('appointment_services.status', '!=', 'Cancelled'))
+            ->leftJoin('service_variants', 'service_variants.id', '=', 'appointment_services.service_variant_id')
+            ->leftJoin('services', 'services.id', '=', 'service_variants.service_id')
+            ->where('billings.billing_type', 'Appointment')
+            ->where('billings.status', 'Paid')
+            ->whereNull('billings.deleted_at')
+            ->whereNull('appointments.deleted_at')
+            ->where('appointments.client_id', $client->id)
+            ->get(['billings.id as billing_id', 'services.uuid', 'services.category']);
+
+        $visits = [];
+        foreach ($rows as $row) {
+            $visits[$row->billing_id] ??= [];
+            if ($row->uuid !== null) {
+                $visits[$row->billing_id][] = ['uuid' => $row->uuid, 'category' => $row->category];
+            }
+        }
+
+        return array_values($visits);
     }
 
     public function issuedCount(Client $client, CustomerProgram $voucher, string $source): int

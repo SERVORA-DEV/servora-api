@@ -4,9 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-// A staff member's weekly recurring shift — day_of_week + start/end +
-// break window, with an optional effective_from/until date range for
-// schedule versioning. First real consumer is
+// A staff member's weekly recurring shift — day_of_week + start/end, with an
+// optional effective_from/until date range for schedule versioning. First real consumer is
 // AppointmentAvailabilityService::staffMatchesSchedule().
 class StaffSchedule extends Model
 {
@@ -17,8 +16,6 @@ class StaffSchedule extends Model
         'day_of_week',
         'start_time',
         'end_time',
-        'break_start',
-        'break_end',
         'is_day_off',
         'effective_from',
         'effective_until',

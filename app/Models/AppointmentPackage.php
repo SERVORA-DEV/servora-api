@@ -21,6 +21,8 @@ class AppointmentPackage extends Model
         'uuid',
         'appointment_id',
         'package_id',
+        // Its own copy of the package's name (App\Support\History).
+        'package_name',
         'quantity',
         'unit_price',
         'discount_amount',
@@ -47,9 +49,25 @@ class AppointmentPackage extends Model
         return $this->belongsTo(Appointment::class, 'appointment_id');
     }
 
+    // A package removed from the menu is still the package that was sold.
     public function package()
     {
-        return $this->belongsTo(Package::class, 'package_id');
+        return $this->belongsTo(Package::class, 'package_id')->withTrashed();
+    }
+
+    protected static function booted(): void
+    {
+        static::saving(function (self $row) {
+            if (\App\Support\History::ready() && ($row->isDirty('package_id') || $row->package_name === null)) {
+                $row->package_name = Package::withTrashed()->whereKey($row->package_id)->value('name');
+            }
+        });
+    }
+
+    /** The package's name when it was sold — its own copy first. */
+    public function displayName(): ?string
+    {
+        return \App\Support\History::own($this->package_name, fn () => $this->package?->name);
     }
 
     public function explodedServices()

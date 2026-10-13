@@ -41,6 +41,12 @@ class ClientProfileService
             $data['birth_date'] = $payload['birth_date'] ?: null;
         }
 
+        // Spas record a client's gender; kept when the app doesn't send it,
+        // and never cleared from here.
+        if (filled($payload['gender'] ?? null)) {
+            $data['gender'] = $payload['gender'];
+        }
+
         // The email an account signed up with is immutable here: it is the
         // login identifier and the key for password_reset_tokens and
         // email_verification_otps, and it has already been OTP-verified.

@@ -37,6 +37,15 @@ class StaffRequest extends FormRequest
             'hire_date' => [$isCreate ? 'required' : 'sometimes', 'date'],
 
             'role' => [$isCreate ? 'required' : 'sometimes', Rule::in(['therapist', 'manager', 'frontdesk'])],
+            // What they do — for the people who perform services (the
+            // 'therapist' role, shown as "Staff"). The first is their main
+            // one. StaffService settles it against the role.
+            'specialties' => ['sometimes', 'array', 'max:' . count(\App\Support\StaffSpecialty::ALL)],
+            'specialties.*' => ['string', 'distinct', Rule::in(\App\Support\StaffSpecialty::ALL)],
+            // Their own commission — the same kind as the standard one in
+            // Staff Policies; null or left out: the standard. StaffService
+            // settles it against the role and the kind (CommissionShare::clean).
+            'commission_rate' => 'sometimes|nullable|numeric|min:0|max:1000000',
             'employment_type' => [$isCreate ? 'required' : 'sometimes', Rule::in(['Full-Time', 'Part-Time', 'Contractual'])],
             'status' => ['sometimes', Rule::in(['active', 'inactive', 'on-leave', 'terminated'])],
 

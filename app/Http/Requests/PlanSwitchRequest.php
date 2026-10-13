@@ -18,6 +18,13 @@ class PlanSwitchRequest extends FormRequest
         return [
             'subscription_plan_uuid' => 'required|uuid|exists:subscription_plans,uuid',
             'billing_cycle' => 'required|in:Monthly,Yearly',
+            // Moving to a plan smaller than what they use: what to keep
+            // (PlanFitService). Ignored when everything fits.
+            'keep' => 'sometimes|nullable|array',
+            'keep.branch_uuids' => 'sometimes|array',
+            'keep.branch_uuids.*' => 'uuid',
+            'keep.account_uuids' => 'sometimes|array',
+            'keep.account_uuids.*' => 'uuid',
         ];
     }
 }

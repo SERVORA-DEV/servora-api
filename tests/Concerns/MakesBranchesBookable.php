@@ -9,7 +9,9 @@ use App\Models\ServiceVariant;
 use App\Models\SpaBranch;
 use App\Models\SpaBusinessSetting;
 use App\Models\Staff;
+use App\Models\SystemSetting;
 use App\Service\Client\BookingPolicy;
+use App\Support\ListingPolicy;
 
 // Gives a test branch what MarketplaceReadiness needs before clients can
 // find or book it: opening hours, an active therapist and (optionally) a
@@ -45,6 +47,14 @@ trait MakesBranchesBookable
                 ])->id,
             ]);
         }
+
+        // The administrator's listing policy (cover photo, description,
+        // highlights — see ListingPolicy) is its own subject, tested in
+        // ListingPolicyVisibilityTest. Everywhere else every item is optional,
+        // so a bare factory branch is listed on the fixed rules alone.
+        SystemSetting::current()->update([
+            'listing_policy' => array_fill_keys(array_keys(ListingPolicy::DEFAULTS), ListingPolicy::OPTIONAL),
+        ]);
 
         $settings = SpaBusinessSetting::firstOrCreate(['spa_business_id' => $branch->spa_business_id]);
         $settings->update(['booking_defaults' => array_merge($settings->booking_defaults ?? [], ['max_advance_booking_days' => 0])]);

@@ -15,6 +15,11 @@ use Symfony\Component\HttpFoundation\Response;
 // upgrade prompt instead of a generic error.
 class EnsurePlanFeature
 {
+    private const NAMES = [
+        'reward_access' => 'customer programs',
+        'package_access' => 'packages',
+    ];
+
     public function __construct(
         private SpaBusinessRepository $spaBusinessRepository,
     ) {}
@@ -25,7 +30,7 @@ class EnsurePlanFeature
 
         if (! $business || ! AppCache::planAllows($business->id, $feature)) {
             return response()->json([
-                'message' => 'Your plan doesn\'t include customer programs. Upgrade to use them.',
+                'message' => 'Your plan doesn\'t include ' . (self::NAMES[$feature] ?? 'this feature') . '. Upgrade to use them.',
                 'code' => 'PLAN_FEATURE_REQUIRED',
                 'feature' => $feature,
             ], 403);

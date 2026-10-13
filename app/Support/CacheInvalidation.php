@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Models\BranchClosure;
 use App\Models\BranchPackage;
 use App\Models\BranchSchedule;
 use App\Models\BranchService;
@@ -70,7 +71,7 @@ final class CacheInvalidation
         self::on([SpaBusiness::class], fn (SpaBusiness $b) => AppCache::bumpBusiness($b->id));
         self::on([SpaBranch::class, Package::class, CustomerProgram::class],
             fn (Model $m) => AppCache::bumpBusiness($m->spa_business_id));
-        self::on([BranchSchedule::class, BranchService::class, BranchPackage::class, Facility::class, SpaBranchPhoto::class, Staff::class],
+        self::on([BranchSchedule::class, BranchClosure::class, BranchService::class, BranchPackage::class, Facility::class, SpaBranchPhoto::class, Staff::class],
             fn (Model $m) => AppCache::bumpBusiness(self::businessOfBranch($m->spa_branch_id)));
         self::on([StaffSchedule::class, StaffQualification::class],
             fn (Model $m) => AppCache::bumpBusiness(self::businessOfStaff($m->staff_id)));

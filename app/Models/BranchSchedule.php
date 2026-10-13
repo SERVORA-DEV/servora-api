@@ -18,9 +18,6 @@ class BranchSchedule extends Model
         'opening_time',
         'closing_time',
 
-        'break_start',
-        'break_end',
-
         'is_closed',
     ];
 

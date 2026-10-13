@@ -30,7 +30,7 @@ class QueueService
             return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
-        $branchIds = $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
+        $branchIds = $this->spaBusinessRepository->branchIdsForUser($user);
         $date = $filters['date'] ?? now()->format('Y-m-d');
 
         $collection = $this->queueRepository->listForBranchDate($branchIds, $date, $filters['status'] ?? null);

@@ -10,10 +10,10 @@ class BranchBookingPolicyRequest extends FormRequest
     // The rules a branch may set for itself instead of following Business
     // Defaults — mirrors POLICY_RULES on the web (useSettingsHub.ts).
     public const KEYS = [
-        'online_booking_enabled', 'walk_in_enabled', 'home_service_enabled', 'allow_reschedule',
+        'online_booking_enabled', 'walk_in_enabled', 'reservation_enabled', 'home_service_enabled', 'home_service_fee', 'home_service_radius_km', 'home_service_min_minutes', 'allow_reschedule',
         'booking_lead_time_minutes', 'max_advance_booking_days', 'max_services_per_booking',
+        'max_service_minutes_per_booking',
         'allow_cancellation', 'cancellation_policy_tier', 'cancellation_window_hours',
-        'require_deposit', 'deposit_percent',
     ];
 
     public function authorize(): bool

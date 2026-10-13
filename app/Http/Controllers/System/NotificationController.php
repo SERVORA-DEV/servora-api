@@ -34,6 +34,17 @@ class NotificationController extends Controller
         return $this->notificationService->markAllRead($request->user());
     }
 
+    public function destroy(Request $request, int $id)
+    {
+        return $this->notificationService->delete($request->user(), $id);
+    }
+
+    // Removes every notification the admin has already read.
+    public function clearRead(Request $request)
+    {
+        return $this->notificationService->clearRead($request->user());
+    }
+
     public function announce(AnnouncementRequest $request)
     {
         return $this->notificationService->sendAnnouncement($request->user(), $request->validated());

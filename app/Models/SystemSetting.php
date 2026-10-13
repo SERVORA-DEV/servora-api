@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\ListingPolicy;
 use Illuminate\Database\Eloquent\Model;
 
 class SystemSetting extends Model
@@ -15,6 +16,8 @@ class SystemSetting extends Model
         // Subscription Policy — see PlanSwitchService.
         'plan_changes_enabled',
         'plan_change_grace_days',
+        // Marketplace Policy — see App\Support\ListingPolicy.
+        'listing_policy',
     ];
 
     public const DEFAULT_PLAN_CHANGE_GRACE_DAYS = 7;
@@ -29,15 +32,21 @@ class SystemSetting extends Model
             'almost_due_repeat_every_days' => 'integer',
             'plan_changes_enabled' => 'boolean',
             'plan_change_grace_days' => 'integer',
+            'listing_policy' => 'array',
         ];
     }
 
-    // Days after subscribing in which an owner may change plan. Falls back to
-    // the default when the column isn't there yet (migration not run), so the
-    // policy still works instead of treating the window as zero days.
-    public function planChangeGraceDays(): int
+    // `plan_change_grace_days` is no longer a rule: owners may upgrade any
+    // time and schedule a downgrade any time before the due date
+    // (PlanSwitchService). The column stays so no migration is needed;
+    // nothing reads it.
+
+    // Which listing items a branch must have to be shown in the client app.
+    // Always complete: the defaults fill in for anything not stored, and for
+    // a database where the column isn't there yet (migration not run).
+    public function listingPolicy(): array
     {
-        return (int) ($this->plan_change_grace_days ?? self::DEFAULT_PLAN_CHANGE_GRACE_DAYS);
+        return ListingPolicy::normalize($this->listing_policy);
     }
 
     // Singleton accessor — creates the one row with defaults on first read

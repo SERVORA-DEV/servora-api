@@ -53,13 +53,19 @@ class AppointmentServiceRepository
         // counting both would bill a package twice.
         $standaloneServices = $services->whereNull('source_appointment_package_id');
 
-        $subtotal = $standaloneServices->sum('subtotal') + $packages->sum('subtotal');
+        // What a package service's extension adds on top of the package.
+        $packageExtras = $services->whereNotNull('source_appointment_package_id')->sum(fn ($s) => (float) ($s->extra_charge ?? 0));
+
+        $subtotal = $standaloneServices->sum('subtotal') + $packages->sum('subtotal') + $packageExtras;
         $discount = $standaloneServices->sum('discount_amount') + $packages->sum('discount_amount');
 
+        // The home-service fee (0 for an in-spa visit) is charged on top of
+        // the services, so it is in the total — and so in the bill, which is
+        // made from total_amount.
         $appointment->update([
             'subtotal' => $subtotal,
             'discount_amount' => $discount,
-            'total_amount' => $subtotal - $discount,
+            'total_amount' => $subtotal - $discount + (float) $appointment->home_service_fee,
         ]);
     }
 }

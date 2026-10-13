@@ -1,7 +1,7 @@
 @component('mail::message')
 # Your Sign-In Code
 
-Someone is signing in to your {{ config('app.name') }} administrator account and requested a code sent to your verified personal email instead of an authenticator app. Use the code below to finish signing in. This code expires in {{ $expiresInMinutes }} minutes.
+Someone is signing in to your {{ config('app.name') }} administrator account. Use the code below to finish signing in. This code expires in {{ $expiresInMinutes }} minutes.
 
 @component('mail::panel')
 <div style="text-align: center; font-size: 28px; letter-spacing: 8px; font-weight: bold;">

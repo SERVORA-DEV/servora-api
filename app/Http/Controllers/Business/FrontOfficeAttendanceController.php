@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
 use App\Service\Business\FrontOfficeAttendanceService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 
 class FrontOfficeAttendanceController extends Controller
@@ -53,7 +54,23 @@ class FrontOfficeAttendanceController extends Controller
 
     public function history(Request $request, string $uuid)
     {
-        $days = (int) ($request->validate(['days' => ['nullable', 'integer', 'min:1', 'max:90']])['days'] ?? 30);
-        return $this->frontOfficeAttendanceService->history($request->user(), $uuid, $days);
+        $data = $request->validate([
+            'days' => ['nullable', 'integer', 'min:1', 'max:90'],
+            // A range instead of "the last N days" (the employee page).
+            'from' => ['nullable', 'date_format:Y-m-d', 'required_with:to'],
+            'to' => ['nullable', 'date_format:Y-m-d', 'required_with:from'],
+        ]);
+        if (! empty($data['from'])) {
+            $from = Carbon::parse($data['from']);
+            $to = Carbon::parse($data['to']);
+            if ($from->gt($to)) {
+                return response()->json(['message' => 'The start date is after the end date.'], 422);
+            }
+            if ($from->diffInDays($to) > 92) {
+                return response()->json(['message' => 'Pick a range of three months or less.'], 422);
+            }
+        }
+
+        return $this->frontOfficeAttendanceService->history($request->user(), $uuid, (int) ($data['days'] ?? 30), $data['from'] ?? null, $data['to'] ?? null);
     }
 }

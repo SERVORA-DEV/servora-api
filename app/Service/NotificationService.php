@@ -12,6 +12,7 @@ use App\Repository\AuditLogRepository;
 use App\Repository\NotificationRepository;
 use App\Repository\System\AdminUsersRepository;
 use App\Service\Business\StaffNotifier;
+use App\Support\SubscriptionReminderSchedule;
 
 // In-app only (writes to the app's own `notifications` table) — no email.
 // See NotificationRepository/App\Models\Notification for the schema.
@@ -116,6 +117,11 @@ class NotificationService
     }
 
     // ── Write side: fired from the real actions below as they happen ────
+    //
+    // What an administrator is told carries the uuid of what it is about
+    // (the branch, the business, the new administrator), so a click on it
+    // opens that record and not just the list it is in — see
+    // notificationDestination() in the web app's types/system-notification.ts.
 
     public function branchRegistrationSubmitted(SpaBranch $branch, iterable $admins): void
     {
@@ -124,24 +130,93 @@ class NotificationService
                 $admin->id,
                 'New Branch Registration',
                 "\"{$branch->branch_name}\" submitted a registration request for review.",
-                'Registration'
+                'Registration',
+                $branch->uuid,
             );
         }
     }
 
-    // A verified branch uploaded a renewed permit (Branch Settings →
-    // Registration & Permits). The branch stays listed; admins can review
-    // the new document.
-    public function branchPermitRenewed(SpaBranch $branch, iterable $admins): void
+    // ── Staff schedule changes (StaffScheduleService) ───────────────────
+
+    public function scheduleChangeRequested(User $owner, string $staffName, string $managerName): void
     {
-        foreach ($admins as $admin) {
-            $this->notificationRepository->create(
-                $admin->id,
-                'Branch Permit Renewed',
-                "\"{$branch->branch_name}\" uploaded a renewed permit (expires {$branch->permit_expiration_date?->toDateString()}).",
-                'Registration'
-            );
-        }
+        $this->notificationRepository->create(
+            $owner->id,
+            'Schedule Change Needs Approval',
+            "{$managerName} changed {$staffName}'s weekly schedule. Open their page in Employees to approve or reject it.",
+            'Attendance'
+        );
+    }
+
+    public function scheduleChangeDecided(User $manager, string $staffName, bool $approved, ?string $reason): void
+    {
+        $this->notificationRepository->create(
+            $manager->id,
+            $approved ? 'Schedule Change Approved' : 'Schedule Change Rejected',
+            $approved
+                ? "Your change to {$staffName}'s weekly schedule was approved and is now in effect."
+                : "Your change to {$staffName}'s weekly schedule was rejected." . ($reason ? " Reason: {$reason}" : ''),
+            'Attendance'
+        );
+    }
+
+    // ── A manager asking for a new service or package (CatalogRequestService) ──
+    // The titles are what the web app looks for to send a click on one of
+    // these to Services & Packages (see staffNotificationDestination).
+
+    public function catalogRequested(User $owner, string $kind, string $name, string $managerName, ?string $branchName): void
+    {
+        $from = $branchName ? "{$managerName} at {$branchName}" : $managerName;
+
+        $this->notificationRepository->create(
+            $owner->id,
+            $kind === 'package' ? 'New Package Request' : 'New Service Request',
+            "{$from} asked for a new {$kind}: \"{$name}\". Open Services & Packages to add it or decline.",
+            'System'
+        );
+    }
+
+    public function catalogRequestDecided(User $manager, string $kind, string $name, bool $added, ?string $reason, ?string $branchName): void
+    {
+        $label = $kind === 'package' ? 'Package' : 'Service';
+        $where = $branchName ?: 'your branch';
+
+        $this->notificationRepository->create(
+            $manager->id,
+            $added ? "{$label} Request Added" : "{$label} Request Declined",
+            $added
+                ? "\"{$name}\" is now in the catalog. Open Services & Packages to set it up for {$where}."
+                : "The owner declined your request for \"{$name}\"." . ($reason ? " Reason: {$reason}" : ''),
+            'System'
+        );
+    }
+
+    // A manager asking for a new voucher, discount or membership for their
+    // branch (ProgramRequestService).
+    public function programRequested(User $owner, string $type, string $name, string $managerName, ?string $branchName): void
+    {
+        $from = $branchName ? "{$managerName} at {$branchName}" : $managerName;
+
+        $this->notificationRepository->create(
+            $owner->id,
+            'New ' . ucfirst($type) . ' Request',
+            "{$from} asked for a new {$type}: \"{$name}\". Open Programs to approve it or decline.",
+            'System'
+        );
+    }
+
+    public function programRequestDecided(User $manager, string $type, string $name, bool $approved, ?string $reason, ?string $branchName): void
+    {
+        $where = $branchName ?: 'your branch';
+
+        $this->notificationRepository->create(
+            $manager->id,
+            ucfirst($type) . ' Request ' . ($approved ? 'Approved' : 'Declined'),
+            $approved
+                ? "\"{$name}\" is now offered at {$where}. Open Programs to see it."
+                : "The owner declined your request for \"{$name}\"." . ($reason ? " Reason: {$reason}" : ''),
+            'System'
+        );
     }
 
     public function branchRegistrationApproved(SpaBranch $branch, User $owner): void
@@ -171,7 +246,8 @@ class NotificationService
                 $admin->id,
                 'New Owner Verification Submitted',
                 "\"{$business->business_name}\" submitted owner identity and business verification for review.",
-                'Verification'
+                'Verification',
+                $business->uuid,
             );
         }
     }
@@ -183,7 +259,8 @@ class NotificationService
                 $admin->id,
                 'Owner Identity Resubmitted',
                 "\"{$business->business_name}\" resubmitted a corrected owner identity document for review.",
-                'Verification'
+                'Verification',
+                $business->uuid,
             );
         }
     }
@@ -195,7 +272,8 @@ class NotificationService
                 $admin->id,
                 'Business Verification Resubmitted',
                 "\"{$business->business_name}\" resubmitted a corrected business registration document for review.",
-                'Verification'
+                'Verification',
+                $business->uuid,
             );
         }
     }
@@ -313,7 +391,8 @@ class NotificationService
                 $admin->id,
                 'New Administrator Added',
                 "{$name} was added as a system administrator.",
-                'System'
+                'System',
+                $newAdmin->uuid,
             );
         }
     }
@@ -322,45 +401,81 @@ class NotificationService
     // webhook-confirmed Xendit payment activating a business's subscription.
     // Reports the same real event as two separate facts, matching the two
     // admin-facing categories: a subscription started, and money moved.
-    public function subscriptionActivated(SpaBusiness $business, SubscriptionPlan $plan, string $billingCycle, iterable $admins): void
+    // A business bought a plan. ONE notification for the one thing that
+    // happened: who, which plan, and what they paid. (It used to come with a
+    // separate "Payment Received" for the same purchase.) $renewal: they have
+    // paid for a plan before.
+    public function subscriptionActivated(SpaBusiness $business, SubscriptionPlan $plan, string $billingCycle, iterable $admins, ?float $amount = null, bool $renewal = false): void
     {
+        $did = $renewal ? 'renewed' : 'subscribed to';
+        $paid = $amount !== null ? ' and paid ₱' . number_format($amount, 2) : '';
+
         foreach ($admins as $admin) {
             $this->notificationRepository->create(
                 $admin->id,
-                'New Subscription',
-                "\"{$business->business_name}\" subscribed to the {$plan->name} plan ({$billingCycle}).",
-                'Subscription'
+                $renewal ? 'Subscription Renewed' : 'New Subscription',
+                "\"{$business->business_name}\" {$did} the {$plan->name} plan ({$billingCycle}){$paid}.",
+                'Subscription',
+                $business->uuid,
             );
         }
     }
 
-    // Fired from NotifyAlmostDueSubscriptions (the daily scheduled command —
-    // see Console/Commands) for a subscription within the renewal reminder
-    // window. Before expires_at it's a "renews in N days" reminder; after it
-    // (repeat reminders continue through the grace period) it's an overdue
-    // notice with how long access lasts.
-    public function subscriptionAlmostDue(Subscription $subscription, int $graceDays): void
+    // Fired from NotifyAlmostDueSubscriptions (the daily scheduled command)
+    // with the moment SubscriptionReminderSchedule says is due. Writes the
+    // bell notification and hands back its title and message, so the email
+    // that goes with it says exactly the same thing.
+    /** @return array{0: string, 1: string} */
+    public function subscriptionReminder(Subscription $subscription, string $moment, int $graceDays): array
     {
+        [$title, $message] = $this->subscriptionReminderText($subscription, $moment, $graceDays);
+
+        $this->notificationRepository->create($subscription->business->owner->id, $title, $message, 'Subscription');
+
+        return [$title, $message];
+    }
+
+    // What each moment says. One sentence the owner can act on: what is
+    // happening, when, and what to do.
+    /** @return array{0: string, 1: string} */
+    public function subscriptionReminderText(Subscription $subscription, string $moment, int $graceDays, ?\Carbon\Carbon $now = null): array
+    {
+        $now ??= now();
+        $date = $subscription->expires_at->format('F j, Y');
+        $days = SubscriptionReminderSchedule::daysLeft($subscription->expires_at, $now);
+        $when = $days === 0 ? 'today' : ($days === 1 ? 'tomorrow' : "in {$days} days");
+        $ended = $moment === SubscriptionReminderSchedule::ENDED;
+
+        // A free trial: nothing to renew, a plan to choose.
+        if ($subscription->is_trial) {
+            return $ended
+                ? ['Free Trial Ended', "Your free trial ended on {$date}. Choose a plan to keep using Servora."]
+                : ['Free Trial Ending', ($days === 0 ? 'Your free trial ends today.' : "Your free trial ends {$when}, on {$date}.") . ' Choose a plan to keep using Servora.'];
+        }
+
         $planName = $subscription->plan->name ?? 'subscription';
 
-        if ($subscription->expires_at->isPast()) {
-            // diffInDays returns a float (fractional days) — round for
-            // whole-day display.
-            $daysLate = (int) round($subscription->expires_at->diffInDays(now()));
-            $daysLeft = max(0, $graceDays - $daysLate);
-            $until = $daysLeft === 0 ? 'today' : ($daysLeft === 1 ? 'within 1 day' : "within {$daysLeft} days");
+        if ($ended) {
+            return ['Subscription Access Paused', "Your {$planName} plan ended on {$date} and was not renewed, so your access is paused. Renew to pick up where you left off."];
+        }
+
+        if ($moment === SubscriptionReminderSchedule::OVERDUE) {
+            // diffInDays returns a float (fractional days) — round up, so
+            // "within 1 day" is still said on the last day.
+            $left = max(0, (int) ceil($now->diffInDays($subscription->expires_at->copy()->addDays($graceDays), false)));
+            $until = $left === 0 ? 'today' : ($left === 1 ? 'within 1 day' : "within {$left} days");
 
             $title = 'Subscription Payment Overdue';
-            $message = "Your {$planName} plan expired on {$subscription->expires_at->format('F j, Y')}. Renew {$until} to keep access.";
-        } else {
-            $daysLeft = max(0, (int) round(now()->diffInDays($subscription->expires_at, false)));
-            $when = $daysLeft === 0 ? 'today' : ($daysLeft === 1 ? 'in 1 day' : "in {$daysLeft} days");
-
+            $message = "Your {$planName} plan expired on {$date}. Renew {$until} to keep access.";
+        } elseif ($subscription->auto_renew && $subscription->paymentMethod) {
+            // Auto-renew: nothing to do, just what will happen.
             $title = 'Subscription Renewal Reminder';
-            $method = $subscription->auto_renew ? $subscription->paymentMethod?->label : null;
-            $message = $method
-                ? "Your {$planName} plan renews automatically {$when} — we'll charge {$method}."
-                : "Your {$planName} plan renews {$when}. Renew soon to avoid losing access.";
+            $message = "Your {$planName} plan renews automatically on {$date}. We'll charge {$subscription->paymentMethod->label}.";
+        } else {
+            $title = 'Subscription Renewal Reminder';
+            $message = $moment === SubscriptionReminderSchedule::DUE_TODAY
+                ? "Your {$planName} plan is due today. Renew now to keep access."
+                : "Your {$planName} plan is due {$when}, on {$date}. Renew before then to keep access.";
         }
 
         // Admin changed the plan and the owner hasn't declined — the
@@ -382,7 +497,7 @@ class NotificationService
                 . ($subscription->scheduled_billing_cycle ? " ({$subscription->scheduled_billing_cycle})" : '') . ', as you chose.';
         }
 
-        $this->notificationRepository->create($subscription->business->owner->id, $title, $message, 'Subscription');
+        return [$title, $message];
     }
 
     // Fired from PlanChangeService::notifySubscribers — the admin edited the
@@ -418,7 +533,7 @@ class NotificationService
             : "\"{$businessName}\" declined the updated {$planName} plan — their subscription ends" . ($until ? " on {$until}." : '.');
 
         foreach ($admins as $admin) {
-            $this->notificationRepository->create($admin->id, 'Plan Change Response', $message, 'Subscription');
+            $this->notificationRepository->create($admin->id, 'Plan Change Response', $message, 'Subscription', $subscription->business?->uuid);
         }
     }
 
@@ -437,7 +552,7 @@ class NotificationService
         };
 
         foreach ($admins as $admin) {
-            $this->notificationRepository->create($admin->id, $title, $message, 'Subscription');
+            $this->notificationRepository->create($admin->id, $title, $message, 'Subscription', $subscription->business?->uuid);
         }
 
         if ($event === 'upgraded' && $subscription->business?->owner) {
@@ -486,6 +601,9 @@ class NotificationService
         );
     }
 
+    // A payment that has no notification of its own: an upgrade or an
+    // automatic renewal. A plan purchase says what was paid in its own
+    // notification (subscriptionActivated) and does not send this as well.
     public function paymentReceived(SpaBusiness $business, float $amount, iterable $admins): void
     {
         $formatted = number_format($amount, 2);
@@ -495,7 +613,8 @@ class NotificationService
                 $admin->id,
                 'Payment Received',
                 "Received ₱{$formatted} from \"{$business->business_name}\".",
-                'Payment'
+                'Payment',
+                $business->uuid,
             );
         }
     }

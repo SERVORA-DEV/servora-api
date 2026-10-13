@@ -7,25 +7,27 @@ use App\Models\SpaBusiness;
 use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
 use App\Models\SystemSetting;
-use App\Repository\Business\AccountRepository;
 use App\Repository\System\AdminUsersRepository;
 use Carbon\Carbon;
 
 // An owner moving their live subscription to another plan, under the
 // admin's Subscription Policy (Settings → Subscription Policy):
 //
-//  - Grace period — for `plan_change_grace_days` after the term starts
-//    (subscribing or renewing; each term is its own subscription row) the
-//    owner may upgrade or downgrade. After that the plan is locked until its
-//    due date (expires_at), where they renew on whichever plan they like.
+//  - When — any time while the plan is live, up to its due date
+//    (expires_at). There is no window after subscribing any more: an owner
+//    who outgrows their plan on day 20 can pay to move up that day. The
+//    admin's one control is the on/off switch (`plan_changes_enabled`).
 //  - Upgrade — the new plan costs more than they've paid for this term.
 //    They pay the difference (new price − paid so far) and switch right
-//    away; the billing cycle and due date stay the same, and the grace
-//    period does not restart.
+//    away; the billing cycle and due date stay the same. They can upgrade
+//    again later in the same term.
 //  - Downgrade — anything else (a cheaper/equal plan, or another billing
 //    cycle). Nothing is charged now: they keep the current plan until
-//    expires_at and their next payment is for the new one. It can be taken
-//    back any time before the due date, grace period or not.
+//    expires_at and their next payment is for the new one. It can be asked
+//    for, changed or taken back any time before the due date. When they use
+//    more branches or staff logins than the new plan allows, they choose
+//    what to keep; the rest goes on hold when the new term starts
+//    (PlanFitService).
 //
 // There's no cancellation or refund — the system handles neither.
 class PlanSwitchService
@@ -33,9 +35,9 @@ class PlanSwitchService
     private const UNLIMITED = 9999;
 
     public function __construct(
-        private AccountRepository $accountRepository,
         private AdminUsersRepository $adminUsersRepository,
         private NotificationService $notificationService,
+        private PlanFitService $fit,
     ) {}
 
     /**
@@ -68,6 +70,9 @@ class PlanSwitchService
             'billing_cycle' => $cycle,
             'effective_at' => $isUpgrade ? now() : $subscription->expires_at,
             'over_limits' => $isUpgrade ? [] : $this->overLimits($subscription->business, $target),
+            // A smaller plan: what the owner has to choose between, and what
+            // the plan itself pauses. Null for an upgrade.
+            'fit' => $isUpgrade || ! $subscription->business ? null : $this->fit->fit($subscription->business, $target, $subscription->expires_at),
         ];
 
         $reason = $target->isTrial()
@@ -82,8 +87,9 @@ class PlanSwitchService
     }
 
     // Where the business is over $plan's branch/account limits, as lines to
-    // show the owner (empty when it fits). A downgrade is only warned; the
-    // renewal payment on that plan is refused until it fits.
+    // show the owner (empty when it fits). Branches and logins already on
+    // hold don't count. The owner settles it by choosing what to keep
+    // (PlanFitService); a payment on that plan is refused until they have.
     public function overLimits(?SpaBusiness $business, SubscriptionPlan $plan): array
     {
         if (! $business) {
@@ -91,12 +97,12 @@ class PlanSwitchService
         }
 
         $lines = [];
-        $branches = $business->branches()->count();
+        $branches = $this->fit->branches($business)->count();
         if ($plan->max_branches < self::UNLIMITED && $branches > $plan->max_branches) {
             $lines[] = "You have {$branches} branches; the {$plan->name} plan allows {$plan->max_branches}.";
         }
 
-        $accounts = $this->accountRepository->countForBusiness($business->id);
+        $accounts = $this->fit->accounts($business)->count();
         if ($plan->max_user_accounts < self::UNLIMITED && $accounts > $plan->max_user_accounts) {
             $lines[] = "You have {$accounts} staff accounts; the {$plan->name} plan allows {$plan->max_user_accounts}.";
         }
@@ -111,7 +117,9 @@ class PlanSwitchService
         return round((float) $subscription->billings()->where('status', 'Paid')->sum('amount'), 2);
     }
 
-    public function scheduleDowngrade(Subscription $subscription, SubscriptionPlan $target, string $cycle): void
+    // $keep: what the owner chose to keep when they use more than $target
+    // allows (already checked by the caller), else null.
+    public function scheduleDowngrade(Subscription $subscription, SubscriptionPlan $target, string $cycle, ?array $keep = null): void
     {
         $subscription->loadMissing(['plan', 'business']);
 
@@ -119,6 +127,7 @@ class PlanSwitchService
             'scheduled_plan_id' => $target->id,
             'scheduled_billing_cycle' => $cycle,
             'scheduled_at' => now(),
+            ...($this->fit->ready() ? ['scheduled_keep' => $keep] : []),
             // The owner's own choice supersedes an admin plan-edit prompt
             // (PlanChangeService) — the renewal is on the plan they picked.
             'pending_plan_id' => null,
@@ -137,7 +146,10 @@ class PlanSwitchService
         $subscription->loadMissing(['plan', 'scheduledPlan', 'business']);
         $target = $subscription->scheduledPlan?->name ?? 'another plan';
 
-        $subscription->update(['scheduled_plan_id' => null, 'scheduled_billing_cycle' => null, 'scheduled_at' => null]);
+        $subscription->update([
+            'scheduled_plan_id' => null, 'scheduled_billing_cycle' => null, 'scheduled_at' => null,
+            ...($this->fit->ready() ? ['scheduled_keep' => null] : []),
+        ]);
 
         $this->notificationService->planSwitched(
             $subscription, 'downgrade_withdrawn', $subscription->plan->name ?? 'their plan', $target,
@@ -157,11 +169,17 @@ class PlanSwitchService
             'scheduled_plan_id' => null,
             'scheduled_billing_cycle' => null,
             'scheduled_at' => null,
+            ...($this->fit->ready() ? ['scheduled_keep' => null] : []),
             'pending_plan_id' => null,
             'plan_change_status' => null,
             'plan_change_responded_at' => null,
         ]);
         $subscription->load(['plan', 'business.owner']);
+
+        // A bigger plan may have room for what an earlier one put on hold.
+        if ($subscription->business && $subscription->plan) {
+            $this->fit->release($subscription->business, $subscription->plan);
+        }
 
         $this->notificationService->planSwitched(
             $subscription, 'upgraded', $from, $subscription->plan->name ?? 'a new plan',
@@ -191,32 +209,25 @@ class PlanSwitchService
             'effective_at' => $subscription->expires_at,
             'scheduled_at' => $subscription->scheduled_at,
             'over_limits' => $this->overLimits($subscription->business, $subscription->scheduledPlan),
+            // What the owner chose to keep, and what is still wrong with that
+            // choice today (a booking made since, a branch added since).
+            'keep' => $this->fit->ready() ? $this->fit->presentKeep($subscription->business, $subscription->scheduled_keep) : null,
+            'keep_problems' => $subscription->business
+                ? $this->fit->problems($subscription->business, $subscription->scheduledPlan, $subscription->scheduled_keep, $subscription->expires_at)
+                : [],
         ];
     }
 
-    // The policy as it applies to this subscription — when its grace period
-    // ends and when the plan is due — for the owner's pages.
+    // The policy as it applies to this subscription, for the owner's pages:
+    // whether plan changes are on, and when the plan is due (changes are
+    // open until then).
     public function presentPolicy(Subscription $subscription): array
     {
-        $settings = SystemSetting::current();
-
         return [
-            'plan_changes_enabled' => $settings->plan_changes_enabled,
-            'grace_days' => $settings->planChangeGraceDays(),
-            'change_until' => $this->graceEndsAt($subscription, $settings),
+            'plan_changes_enabled' => SystemSetting::current()->plan_changes_enabled,
             'due_at' => $subscription->expires_at,
             'paid_this_term' => $this->paidThisTerm($subscription),
         ];
-    }
-
-    // The moment this term's grace period ends: its start plus the admin's
-    // number of days. A row with no start date falls back to when it was
-    // created.
-    public function graceEndsAt(Subscription $subscription, ?SystemSetting $settings = null): ?Carbon
-    {
-        $start = $subscription->starts_at ?? $subscription->created_at;
-
-        return $start?->copy()->addDays(($settings ?? SystemSetting::current())->planChangeGraceDays());
     }
 
     public static function price(SubscriptionPlan $plan, string $cycle): ?float
@@ -255,19 +266,10 @@ class PlanSwitchService
             return "You've already scheduled this change.";
         }
 
-        $expires = $subscription->expires_at;
-        if (! $isUpgrade && ! $expires) {
+        // A downgrade waits for the next billing, so it needs one. Beyond
+        // that there is no window: any time before the due date is fine.
+        if (! $isUpgrade && ! $subscription->expires_at) {
             return "Your plan has no due date, so there's no next billing to change.";
-        }
-
-        // One grace period for upgrades and downgrades alike.
-        $until = $this->graceEndsAt($subscription, $settings);
-        if ($until && now()->gte($until)) {
-            $window = "Plan changes were open for the first {$this->days($settings->planChangeGraceDays())} after you subscribed (until {$until->format('F j, Y')}).";
-
-            return $expires
-                ? "{$window} You can choose a different plan when your plan is due on {$expires->format('F j, Y')}."
-                : $window;
         }
 
         return null;
@@ -284,10 +286,5 @@ class PlanSwitchService
 
         // A bigger plan on another billing cycle also waits for renewal.
         return $cycle === ($subscription->billing_cycle ?? 'Monthly') ? 'Downgrade' : 'Change at renewal';
-    }
-
-    private function days(int $n): string
-    {
-        return $n === 1 ? '1 day' : "{$n} days";
     }
 }

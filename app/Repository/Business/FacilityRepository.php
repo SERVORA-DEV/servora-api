@@ -34,7 +34,8 @@ class FacilityRepository
     // picker just because it hasn't been categorized yet.
     public function listAvailableForBranches(array $spaBranchIds, ?int $serviceId = null)
     {
-        return Facility::whereIn('spa_branch_id', $spaBranchIds)
+        return Facility::with('services:id,uuid')
+            ->whereIn('spa_branch_id', $spaBranchIds)
             ->where('is_available', true)
             ->where('status', '!=', 'Maintenance')
             ->when($serviceId, fn ($q) => $q->where(fn ($q2) => $q2

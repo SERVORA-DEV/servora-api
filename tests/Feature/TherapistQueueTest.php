@@ -229,7 +229,9 @@ class TherapistQueueTest extends TestCase
 
     // ── Holding position while occupied ──────────────────────────────────
 
-    public function test_an_assigned_therapist_keeps_their_position_but_is_not_next_up(): void
+    // Assigned to a booking that hasn't started — a reservation later today,
+    // a client still waiting — is standing free: still first, still next up.
+    public function test_an_assigned_therapist_keeps_their_position_and_is_still_next_up(): void
     {
         $this->timeIn($this->alice, '08:00');
         $this->timeIn($this->bruno, '09:00');
@@ -241,7 +243,7 @@ class TherapistQueueTest extends TestCase
 
         $this->assertSame(1, $this->row($this->alice)['position'], 'Alice keeps her turn — she has not finished anything yet');
         $this->assertSame('assigned', $this->row($this->alice)['rotation_status']);
-        $this->assertSame($this->bruno->uuid, $this->calculator->nextUp($rows)['uuid']);
+        $this->assertSame($this->alice->uuid, $this->calculator->nextUp($rows)['uuid']);
     }
 
     public function test_a_therapist_in_service_keeps_their_position_but_is_not_next_up(): void

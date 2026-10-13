@@ -40,7 +40,7 @@ class BillingListResource extends JsonResource
             'client_phone' => $client?->phone_number,
 
             'services' => $appointment
-                ? $appointment->services->map(fn ($service) => $service->serviceVariant?->service?->name)->filter()->values()
+                ? $appointment->services->map(fn ($service) => $service->displayName())->filter()->values()
                 : [],
 
             'payments' => PaymentResource::collection($this->whenLoaded('payments')),

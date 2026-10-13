@@ -60,7 +60,8 @@ class SpaBranchRepository
             ])
             ->orderBy('distance_km')
             ->limit($limit)
-            ->get();
+            ->get()
+            ->each(fn (SpaBranch $branch) => self::hidePackagesOffPlan($branch));
     }
 
     // A client's saved spas (GET /client/favorites): same public guard and
@@ -82,7 +83,8 @@ class SpaBranchRepository
                 'branchServices' => fn ($q) => self::publicServices($q)->with('serviceVariant.service'),
                 'branchPackages' => fn ($q) => self::publicPackages($q)->with('package'),
             ])
-            ->get();
+            ->get()
+            ->each(fn (SpaBranch $branch) => self::hidePackagesOffPlan($branch));
     }
 
     // Backs GET /spas/{uuid} — same Verified+Active+listed guard as nearby(), and
@@ -115,8 +117,14 @@ class SpaBranchRepository
     // packages.
     public function publicPackagesForBranch(int $branchId): Collection
     {
+        // A plan without packages offers none, whatever the branch has set.
+        $businessId = (int) SpaBranch::whereKey($branchId)->value('spa_business_id');
+        if (! \App\Support\AppCache::planAllows($businessId, 'package_access')) {
+            return new \Illuminate\Database\Eloquent\Collection;
+        }
+
         return self::publicPackages(BranchPackage::where('spa_branch_id', $branchId))
-            ->with('package.packageServiceItems.serviceVariant.service')
+            ->with(\App\Models\Package::contents('package.'))
             ->get();
     }
 
@@ -130,6 +138,16 @@ class SpaBranchRepository
         return $query
             ->where('is_available', true)
             ->whereHas('serviceVariant.service', fn ($q) => $q->where('is_active', true));
+    }
+
+    // A browse card never advertises a package (or a "from" price that comes
+    // from one) when the business's plan doesn't include packages. The plan
+    // answer is cached per business (AppCache), so this is no query once warm.
+    private static function hidePackagesOffPlan(SpaBranch $branch): void
+    {
+        if ($branch->relationLoaded('branchPackages') && ! \App\Support\AppCache::planAllows((int) $branch->spa_business_id, 'package_access')) {
+            $branch->setRelation('branchPackages', new \Illuminate\Database\Eloquent\Collection);
+        }
     }
 
     public static function publicPackages($query)
@@ -152,7 +170,7 @@ class SpaBranchRepository
         return Staff::where('spa_branch_id', $branchId)
             ->where('role', 'therapist')
             ->where('status', 'active')
-            ->get(['id', 'uuid', 'first_name', 'last_name', 'role']);
+            ->get(array_merge(['id', 'uuid', 'first_name', 'last_name', 'role'], Staff::hasSpecialties() ? ['specialties'] : []));
     }
 
     // Scoped listing for the owner's own "Branches" page — paginate() above
@@ -167,9 +185,32 @@ class SpaBranchRepository
     // uses now (via SpaBusinessRepository::branchesForUser), since a manager
     // must only ever see their own single branch, not the whole business's
     // like paginateForBusiness() above returns.
+    //
+    // Each branch carries what its card shows: how many people work there
+    // (anyone not terminated), how many rooms it has, and its manager's name.
+    // Counted in the same query rather than loaded, so a list of branches
+    // stays one round trip. The week's hours come along too (one query for
+    // every branch), instead of the page asking per branch afterwards.
     public function paginateForBranches(array $spaBranchIds, int $perPage = 15)
     {
-        return SpaBranch::whereIn('id', $spaBranchIds)->latest()->paginate($perPage);
+        return SpaBranch::whereIn('id', $spaBranchIds)
+            ->with(\App\Support\BranchClosures::ready()
+                ? ['schedules', 'closures' => \App\Support\BranchClosures::upcomingScope()]
+                : ['schedules'])
+            ->withCount([
+                'staff' => fn ($query) => $query->where('status', '!=', 'terminated'),
+                'facilities',
+            ])
+            ->addSelect(['manager_name' => \App\Models\Staff::query()
+                ->selectRaw("concat(first_name, ' ', last_name)")
+                ->whereColumn('spa_branch_id', 'spa_branches.id')
+                ->where('role', 'manager')
+                ->whereIn('status', ['active', 'on-leave'])
+                ->orderBy('id')
+                ->limit(1),
+            ])
+            ->latest()
+            ->paginate($perPage);
     }
 
     public function create(array $payload)

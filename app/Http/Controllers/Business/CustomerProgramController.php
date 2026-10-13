@@ -19,7 +19,7 @@ class CustomerProgramController extends Controller
         return $this->programs->index($request->user());
     }
 
-    // The module switch (Business Settings → Customer Programs).
+    // The module switch (the owner's Programs page).
     public function module(Request $request)
     {
         $data = $request->validate(['enabled' => ['required', 'boolean']]);

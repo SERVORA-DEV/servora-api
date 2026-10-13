@@ -25,4 +25,28 @@ class StaffScheduleController extends Controller
     {
         return $this->staffScheduleService->updateSchedule($request->user(), $uuid, $request->validated());
     }
+
+    // ── Schedule change requests (Staff Policies → owner approval) ───────
+
+    public function requests(Request $request)
+    {
+        return $this->staffScheduleService->pendingRequests($request->user());
+    }
+
+    public function approveRequest(Request $request, string $uuid)
+    {
+        return $this->staffScheduleService->approve($request->user(), $uuid);
+    }
+
+    public function rejectRequest(Request $request, string $uuid)
+    {
+        $reason = $request->validate(['reason' => 'nullable|string|max:500'])['reason'] ?? null;
+
+        return $this->staffScheduleService->reject($request->user(), $uuid, $reason);
+    }
+
+    public function withdrawRequest(Request $request, string $uuid)
+    {
+        return $this->staffScheduleService->withdraw($request->user(), $uuid);
+    }
 }

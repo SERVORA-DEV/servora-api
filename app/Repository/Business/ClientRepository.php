@@ -14,7 +14,9 @@ class ClientRepository
     {
         return Client::with(['user', 'preferredTherapist', 'activeMembership.program'])
             ->withCount(['vouchers as vouchers_available_count' => fn ($q) => $q->where('status', 'available')
-                ->where(fn ($e) => $e->whereNull('expires_at')->orWhere('expires_at', '>', now()))])
+                ->where(fn ($e) => $e->whereNull('expires_at')->orWhere('expires_at', '>', now())),
+                // Missed bookings — the no-show policy counts these.
+                'appointments as no_show_count' => fn ($q) => $q->where('status', 'no_show')])
             ->where('spa_business_id', $spaBusinessId)
             ->where('is_active', true)
             ->when($branchIds !== null, fn ($q) => $this->scopeToBranches($q, $branchIds))
@@ -55,7 +57,9 @@ class ClientRepository
     {
         return Client::with(['user', 'preferredTherapist', 'activeMembership.program'])
             ->withCount(['vouchers as vouchers_available_count' => fn ($q) => $q->where('status', 'available')
-                ->where(fn ($e) => $e->whereNull('expires_at')->orWhere('expires_at', '>', now()))])
+                ->where(fn ($e) => $e->whereNull('expires_at')->orWhere('expires_at', '>', now())),
+                // Missed bookings — the no-show policy counts these.
+                'appointments as no_show_count' => fn ($q) => $q->where('status', 'no_show')])
             ->where('uuid', $uuid)
             ->where('spa_business_id', $spaBusinessId)
             ->when($branchIds !== null, fn ($q) => $this->scopeToBranches($q, $branchIds))

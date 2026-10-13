@@ -12,7 +12,7 @@ class AppointmentPackageResource extends JsonResource
         return [
             'uuid' => $this->uuid,
             'package_uuid' => $this->package?->uuid,
-            'package_name' => $this->package?->name,
+            'package_name' => $this->resource->displayName(),
             'quantity' => (int) $this->quantity,
             'unit_price' => (float) $this->unit_price,
             'discount_amount' => (float) $this->discount_amount,

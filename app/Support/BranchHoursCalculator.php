@@ -19,12 +19,22 @@ class BranchHoursCalculator
 {
     private const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-    public static function resolve(Collection $schedules, Carbon $now): array
+    // $closures: the branch's temporary closures (BranchClosures). While one
+    // is running the branch is closed whatever the weekly hours say.
+    public static function resolve(Collection $schedules, Carbon $now, ?Collection $closures = null): array
     {
         $byDay = $schedules->keyBy('day_of_week');
         $today = $byDay->get($now->format('l'));
 
         [$isOpenNow, $closesAt, $opensAt] = self::currentStatus($today, $now);
+
+        $closedNow = ($closures ?? collect())->first(fn ($closure) => BranchClosures::isActive($closure, $now));
+        if ($closedNow) {
+            $isOpenNow = false;
+            $closesAt = null;
+            // Only said when it reopens later today.
+            $opensAt = $closedNow->ends_at->isSameDay($now) ? $closedNow->ends_at->format('g:i A') : null;
+        }
 
         $weekly = collect(self::DAYS)->map(function (string $day) use ($byDay) {
             $schedule = $byDay->get($day);
@@ -35,11 +45,6 @@ class BranchHoursCalculator
                 'closed' => $closed,
                 'open' => $closed ? null : self::formatTime($schedule?->opening_time),
                 'close' => $closed ? null : self::formatTime($schedule?->closing_time),
-                // Emitted so a client can mirror branchIsOpen()'s break
-                // rejection locally instead of only discovering it as a 422
-                // at the end of a booking flow.
-                'break_start' => $closed ? null : self::formatTime($schedule?->break_start),
-                'break_end' => $closed ? null : self::formatTime($schedule?->break_end),
             ];
         })->all();
 

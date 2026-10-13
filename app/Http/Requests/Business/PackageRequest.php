@@ -37,16 +37,30 @@ class PackageRequest extends FormRequest
             'default_price' => [$isCreate ? 'required' : 'sometimes', 'numeric', 'min:0'],
             'is_active' => 'sometimes|boolean',
 
-            // Line items — which service variants (and how many of each)
-            // make up this package. Pins a specific duration/price option,
-            // not just a service, since a service can offer several.
-            // service_variant_uuid must belong to this same business;
-            // PackageService::syncPackageServices silently skips one that
-            // doesn't rather than failing the whole save, so this only
-            // checks shape, not ownership (the service layer re-checks that).
+            // What is in it (App\Support\PackagePlan): services — not menu
+            // lengths — each with the minutes it runs in this package, how
+            // many, and the add-ons that come with it. duration_minutes above
+            // is no longer taken from the form: it is the total of these.
+            // Whose services and add-ons they are, and whether each add-on
+            // goes with its service, is settled in PackageService.
+            //
+            // service_variant_uuid is the older shape (a pinned menu length),
+            // still accepted in place of service_uuid + duration_minutes.
             'services' => 'sometimes|array',
-            'services.*.service_variant_uuid' => 'required_with:services|uuid',
-            'services.*.quantity' => 'nullable|integer|min:1',
+            'services.*.service_uuid' => 'required_without:services.*.service_variant_uuid|nullable|uuid|distinct',
+            'services.*.service_variant_uuid' => 'nullable|uuid',
+            'services.*.duration_minutes' => 'nullable|integer|min:1|max:600',
+            'services.*.quantity' => 'nullable|integer|min:1|max:20',
+            'services.*.addon_uuids' => 'sometimes|array',
+            'services.*.addon_uuids.*' => 'uuid|distinct',
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'services.*.service_uuid.distinct' => 'A package can hold a service once — use the quantity for more of the same.',
+            'services.*.service_uuid.required_without' => 'Each line of a package needs a service.',
         ];
     }
 

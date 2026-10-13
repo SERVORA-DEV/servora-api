@@ -18,11 +18,29 @@ class BookingPolicy
         'booking_lead_time_minutes',
         'max_advance_booking_days',
         'max_services_per_booking',
+        'max_service_minutes_per_booking',
         'allow_reschedule',
         'allow_cancellation',
         'cancellation_window_hours',
         'walk_in_enabled',
         'cancellation_policy_tier',
+        // What the front desk is held to as well (App\Support\FrontDeskPolicy).
+        'reservation_enabled',
+        'no_show_policy',
+        'no_show_suspend_after',
+        'queue_enabled',
+        'max_queue_size',
+        'queue_number_format',
+        'estimated_wait_display',
+        'walk_ins_first_priority',
+        'allow_service_extension',
+        'max_extension_mins',
+        'extension_requires_approval',
+        // Home service — see App\Service\Business\HomeServiceRules.
+        'home_service_enabled',
+        'home_service_fee',
+        'home_service_radius_km',
+        'home_service_min_minutes',
     ];
 
     public const TIERS = ['flexible', 'moderate', 'strict'];
@@ -119,6 +137,38 @@ class BookingPolicy
         }
 
         return null;
+    }
+
+    // Why a booking of $minutes is over this branch's "service time per
+    // booking" limit, or null when it fits (or there is no limit). The client
+    // app is refused with this; the front desk only sees it as a warning.
+    public static function serviceTimeProblem(array $policy, int $minutes): ?string
+    {
+        $limit = (int) ($policy['max_service_minutes_per_booking'] ?? 0);
+
+        if ($limit <= 0 || $minutes <= $limit) {
+            return null;
+        }
+
+        return 'This spa books up to ' . self::formatMinutes($limit) . ' per visit, and these services take '
+            . self::formatMinutes($minutes) . '. Remove a service, or book a second visit.';
+    }
+
+    // 120 → "2 hours", 90 → "1 hour 30 minutes", 45 → "45 minutes".
+    public static function formatMinutes(int $minutes): string
+    {
+        $hours = intdiv($minutes, 60);
+        $rest = $minutes % 60;
+
+        $parts = [];
+        if ($hours > 0) {
+            $parts[] = $hours . ($hours === 1 ? ' hour' : ' hours');
+        }
+        if ($rest > 0 || ! $parts) {
+            $parts[] = $rest . ($rest === 1 ? ' minute' : ' minutes');
+        }
+
+        return implode(' ', $parts);
     }
 
     // Why a client may not cancel/reschedule now (null = allowed). Only the

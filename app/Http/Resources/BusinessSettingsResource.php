@@ -48,6 +48,11 @@ class BusinessSettingsResource extends JsonResource
             'staff_policy' => $settings->section('staff_policy'),
             'booking_defaults' => $settings->section('booking_defaults'),
             'notifications' => $settings->section('notifications'),
+            // When Servora reminds this owner about their plan. The schedule is
+            // the administrator's; the owner's only choice is whether to get
+            // the reminders before the due date (subscription_renewal_alert
+            // above). Sent so the page can say what will really happen.
+            'plan_reminders' => $this->planReminders(),
             'programs' => $settings->section('programs'),
 
             // Starting permissions for new Manager / Front Officer accounts.
@@ -55,6 +60,19 @@ class BusinessSettingsResource extends JsonResource
             'role_permissions' => collect(SpaBusinessSetting::ACCOUNT_ROLES)
                 ->mapWithKeys(fn ($role) => [$role => $settings->rolePermissions($role)])
                 ->all(),
+        ];
+    }
+
+    private function planReminders(): array
+    {
+        $schedule = \App\Support\SubscriptionReminderSchedule::fromSettings(\App\Support\AppCache::systemSettings());
+
+        return [
+            'early_enabled' => $schedule->earlyEnabled,
+            'first_days' => $schedule->firstDays,
+            // "7 days before, the day before and on the due day"
+            'early_in_words' => $schedule->earlyInWords(),
+            'grace_days' => $schedule->graceDays,
         ];
     }
 }

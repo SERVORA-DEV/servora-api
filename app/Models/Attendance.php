@@ -24,7 +24,23 @@ class Attendance extends Model
         'remarks',
         'created_by',
         'updated_by',
+        // How the day turned out, kept as it was (App\Support\History):
+        // the shift and lateness from the check-in, the hours from the
+        // check-out. Written by AttendanceStatusCalculator::keep().
+        'scheduled_start',
+        'scheduled_end',
+        'late_minutes',
+        'work_minutes',
+        'overtime_minutes',
+        'resolved_status',
     ];
+
+    protected static function booted(): void
+    {
+        static::saving(function (self $attendance) {
+            app(\App\Service\Business\AttendanceStatusCalculator::class)->keep($attendance);
+        });
+    }
 
     protected $casts = [
         'attendance_date' => 'date:Y-m-d',

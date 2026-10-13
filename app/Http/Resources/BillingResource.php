@@ -4,6 +4,7 @@ namespace App\Http\Resources;
 
 use App\Models\Appointment;
 use App\Service\Client\BookingPolicy;
+use App\Support\FinishedVisit;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -52,6 +53,9 @@ class BillingResource extends JsonResource
                     ->sum(fn ($p) => (float) $p->amount - (float) $p->refunded_amount), 2))),
             'refunded_total' => $this->whenLoaded('payments', fn () => round((float) $this->payments->sum(fn ($p) => (float) $p->refunded_amount), 2)),
             'status' => $this->status,
+            // The visit is finished and paid: nothing on this bill can be
+            // voided or refunded any more (FinishedVisit).
+            'locked' => FinishedVisit::isLocked(($this->relationLoaded('appointment') ? $this->appointment : $this->appointmentContext)?->status),
             'issued_at' => optional($this->issued_at)->toIso8601String(),
             'paid_at' => optional($this->paid_at)->toIso8601String(),
             'plan_name' => $this->whenLoaded('subscription', fn () => optional($this->subscription?->plan)->name),

@@ -2,6 +2,8 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Models\Service;
+use App\Support\ServiceKind;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -44,6 +46,8 @@ class ServiceRequest extends FormRequest
             // Optional here, unlike on a template (see ServiceTemplateRequest,
             // where it's required because it's how owners browse the catalog).
             'category' => ['nullable', Rule::in(config('service_categories'))],
+            // Time-based, procedure-based or facility-based (ServiceKind).
+            'service_type' => ['sometimes', Rule::in(ServiceKind::ALL)],
 
             // Provenance for a service started from an admin template.
             // Constrained to actual template rows so it can't be pointed at
@@ -59,6 +63,7 @@ class ServiceRequest extends FormRequest
 
             'description' => 'nullable|string',
             'is_active' => 'sometimes|boolean',
+            'home_service_available' => 'sometimes|boolean',
 
             // Extension/MIME are both checked here ('image' also runs
             // getimagesize() against the file, rejecting anything that
@@ -92,6 +97,20 @@ class ServiceRequest extends FormRequest
             $durations = $variants->pluck('duration_minutes')->filter(fn ($d) => $d !== null);
             if ($durations->count() !== $durations->unique()->count()) {
                 $validator->errors()->add('variants', 'Two options cannot share the same duration.');
+            }
+
+            // A procedure-based service has one price: exactly one option,
+            // whose "duration" is the estimated time.
+            if (Service::hasTypes()) {
+                $serviceUuid = $this->route('service');
+                $kind = ServiceKind::of($this->input('service_type')
+                    ?? ($serviceUuid ? Service::where('uuid', $serviceUuid)->value('service_type') : null));
+                $count = $this->has('variants')
+                    ? $variants->count()
+                    : ($serviceUuid ? \App\Models\ServiceVariant::whereHas('service', fn ($q) => $q->where('uuid', $serviceUuid))->count() : 0);
+                if (! ServiceKind::hasLengths($kind) && $count !== 1) {
+                    $validator->errors()->add('variants', 'A procedure-based service has one price — keep a single option.');
+                }
             }
 
             // On update, any variant uuid submitted must already belong to

@@ -119,12 +119,12 @@ class SendFrontDeskAlerts extends Command
                     if ($resolved['scheduled_start'] && ! $attendance?->check_in_at && ! $attendance?->status) {
                         $start = Carbon::parse("{$date} {$resolved['scheduled_start']}");
                         if (now()->gt($start->copy()->addMinutes(AttendanceStatusCalculator::graceMinutesFor($business)))) {
-                            $alert = ['Not checked in yet', "{$name}'s shift started at " . $start->format('g:i A') . " and they haven't checked in."];
+                            $alert = ['Not timed in yet', "{$name}'s shift started at " . $start->format('g:i A') . " and they haven't timed in."];
                         }
                     } elseif ($attendance?->check_in_at && ! $attendance->check_out_at && $resolved['scheduled_end']) {
                         $end = Carbon::parse("{$date} {$resolved['scheduled_end']}");
                         if ($attendance->check_in_at->lt($end) && now()->gt($end->copy()->addMinutes(self::STILL_IN_AFTER_MINUTES))) {
-                            $alert = ['Still checked in', "{$name}'s shift ended at " . $end->format('g:i A') . ' — remember to check them out.'];
+                            $alert = ['Still timed in', "{$name}'s shift ended at " . $end->format('g:i A') . ' — remember to time them out.'];
                         }
                     }
 

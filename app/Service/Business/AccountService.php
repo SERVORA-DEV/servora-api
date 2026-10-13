@@ -24,6 +24,7 @@ class AccountService
         StaffRepository $staffRepository,
         SpaBusinessRepository $spaBusinessRepository,
         BusinessSettingsService $businessSettingsService,
+        private \App\Service\PlanFitService $planFit,
     ) {
         $this->accountRepository = $accountRepository;
         $this->staffRepository = $staffRepository;
@@ -69,6 +70,19 @@ class AccountService
 
         if (! array_key_exists($staff->role, Staff::ACCOUNT_ROLE_MAP)) {
             return response()->json(['message' => 'Only Manager or Front Desk staff can be granted a login.'], 422);
+        }
+
+        // The plan's staff-login limit (logins on hold don't count), and no
+        // new logins at a branch the plan has put on hold.
+        if ($staff->branch?->plan_hold_at) {
+            return response()->json(['message' => "{$staff->branch->branch_name} is on hold, so no logins can be added there.", 'code' => 'PLAN_HOLD'], 422);
+        }
+        $plan = $this->planFit->currentPlan($business);
+        if (! $this->planFit->hasRoomForAccount($business, $plan)) {
+            return response()->json([
+                'message' => "Your {$plan->name} plan allows " . ((int) $plan->max_user_accounts === 1 ? '1 staff login' : "{$plan->max_user_accounts} staff logins") . '. Upgrade to add another.',
+                'code' => 'PLAN_LIMIT',
+            ], 422);
         }
 
         $role = Staff::ACCOUNT_ROLE_MAP[$staff->role];
@@ -185,8 +199,34 @@ class AccountService
 
         $account = $this->accountRepository->findAccountByUuidForBusiness($uuid, $business->id);
 
+        // Suspended by the plan: it comes back through bringBack() (which
+        // checks there is room), not by setting the status by hand.
+        if ($account->plan_hold_at && ($payload['account_status'] ?? null) === 'Active') {
+            return response()->json([
+                'message' => 'This login is on hold because your plan has no room for it. Upgrade, or bring it back once there is room.',
+                'code' => 'PLAN_HOLD',
+            ], 422);
+        }
+
         $account = $this->accountRepository->updateAccount($account, $payload);
         return new AccountResource($account);
+    }
+
+    // POST business/account/{uuid}/bring-back — let a login the plan
+    // suspended sign in again, when the plan has room for it.
+    public function bringBack(User $user, string $uuid)
+    {
+        $business = $this->spaBusinessRepository->findByOwnerId($user->id);
+        if (! $business) {
+            return response()->json(['message' => 'No spa business found for this account.'], 422);
+        }
+
+        $account = $this->accountRepository->findAccountByUuidForBusiness($uuid, $business->id);
+        if ($why = $this->planFit->bringBackAccount($business, $account)) {
+            return response()->json(['message' => $why, 'code' => 'PLAN_LIMIT'], 422);
+        }
+
+        return new AccountResource($account->fresh(['permission', 'staff.branch']));
     }
 
     // "Deleting an account" is a full revoke now — there's no separate

@@ -8,6 +8,7 @@ use App\Repository\Business\BranchScheduleRepository;
 use App\Repository\Business\SpaBranchRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Http\Resources\BranchScheduleResource;
+use App\Support\AppCache;
 
 class BranchScheduleService
 {
@@ -18,7 +19,8 @@ class BranchScheduleService
     public function __construct(
         BranchScheduleRepository $branchScheduleRepository,
         SpaBranchRepository $spaBranchRepository,
-        SpaBusinessRepository $spaBusinessRepository
+        SpaBusinessRepository $spaBusinessRepository,
+        private ManagerChangeNotifier $managerChanges,
     ) {
         $this->branchScheduleRepository = $branchScheduleRepository;
         $this->spaBranchRepository = $spaBranchRepository;
@@ -66,7 +68,25 @@ class BranchScheduleService
     // uses.
     private function branchIds(User $user): array
     {
-        return $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
+        return $this->spaBusinessRepository->branchIdsForUser($user);
+    }
+
+    // For an owner who asked to hear when a manager changes the hours. The
+    // one-day saves are grouped so a week edited day by day is one notice.
+    private function hoursChanged(User $user, SpaBranch|\Closure $branch, int $quietMinutes = 0): void
+    {
+        $resolved = null;
+        $this->managerChanges->tell(
+            $user,
+            function () use ($branch, &$resolved) {
+                return $resolved = $branch instanceof \Closure ? $branch() : $branch;
+            },
+            ManagerChangeNotifier::HOURS, 'Opening Hours Changed',
+            function () use (&$resolved) {
+                return 'changed the opening hours of ' . ($resolved?->branch_name ?? 'their branch') . '.';
+            },
+            quietMinutes: $quietMinutes,
+        );
     }
 
     // Lists one branch's week — spa_branch_uuid is required precisely
@@ -77,6 +97,20 @@ class BranchScheduleService
         $branch = $this->resolveOwnedBranch($user, $spaBranchUuid);
         $collection = $this->branchScheduleRepository->allForBranch($branch->id);
         return BranchScheduleResource::collection($collection);
+    }
+
+    // Saves the branch's whole week at once and returns it. What the hours
+    // editors call — one request instead of one per day.
+    public function saveWeek(User $user, string $spaBranchUuid, array $days)
+    {
+        $branch = $this->resolveOwnedBranch($user, $spaBranchUuid);
+
+        $this->branchScheduleRepository->upsertWeek($branch->id, $days);
+        // No model events from a bulk write (see CacheInvalidation).
+        AppCache::bumpBusiness($branch->spa_business_id);
+        $this->hoursChanged($user, $branch);
+
+        return BranchScheduleResource::collection($this->branchScheduleRepository->allForBranch($branch->id));
     }
 
     public function createBranchSchedule(User $user, array $payload)
@@ -93,6 +127,7 @@ class BranchScheduleService
         $payload['spa_branch_id'] = $branch->id;
 
         $model = $this->branchScheduleRepository->create($payload);
+        $this->hoursChanged($user, $branch, 10);
         return new BranchScheduleResource($model);
     }
 
@@ -113,15 +148,17 @@ class BranchScheduleService
     // identity shouldn't shift under an update; register a new row instead.
     public function updateBranchSchedule(User $user, string $uuid, array $payload)
     {
-        $this->resolveOwnedSchedule($user, $uuid);
+        $schedule = $this->resolveOwnedSchedule($user, $uuid);
         $model = $this->branchScheduleRepository->update($uuid, $payload);
+        $this->hoursChanged($user, fn () => $schedule->branch, 10);
         return new BranchScheduleResource($model);
     }
 
     public function deleteBranchSchedule(User $user, string $uuid)
     {
-        $this->resolveOwnedSchedule($user, $uuid);
+        $schedule = $this->resolveOwnedSchedule($user, $uuid);
         $this->branchScheduleRepository->delete($uuid);
+        $this->hoursChanged($user, fn () => $schedule->branch, 10);
         return true;
     }
 

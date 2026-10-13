@@ -122,11 +122,11 @@ class BusinessSettingsTest extends TestCase
     {
         $this->patchJson('/api/business/settings/booking-defaults', [
             'online_booking_enabled' => false,
-            'deposit_percent' => '40',
+            'max_service_minutes_per_booking' => '120',
             'cancellation_tiers' => ['moderate' => '25'],
         ])->assertOk()
             ->assertJsonPath('data.booking_defaults.online_booking_enabled', false)
-            ->assertJsonPath('data.booking_defaults.deposit_percent', 40)
+            ->assertJsonPath('data.booking_defaults.max_service_minutes_per_booking', 120)
             ->assertJsonPath('data.booking_defaults.cancellation_tiers.moderate', 25)
             ->assertJsonPath('data.booking_defaults.cancellation_tiers.flexible', 100)
             ->assertJsonPath('data.booking_defaults.walk_in_enabled', true);
@@ -142,7 +142,7 @@ class BusinessSettingsTest extends TestCase
 
         // Earlier sections survive later writes.
         $this->getJson('/api/business/settings')
-            ->assertJsonPath('data.booking_defaults.deposit_percent', 40)
+            ->assertJsonPath('data.booking_defaults.max_service_minutes_per_booking', 120)
             ->assertJsonPath('data.notifications.sms_channel', true);
     }
 
@@ -155,7 +155,7 @@ class BusinessSettingsTest extends TestCase
             ->assertStatus(422)->assertJsonValidationErrors('reminder_timing');
 
         $this->patchJson('/api/business/settings/payments', array_fill_keys([
-            'accept_cash', 'accept_gcash', 'accept_paymaya', 'accept_card', 'accept_xendit', 'accept_bank_transfer',
+            'accept_cash', 'accept_gcash', 'accept_paymaya', 'accept_card', 'accept_bank_transfer',
         ], false))->assertStatus(422)->assertJsonValidationErrors('accept_cash');
     }
 

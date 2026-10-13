@@ -5,6 +5,7 @@ namespace App\Service\Business;
 use App\Models\BranchService;
 use App\Models\Service;
 use App\Models\User;
+use App\Support\ServiceKind;
 use App\Repository\Business\BranchServiceRepository;
 use App\Repository\Business\ServiceRepository;
 use App\Repository\Business\ServiceVariantRepository;
@@ -30,6 +31,7 @@ class ServiceService
         BranchServiceRepository $branchServiceRepository,
         ServiceVariantRepository $serviceVariantRepository,
         ImageUploadService $imageUploadService,
+        private ManagerChangeNotifier $managerChanges,
     ) {
         $this->serviceRepository = $serviceRepository;
         $this->spaBusinessRepository = $spaBusinessRepository;
@@ -45,7 +47,7 @@ class ServiceService
     // FacilityService::branchIds().
     private function branchIds(User $user): array
     {
-        return $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
+        return $this->spaBusinessRepository->branchIdsForUser($user);
     }
 
     public function listServices(User $user, int $perPage = 15)
@@ -77,6 +79,7 @@ class ServiceService
 
         $variants = $payload['variants'] ?? [];
         unset($payload['variants']);
+        $payload = $this->withKind($payload, null);
 
         if (! empty($payload['image'])) {
             $payload['image_path'] = $this->imageUploadService->store($payload['image'], 'services');
@@ -105,6 +108,25 @@ class ServiceService
         return new ServiceResource($service->load('variants'));
     }
 
+    // The service's type (ServiceKind) on its way to the database: left out
+    // until the column exists, and a facility-based service — nobody performs
+    // it — can't be a home service.
+    private function withKind(array $payload, ?Service $existing): array
+    {
+        if (! Service::hasTypes()) {
+            unset($payload['service_type']);
+
+            return $payload;
+        }
+
+        $kind = $payload['service_type'] ?? $existing?->service_type;
+        if (! ServiceKind::needsTherapist($kind)) {
+            $payload['home_service_available'] = false;
+        }
+
+        return $payload;
+    }
+
     public function getService(User $user, string $uuid)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
@@ -131,6 +153,7 @@ class ServiceService
 
         $variants = $payload['variants'] ?? null;
         unset($payload['variants']);
+        $payload = $this->withKind($payload, $service);
 
         // Only touch image_path when a new file was actually uploaded — an
         // absent 'image' key leaves the column untouched by the partial
@@ -139,6 +162,14 @@ class ServiceService
             $payload['image_path'] = $this->imageUploadService->replace($service->image_path, $payload['image'], 'services');
         }
         unset($payload['image']);
+
+        // How it stood before, for telling the managers of the branches that
+        // offer it what changed (see catalogChange below).
+        $wasActive = (bool) $service->is_active;
+        $before = $variants !== null
+            ? \App\Models\ServiceVariant::where('service_id', $service->id)->get(['id', 'duration_minutes', 'price'])
+            : collect();
+        $syncedVariants = null;
 
         $model = $this->serviceRepository->update($uuid, $payload);
 
@@ -158,7 +189,59 @@ class ServiceService
             }
         }
 
+        $this->managerChanges->tellCatalog(
+            $user, $business->id,
+            fn () => $this->branchesOffering($service->id),
+            fn () => $this->catalogChange($model, $wasActive, $before, $syncedVariants),
+        );
+
         return new ServiceResource($model->load('variants'));
+    }
+
+    // The branches where at least one length of this service is on.
+    private function branchesOffering(int $serviceId): array
+    {
+        return BranchService::whereIn('service_variant_id', \App\Models\ServiceVariant::withTrashed()->where('service_id', $serviceId)->select('id'))
+            ->where('is_available', true)
+            ->distinct()
+            ->pluck('spa_branch_id')
+            ->all();
+    }
+
+    // What a manager needs to hear about an edit to a service, in words — or
+    // null when nothing that reaches a branch changed (a new description, a
+    // different photo). Prices, lengths and the on/off switch do.
+    private function catalogChange($service, bool $wasActive, $before, $after): ?string
+    {
+        $lines = [];
+        if ((bool) $service->is_active !== $wasActive) {
+            $lines[] = $service->is_active ? 'switched it back on' : 'switched it off for every branch';
+        }
+
+        if ($after !== null) {
+            $old = $before->keyBy('id');
+            foreach ($after as $variant) {
+                $length = ManagerChangeNotifier::length((int) $variant->duration_minutes);
+                $previous = $old->get($variant->id);
+                if (! $previous) {
+                    $lines[] = "added {$length} at " . ManagerChangeNotifier::peso($variant->price);
+                    continue;
+                }
+                if ((int) $previous->duration_minutes !== (int) $variant->duration_minutes) {
+                    $lines[] = ManagerChangeNotifier::length((int) $previous->duration_minutes) . " is now {$length}";
+                }
+                if ((float) $previous->price !== (float) $variant->price) {
+                    $lines[] = "{$length} " . ManagerChangeNotifier::peso($previous->price) . ' → ' . ManagerChangeNotifier::peso($variant->price);
+                }
+            }
+            foreach ($old as $id => $previous) {
+                if (! collect($after)->contains('id', $id)) {
+                    $lines[] = 'removed ' . ManagerChangeNotifier::length((int) $previous->duration_minutes);
+                }
+            }
+        }
+
+        return $lines ? "changed {$service->name} in the catalog: " . implode('; ', $lines) . '.' : null;
     }
 
     public function deleteService(User $user, string $uuid)
@@ -177,6 +260,13 @@ class ServiceService
         $this->imageUploadService->delete($service->image_path);
 
         $this->serviceRepository->delete($uuid);
+
+        $this->managerChanges->tellCatalog(
+            $user, $business->id,
+            fn () => $this->branchesOffering($service->id),
+            "removed {$service->name} from the catalog.",
+        );
+
         return true;
     }
 

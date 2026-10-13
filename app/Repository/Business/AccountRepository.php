@@ -118,6 +118,10 @@ class AccountRepository
         if (isset($payload['permission'])) {
             $allowedKeys = config('permission.' . $account->role, []);
             $filtered = Arr::only($payload['permission'], $allowedKeys);
+            // No column to hold it until the migration is run.
+            if (! \App\Service\Business\PolicyGate::ready()) {
+                unset($filtered['policy_override']);
+            }
             if ($filtered) {
                 $account->permission()->update($filtered);
                 // A query update fires no model event — drop the cached row.

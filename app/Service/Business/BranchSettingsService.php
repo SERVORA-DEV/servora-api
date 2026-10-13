@@ -9,20 +9,16 @@ use App\Models\SpaBranch;
 use App\Models\SpaBranchPhoto;
 use App\Models\SpaBusinessSetting;
 use App\Models\User;
-use App\Repository\AuditLogRepository;
 use App\Repository\Business\SpaBranchRepository;
 use App\Repository\SpaBusinessRepository;
-use App\Repository\System\AdminUsersRepository;
-use App\Service\NotificationService;
-use App\Services\DocumentUploadService;
 use App\Services\ImageUploadService;
-use Illuminate\Http\Request;
+use App\Support\AppCache;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 
 // Backs the owner's Branch Settings pages (web /business/settings/branch/*)
 // beyond the core branch record: marketplace listing, photo gallery, booking
-// overrides, reviews summary and permit renewal. Every lookup is scoped to
+// overrides and reviews summary. Every lookup is scoped to
 // the owner's own business, so another business's branch uuid 404s.
 class BranchSettingsService
 {
@@ -30,10 +26,7 @@ class BranchSettingsService
         private SpaBusinessRepository $spaBusinessRepository,
         private SpaBranchRepository $spaBranchRepository,
         private ImageUploadService $imageUploadService,
-        private DocumentUploadService $documentUploadService,
-        private AuditLogRepository $auditLogRepository,
-        private AdminUsersRepository $adminUsersRepository,
-        private NotificationService $notificationService,
+        private ManagerChangeNotifier $managerChanges,
     ) {}
 
     // ── Marketplace listing ──────────────────────────────────────────────
@@ -72,7 +65,30 @@ class BranchSettingsService
             $payload['display_settings'] = array_intersect_key($display, SpaBranch::DISPLAY_DEFAULTS);
         }
 
+        // What is really different, in words, for an owner who asked to hear
+        // when a manager changes the listing. Worked out before the save.
+        $changed = [];
+        if (array_key_exists('listing_visible', $payload) && $payload['listing_visible'] !== (bool) $branch->listing_visible) {
+            $changed[] = $payload['listing_visible'] ? 'its visibility (now shown on the marketplace)' : 'its visibility (now hidden from the marketplace)';
+        }
+        if (array_key_exists('promo_text', $payload) && $payload['promo_text'] !== $branch->promo_text) {
+            $changed[] = 'the promo banner';
+        }
+        if (array_key_exists('highlights', $payload) && $payload['highlights'] != ($branch->highlights ?? [])) {
+            $changed[] = 'the highlights';
+        }
+        if (array_key_exists('display_settings', $payload) && $payload['display_settings'] != array_intersect_key($branch->displaySettings(), SpaBranch::DISPLAY_DEFAULTS)) {
+            $changed[] = 'what the listing shows';
+        }
+
         $branch->update($payload);
+
+        if ($changed) {
+            $this->managerChanges->tell(
+                $user, $branch, ManagerChangeNotifier::LISTING, 'Listing Changed',
+                "changed the listing of {$branch->branch_name}: " . implode(', ', $changed) . '.',
+            );
+        }
 
         return $this->marketplacePayload($branch->fresh());
     }
@@ -86,6 +102,8 @@ class BranchSettingsService
         if (! $branch) {
             return $this->noBusiness();
         }
+
+        $this->adoptBranchPhoto($branch);
 
         $existing = $branch->photos()->count();
         if ($existing + count($files) > SpaBranchPhoto::MAX_PER_BRANCH) {
@@ -109,6 +127,8 @@ class BranchSettingsService
             $hasCover = true;
         }
 
+        $this->photosChanged($user, $branch);
+
         return $this->marketplacePayload($branch->fresh());
     }
 
@@ -125,9 +145,17 @@ class BranchSettingsService
         $this->imageUploadService->delete($photo->path);
         $photo->delete();
 
+        // That was the photo from the branch's registration: forget it there
+        // too, or the gallery would take it in again (see adoptBranchPhoto).
+        if ($branch->cover_photo === $photo->path) {
+            $branch->update(['cover_photo' => null]);
+        }
+
         if ($wasCover) {
             $branch->photos()->first()?->update(['is_cover' => true]);
         }
+
+        $this->photosChanged($user, $branch);
 
         return $this->marketplacePayload($branch->fresh());
     }
@@ -145,6 +173,41 @@ class BranchSettingsService
             $branch->photos()->where('is_cover', true)->update(['is_cover' => false]);
             $photo->update(['is_cover' => true]);
         });
+
+        $this->photosChanged($user, $branch);
+
+        return $this->marketplacePayload($branch->fresh());
+    }
+
+    // The gallery in the order the owner arranged it — $photoUuids is every
+    // photo of the branch, first to last. Clients see them in this order.
+    public function reorderPhotos(User $user, string $uuid, array $photoUuids)
+    {
+        $branch = $this->branchOf($user, $uuid);
+        if (! $branch) {
+            return $this->noBusiness();
+        }
+
+        $ids = $branch->photos()->pluck('id', 'uuid');
+        if ($ids->count() !== count($photoUuids) || collect($photoUuids)->diff($ids->keys())->isNotEmpty()) {
+            return response()->json([
+                'message' => 'The gallery changed since this page loaded. Reload it and try again.',
+            ], 422);
+        }
+
+        // One statement for the whole gallery (the ids and positions are
+        // integers from here, not from the request). A query-builder update
+        // fires no model events, so the cache is cleared by hand.
+        $cases = '';
+        foreach (array_values($photoUuids) as $position => $photoUuid) {
+            $cases .= sprintf(' WHEN %d THEN %d', $ids[$photoUuid], $position + 1);
+        }
+        SpaBranchPhoto::whereIn('id', $ids->values())->update([
+            'sort_order' => DB::raw("CASE id{$cases} END"),
+        ]);
+        AppCache::bumpBusiness($branch->spa_business_id);
+
+        $this->photosChanged($user, $branch);
 
         return $this->marketplacePayload($branch->fresh());
     }
@@ -173,6 +236,11 @@ class BranchSettingsService
         }
 
         $branch->update(['booking_overrides' => $clean ?: null]);
+
+        $this->managerChanges->tell(
+            $user, $branch, ManagerChangeNotifier::BOOKING_RULES, 'Booking Rules Changed',
+            "changed the booking rules of {$branch->branch_name}.",
+        );
 
         return new SpaBranchResource($branch->fresh());
     }
@@ -212,77 +280,65 @@ class BranchSettingsService
         ]]);
     }
 
-    // ── Permit renewal ───────────────────────────────────────────────────
-
-    // Verified branches renew here; an unverified or rejected branch fixes
-    // its permit through the registration wizard (SpaBranchService::
-    // savePermit) instead. The branch stays Verified and listed — admins
-    // are notified so they can look at the new document.
-    public function renewPermit(User $user, string $uuid, array $payload, UploadedFile $file, ?Request $request = null)
-    {
-        $branch = $this->branchOf($user, $uuid);
-        if (! $branch) {
-            return $this->noBusiness();
-        }
-
-        if ($branch->verification_status !== 'Verified') {
-            return response()->json([
-                'message' => 'Only a verified branch can renew its permit here. Finish the branch registration instead.',
-            ], 422);
-        }
-
-        $old = $branch->only(['permit_number', 'permit_issue_date', 'permit_expiration_date']);
-
-        $path = $this->documentUploadService->replace(
-            $branch->permit_document_path,
-            $file,
-            "verification/branch/{$branch->uuid}/permit"
-        );
-
-        $branch->update([
-            'permit_document_path' => $path,
-            'permit_number' => $payload['permit_number'],
-            'permit_business_name' => $payload['permit_business_name'],
-            'permit_branch_location' => $payload['permit_branch_location'],
-            'permit_issue_date' => $payload['permit_issue_date'],
-            'permit_expiration_date' => $payload['permit_expiration_date'],
-            'permit_confirmed' => true,
-        ]);
-
-        $this->auditLogRepository->record(
-            $user->id,
-            'spa_branches',
-            $branch->id,
-            'Upload',
-            array_map(fn ($v) => $v instanceof \DateTimeInterface ? $v->format('Y-m-d') : $v, $old),
-            ['permit_number' => $branch->permit_number, 'permit_expiration_date' => $branch->permit_expiration_date?->toDateString()],
-            $request,
-        );
-
-        $this->notificationService->branchPermitRenewed($branch, $this->adminUsersRepository->allAdministrators());
-
-        return new SpaBranchResource($branch->fresh());
-    }
-
     // ── helpers ──────────────────────────────────────────────────────────
 
     // The owner reaches any of their branches; a manager only their own —
     // any other uuid 404s (see findByUuidForBranches).
+    // Uploading, removing, reordering and picking a cover are separate saves;
+    // the owner gets one notice for a run of them.
+    private function photosChanged(User $user, SpaBranch $branch): void
+    {
+        $this->managerChanges->tell(
+            $user, $branch, ManagerChangeNotifier::LISTING, 'Listing Photos Changed',
+            "changed the photos of {$branch->branch_name}.",
+            quietMinutes: 10,
+        );
+    }
+
     private function branchOf(User $user, string $uuid): ?SpaBranch
     {
-        $branchIds = $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
+        $branchIds = $this->spaBusinessRepository->branchIdsForUser($user);
 
         return $branchIds ? $this->spaBranchRepository->findByUuidForBranches($uuid, $branchIds) : null;
     }
 
+    // The "Branch Photo" uploaded when the branch was registered lives on the
+    // branch itself (spa_branches.cover_photo), not in the gallery — so the
+    // gallery showed nothing and the preview said "No cover photo yet" for a
+    // branch that has one. Take it into the gallery once, as the cover unless
+    // the owner already picked one. After that it is an ordinary gallery
+    // photo: it can be un-covered, or removed (deletePhoto clears the column).
+    private function adoptBranchPhoto(SpaBranch $branch): void
+    {
+        if (! $branch->cover_photo) {
+            return;
+        }
+
+        // Loaded onto the branch, so marketplacePayload reuses it.
+        $photos = $branch->photos;
+        if ($photos->contains('path', $branch->cover_photo) || $photos->count() >= SpaBranchPhoto::MAX_PER_BRANCH) {
+            return;
+        }
+
+        $branch->photos()->create([
+            'path' => $branch->cover_photo,
+            // Ahead of anything already in the gallery.
+            'sort_order' => min(0, (int) $photos->min('sort_order')) - 1,
+            'is_cover' => ! $photos->contains('is_cover', true),
+        ]);
+        $branch->unsetRelation('photos');
+    }
+
     private function marketplacePayload(SpaBranch $branch)
     {
+        $this->adoptBranchPhoto($branch);
+
         return response()->json(['data' => [
             'listing_visible' => (bool) $branch->listing_visible,
             'promo_text' => $branch->promo_text,
             'highlights' => $branch->highlights ?? [],
             'display' => $branch->displaySettings(),
-            'photos' => $branch->photos()->get()->map(fn (SpaBranchPhoto $p) => [
+            'photos' => $branch->photos->map(fn (SpaBranchPhoto $p) => [
                 'uuid' => $p->uuid,
                 'url' => ImageUploadService::url($p->path),
                 'is_cover' => $p->is_cover,

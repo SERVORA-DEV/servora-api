@@ -3,15 +3,16 @@
 namespace App\Service\System;
 
 use App\Mail\PersonalEmailVerificationOtpMail;
+use App\Mail\TwoFactorSetupOtpMail;
 use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\System\SecurityRepository;
 use App\Service\Concerns\SendsOtpMail;
+use App\Support\SessionActivity;
 use App\Support\UserAgentParser;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
-use PragmaRX\Google2FA\Google2FA;
 
 // Self-service security actions on the CALLER'S OWN account (system
 // administrators only — see routes/api.php's system/security group).
@@ -21,16 +22,15 @@ class SecurityService
     use SendsOtpMail;
 
     private const OTP_EXPIRY_MINUTES = 10;
-    private const RECOVERY_CODE_COUNT = 8;
+    // How soon another "turn on two-factor" code may be asked for.
+    private const TWO_FACTOR_SETUP_RESEND_SECONDS = 60;
 
     private SecurityRepository $securityRepository;
-    private Google2FA $google2fa;
     private AuditLogRepository $auditLogRepository;
 
-    public function __construct(SecurityRepository $securityRepository, Google2FA $google2fa, AuditLogRepository $auditLogRepository)
+    public function __construct(SecurityRepository $securityRepository, AuditLogRepository $auditLogRepository)
     {
         $this->securityRepository = $securityRepository;
-        $this->google2fa = $google2fa;
         $this->auditLogRepository = $auditLogRepository;
     }
 
@@ -59,60 +59,109 @@ class SecurityService
     }
 
     // ── Two-factor authentication ───────────────────────────────
+    //
+    // The second factor is a 6-digit code emailed to the account's VERIFIED
+    // personal email each time it signs in (UserService's challenge:
+    // requestTwoFactorEmailCode / verifyTwoFactorLogin). There is no
+    // authenticator app and there are no recovery codes — so the personal
+    // email can't be changed while two-factor is on (submitPersonalEmail),
+    // or the account could be left with nowhere to send a code.
 
     public function twoFactorStatus(User $user)
     {
-        $enabled = $user->two_factor_confirmed_at !== null;
+        $emailReady = $user->personal_email && $user->personal_email_verified_at !== null;
 
         return response()->json([
-            'enabled' => $enabled,
-            'recovery_codes_remaining' => $enabled ? $this->securityRepository->recoveryCodesRemaining($user) : 0,
-            'personal_email_available' => $user->personal_email_verified_at !== null,
+            'enabled' => $user->two_factor_confirmed_at !== null,
+            'method' => 'email',
+            'personal_email_available' => $emailReady,
+            'sent_to' => $emailReady ? $user->personal_email : null,
         ], 200);
     }
 
-    // Two-step enable: this only generates and stores a PENDING secret +
-    // recovery codes (two_factor_confirmed_at stays null). Nothing is
-    // actually "enabled" until confirmTwoFactor verifies the admin captured
-    // the secret correctly. Calling this again before confirming overwrites
-    // the previous pending attempt.
+    // Turning it on, step one: a code goes to the personal email, to prove
+    // that inbox can be reached right now. Nothing is on until
+    // confirmTwoFactor is given that code. The code is kept where the
+    // personal email's own verification code is kept — free, since the
+    // email has to be verified already.
     public function enableTwoFactor(User $user)
     {
-        $secret = $this->google2fa->generateSecretKey();
-        $recoveryCodes = $this->generateRecoveryCodes();
+        if ($user->two_factor_confirmed_at !== null) {
+            return response()->json([
+                'message' => 'Two-factor authentication is already on.',
+            ], 422);
+        }
 
-        $this->securityRepository->setPendingTwoFactor(
-            $user,
-            $secret,
-            array_map(fn (string $code) => Hash::make($code), $recoveryCodes),
+        if (! $user->personal_email || $user->personal_email_verified_at === null) {
+            return response()->json([
+                'message' => 'Add and verify a personal email first — your sign-in codes are sent there.',
+            ], 422);
+        }
+
+        if ($user->personal_email_otp_created_at) {
+            $wait = self::TWO_FACTOR_SETUP_RESEND_SECONDS
+                - (int) Carbon::parse($user->personal_email_otp_created_at)->diffInSeconds(now());
+
+            if ($wait > 0) {
+                return response()->json([
+                    'message' => "Please wait {$wait} seconds before asking for another code.",
+                    'retry_after' => $wait,
+                    'sent_to' => $user->personal_email,
+                ], 429);
+            }
+        }
+
+        $otp = (string) random_int(100000, 999999);
+        $this->securityRepository->refreshPersonalEmailOtp($user, Hash::make($otp));
+
+        $sent = $this->deliver(
+            $user->personal_email,
+            new TwoFactorSetupOtpMail($otp, self::OTP_EXPIRY_MINUTES),
+            'two-factor setup OTP',
         );
 
+        if (! $sent) {
+            return response()->json([
+                'message' => 'We could not send the code right now. Please try again in a moment.',
+            ], 503);
+        }
+
         return response()->json([
-            'secret' => $secret,
-            'otpauth_url' => $this->google2fa->getQRCodeUrl(config('app.name'), $user->email, $secret),
-            'recovery_codes' => $recoveryCodes,
+            'message' => 'A code has been sent to your personal email.',
+            'sent_to' => $user->personal_email,
+            'retry_after' => self::TWO_FACTOR_SETUP_RESEND_SECONDS,
         ], 200);
     }
 
     public function confirmTwoFactor(User $user, array $payload)
     {
-        if (! $user->two_factor_secret) {
+        if (
+            $user->two_factor_confirmed_at !== null
+            || $user->personal_email_verified_at === null
+            || ! $user->personal_email_otp_hash
+        ) {
             return response()->json([
-                'message' => 'Start two-factor setup before confirming a code.',
+                'message' => 'Ask for a code before confirming one.',
             ], 422);
         }
 
-        if (! $this->google2fa->verifyKey($user->two_factor_secret, $payload['code'])) {
+        if (Carbon::parse($user->personal_email_otp_created_at)->addMinutes(self::OTP_EXPIRY_MINUTES)->isPast()) {
+            return response()->json([
+                'message' => 'This code has expired. Please ask for a new one.',
+            ], 410);
+        }
+
+        if (! Hash::check($payload['code'], $user->personal_email_otp_hash)) {
             return response()->json([
                 'message' => 'Invalid code. Please try again.',
             ], 422);
         }
 
-        $this->securityRepository->confirmTwoFactor($user);
-        $this->logAccountEvent($user, 'Activate', ['two_factor' => 'enabled']);
+        $this->securityRepository->confirmEmailTwoFactor($user);
+        $this->logAccountEvent($user, 'Activate', ['two_factor' => 'enabled', 'method' => 'email']);
 
         return response()->json([
-            'message' => 'Two-factor authentication is now enabled.',
+            'message' => 'Two-factor authentication is now on.',
             'enabled' => true,
         ], 200);
     }
@@ -129,54 +178,23 @@ class SecurityService
         $this->logAccountEvent($user, 'Deactivate', ['two_factor' => 'disabled']);
 
         return response()->json([
-            'message' => 'Two-factor authentication has been disabled.',
+            'message' => 'Two-factor authentication has been turned off.',
             'enabled' => false,
         ], 200);
-    }
-
-    public function regenerateRecoveryCodes(User $user, array $payload)
-    {
-        if (! Hash::check($payload['current_password'], $user->password)) {
-            return response()->json([
-                'message' => 'Current password is incorrect.',
-            ], 422);
-        }
-
-        if ($user->two_factor_confirmed_at === null) {
-            return response()->json([
-                'message' => 'Enable two-factor authentication before generating recovery codes.',
-            ], 422);
-        }
-
-        $recoveryCodes = $this->generateRecoveryCodes();
-
-        $this->securityRepository->setRecoveryCodes(
-            $user,
-            array_map(fn (string $code) => Hash::make($code), $recoveryCodes),
-        );
-        $this->logAccountEvent($user, 'Update', ['recovery_codes' => 'regenerated']);
-
-        return response()->json([
-            'recovery_codes' => $recoveryCodes,
-        ], 200);
-    }
-
-    /**
-     * @return string[] plaintext codes — only ever returned once, at
-     *   generation time. Only the hashes are persisted.
-     */
-    private function generateRecoveryCodes(): array
-    {
-        return array_map(
-            fn () => Str::upper(Str::random(4)).'-'.Str::upper(Str::random(4)),
-            range(1, self::RECOVERY_CODE_COUNT),
-        );
     }
 
     // ── Personal verification email ─────────────────────────────
 
     public function submitPersonalEmail(User $user, array $payload)
     {
+        // Sign-in codes go to this address: changing it while two-factor is
+        // on would leave them going nowhere until the new one is verified.
+        if ($user->two_factor_confirmed_at !== null) {
+            return response()->json([
+                'message' => 'Turn off two-factor authentication before changing this email — your sign-in codes are sent to it.',
+            ], 422);
+        }
+
         $otp = (string) random_int(100000, 999999);
         $previousEmail = $user->personal_email;
 
@@ -260,12 +278,25 @@ class SecurityService
 
     // ── Login sessions ───────────────────────────────────────────
 
+    // Only the sessions in use are listed (App\Support\SessionActivity):
+    // this one, and any other used in the last half hour. Sign-ins left
+    // behind by a closed browser are still valid, so they are counted
+    // (idle_count) and "log out everywhere else" ends them — but they are
+    // not devices anyone is on.
     public function sessions(User $user, ?int $currentTokenId)
     {
-        $tokens = $this->securityRepository->tokens($user);
+        $now = now();
+        $lifetime = config('sanctum.expiration') ? (int) config('sanctum.expiration') : null;
+
+        [$active, $idle] = $this->securityRepository->tokens($user)
+            ->reject(fn ($token) => SessionActivity::expired($token->created_at, $token->expires_at, $now, $lifetime))
+            ->partition(fn ($token) => $token->id === $currentTokenId
+                || SessionActivity::active($token->last_used_at, $token->created_at, $now));
 
         return response()->json([
-            'data' => $tokens->map(fn ($token) => [
+            'idle_count' => $idle->count(),
+            'active_minutes' => SessionActivity::ACTIVE_MINUTES,
+            'data' => $active->sortByDesc(fn ($token) => $token->id === $currentTokenId)->values()->map(fn ($token) => [
                 'id' => $token->id,
                 // Tokens issued before the user_agent column existed only
                 // have their name (already a parsed label, or a raw UA from

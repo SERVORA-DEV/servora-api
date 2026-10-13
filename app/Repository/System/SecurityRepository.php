@@ -63,18 +63,17 @@ class SecurityRepository
         return count(json_decode($user->two_factor_recovery_codes ?? '[]', true) ?: []);
     }
 
-    public function setPendingTwoFactor(User $user, string $secret, array $hashedRecoveryCodes): void
+    // On, by emailed code: nothing of an authenticator app is kept, and the
+    // setup code that proved the inbox is spent.
+    public function confirmEmailTwoFactor(User $user): void
     {
         $user->forceFill([
-            'two_factor_secret' => $secret,
-            'two_factor_recovery_codes' => json_encode($hashedRecoveryCodes),
-            'two_factor_confirmed_at' => null,
+            'two_factor_confirmed_at' => now(),
+            'two_factor_secret' => null,
+            'two_factor_recovery_codes' => null,
+            'personal_email_otp_hash' => null,
+            'personal_email_otp_created_at' => null,
         ])->save();
-    }
-
-    public function confirmTwoFactor(User $user): void
-    {
-        $user->forceFill(['two_factor_confirmed_at' => now()])->save();
     }
 
     public function clearTwoFactor(User $user): void
@@ -84,11 +83,6 @@ class SecurityRepository
             'two_factor_recovery_codes' => null,
             'two_factor_confirmed_at' => null,
         ])->save();
-    }
-
-    public function setRecoveryCodes(User $user, array $hashedRecoveryCodes): void
-    {
-        $user->forceFill(['two_factor_recovery_codes' => json_encode($hashedRecoveryCodes)])->save();
     }
 
     // Recovery codes are single-use — the matched hash is removed so it

@@ -31,7 +31,7 @@ class ClientTransactionResource extends JsonResource
             'business_name' => $appointment?->branch?->business?->business_name,
             'services' => $appointment
                 ? $appointment->services->where('status', '!=', 'Cancelled')->map(fn ($s) => [
-                    'name' => $s->serviceVariant?->service?->name,
+                    'name' => $s->displayName(),
                     'price' => (float) $s->subtotal,
                 ])->values()
                 : [],

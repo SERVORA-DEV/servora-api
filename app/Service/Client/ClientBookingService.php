@@ -166,7 +166,7 @@ class ClientBookingService
                 }
             }
 
-            // Hours, break, end-before-close and "is a therapist left" —
+            // Hours, end-before-close and "is a therapist left" —
             // the same check the reschedule screen's time chips came from.
             $slotProblem = $this->slotService->bookingProblem(
                 $branch,

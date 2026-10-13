@@ -49,6 +49,7 @@ class AttendanceDetailResource extends JsonResource
             'check_in_at' => $attendance->check_in_at?->format('H:i'),
             'check_out_at' => $attendance->check_out_at?->format('H:i'),
             'work_minutes' => $calculated['work_minutes'],
+            'overtime_minutes' => $calculated['overtime_minutes'] ?? null,
             'status' => $calculated['status'],
             'late_minutes' => $calculated['late_minutes'],
             'is_day_off' => $calculated['is_day_off'],

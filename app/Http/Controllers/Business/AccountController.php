@@ -46,6 +46,11 @@ class AccountController extends Controller
         return $this->accountService->updateAccount($request->user(), $uuid, $request->validated());
     }
 
+    public function bringBack(Request $request, string $uuid)
+    {
+        return $this->accountService->bringBack($request->user(), $uuid);
+    }
+
     public function destroy(Request $request, string $uuid)
     {
         $this->accountService->deleteAccount($request->user(), $uuid);

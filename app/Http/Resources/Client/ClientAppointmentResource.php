@@ -74,6 +74,26 @@ class ClientAppointmentResource extends JsonResource
             'appointment_date' => optional($this->appointment_date)->format('Y-m-d'),
             'appointment_time' => substr((string) $this->appointment_time, 0, 5),
             'appointment_type' => $this->appointment_type,
+
+            // Home service (HomeServiceRules): 'In Spa' or 'Home Service',
+            // and for a home visit the client's pinned address and the fee
+            // that is part of total_amount.
+            'service_location' => $this->service_location ?? 'In Spa',
+            'is_home_service' => $this->isHomeService(),
+            'home_address' => $this->home_address,
+            'home_address_notes' => $this->home_address_notes,
+            'home_latitude' => $this->home_latitude,
+            'home_longitude' => $this->home_longitude,
+            'home_distance_km' => $this->home_distance_km,
+            'home_service_fee' => (float) $this->home_service_fee,
+            // What the client shows their staff to start a home visit
+            // (App\Support\HomeVisitStart): the code, and the text its QR is
+            // drawn from. Null for a visit to the spa.
+            'home_start_code' => Appointment::hasHomeStart() && $this->isHomeService() ? $this->home_start_code : null,
+            'home_start_qr' => Appointment::hasHomeStart() && $this->isHomeService() && $this->home_start_code
+                ? \App\Support\HomeVisitStart::qrText($this->home_start_code)
+                : null,
+            'preferred_staff_gender' => Appointment::hasHomeStart() ? $this->preferred_staff_gender : null,
             'source' => $this->source,
             'status' => $this->status,
             'check_in_at' => optional($this->check_in_at)->toIso8601String(),
@@ -109,15 +129,15 @@ class ClientAppointmentResource extends JsonResource
                 ->values()
                 ->map(fn ($s) => [
                     'uuid' => $s->uuid,
-                    'name' => $s->serviceVariant?->service?->name,
-                    'duration_minutes' => $s->serviceVariant?->duration_minutes,
+                    'name' => $s->displayName(),
+                    'duration_minutes' => $s->lengthMinutes(),
                     'price' => (float) $s->subtotal,
                     'status' => $s->status,
-                    'package_name' => $s->sourceAppointmentPackage?->package?->name,
+                    'package_name' => $s->sourceAppointmentPackage?->displayName(),
                 ]),
             'packages' => $this->packages->map(fn ($p) => [
                 'uuid' => $p->uuid,
-                'name' => $p->package?->name,
+                'name' => $p->displayName(),
             ])->values(),
             'therapists' => $therapists,
 

@@ -25,7 +25,7 @@ class PublicReviewResource extends JsonResource
             'comment' => $this->comment,
             'author' => $name,
             'services' => $this->appointment?->services
-                ->map(fn ($s) => $s->serviceVariant?->service?->name)->filter()->unique()->values() ?? [],
+                ->map(fn ($s) => $s->displayName())->filter()->unique()->values() ?? [],
             'reviewed_at' => optional($this->reviewed_at ?? $this->created_at)->toIso8601String(),
         ];
     }

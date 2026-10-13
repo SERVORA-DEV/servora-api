@@ -6,6 +6,9 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Support\StaffSpecialty;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 
 class Staff extends Model
 {
@@ -41,6 +44,12 @@ class Staff extends Model
         'hire_date',
 
         'role',
+        // What they do (App\Support\StaffSpecialty): a list, the first being
+        // their main one. Only for the people who perform services.
+        'specialties',
+        // Their own commission rate — the same kind as the standard one in
+        // Staff Policies. Null: the standard (App\Support\CommissionShare).
+        'commission_rate',
 
         'employment_type',
         'status',
@@ -53,7 +62,63 @@ class Staff extends Model
     protected $casts = [
         'birth_date' => 'date:Y-m-d',
         'hire_date' => 'date:Y-m-d',
+        'specialties' => 'array',
     ];
+
+    /**
+     * Whether staff have specialties yet (the migration has been run). Until
+     * then nobody has one and none is saved or shown.
+     */
+    public static function hasSpecialties(): bool
+    {
+        // Asked often, so both answers are remembered: "yes" for good, "not
+        // yet" for a minute (same as Service::hasTypes).
+        $known = Cache::get('schema:staff_specialties');
+        if (is_bool($known)) {
+            return $known;
+        }
+        $ready = Schema::hasColumn('staff', 'specialties');
+        $ready ? Cache::forever('schema:staff_specialties', true) : Cache::put('schema:staff_specialties', false, 60);
+
+        return $ready;
+    }
+
+    /**
+     * Whether a staff member can have a commission of their own yet (the
+     * migration has been run). Until then everyone earns the standard rate.
+     */
+    public static function hasCustomCommission(): bool
+    {
+        $known = Cache::get('schema:staff_commission');
+        if (is_bool($known)) {
+            return $known;
+        }
+        $ready = Schema::hasColumn('staff', 'commission_rate');
+        $ready ? Cache::forever('schema:staff_commission', true) : Cache::put('schema:staff_commission', false, 60);
+
+        return $ready;
+    }
+
+    /** Their own commission rate, or null when they earn the standard one. */
+    public function ownCommissionRate(): ?float
+    {
+        return self::hasCustomCommission() && $this->role === StaffSpecialty::ROLE && $this->commission_rate !== null
+            ? (float) $this->commission_rate
+            : null;
+    }
+
+    /**
+     * What they do, main one first — none for a manager or the front desk,
+     * and none until specialties exist.
+     *
+     * @return string[]
+     */
+    public function specialtyList(): array
+    {
+        return self::hasSpecialties() && $this->role === StaffSpecialty::ROLE
+            ? StaffSpecialty::clean($this->specialties)
+            : [];
+    }
 
     public function uniqueIds()
     {

@@ -61,6 +61,7 @@ class SubscriptionService
         private PlanChangeService $planChangeService,
         private PlanSwitchService $planSwitchService,
         private CheckoutService $checkoutService,
+        private PlanFitService $planFitService,
     ) {
         $this->subscriptionRepository = $subscriptionRepository;
         $this->businessRepository = $businessRepository;
@@ -342,7 +343,21 @@ class SubscriptionService
         }
 
         if ($quote['type'] === 'downgrade') {
-            $this->planSwitchService->scheduleDowngrade($subscription, $plan, $payload['billing_cycle']);
+            // Using more than the smaller plan allows: the owner has to say
+            // what to keep, and that choice has to be a valid one.
+            $keep = $payload['keep'] ?? null;
+            $problems = $this->planFitService->problems($subscription->business, $plan, $keep, $subscription->expires_at);
+            if ($problems) {
+                return response()->json([
+                    'message' => $problems[0],
+                    'code' => 'PLAN_FIT_CHOICE',
+                    'problems' => $problems,
+                    'data' => $quote,
+                ], 422);
+            }
+            $needsChoice = (bool) ($quote['fit']['needs_choice'] ?? false);
+
+            $this->planSwitchService->scheduleDowngrade($subscription, $plan, $payload['billing_cycle'], $needsChoice ? $keep : null);
 
             return response()->json([
                 'type' => 'downgrade',
@@ -585,13 +600,12 @@ class SubscriptionService
         Cache::store('durable')->forget(self::PENDING_CACHE_PREFIX . $referenceId);
         Cache::store('durable')->forget(self::PENDING_BUSINESS_CACHE_PREFIX . $intent['spa_business_id']);
 
-        // Admin-facing notifications for a real, webhook-confirmed payment —
-        // one subscription-started fact and one payment-received fact.
+        // Admin-facing notification for a real, webhook-confirmed payment:
+        // one, saying who subscribed and what they paid.
         $subscription->loadMissing(['business', 'plan']);
         if ($subscription->business && $subscription->plan) {
             $admins = $this->adminUsersRepository->allAdministrators();
-            $this->notificationService->subscriptionActivated($subscription->business, $subscription->plan, $subscription->billing_cycle, $admins);
-            $this->notificationService->paymentReceived($subscription->business, $paidAmount, $admins);
+            $this->notificationService->subscriptionActivated($subscription->business, $subscription->plan, $subscription->billing_cycle, $admins, (float) $paidAmount);
         }
 
         return true;

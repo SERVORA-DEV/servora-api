@@ -100,10 +100,25 @@ return [
             'prefix_indexes' => true,
             'search_path' => 'public',
             'sslmode' => env('DB_SSLMODE', 'prefer'),
-            // Opt-in for local dev against the remote Supabase pooler: the
-            // single `php artisan serve` process reuses one connection instead
-            // of paying a fresh TLS + auth handshake (~2s) on every request.
-            'options' => env('DB_PERSISTENT', false) ? [PDO::ATTR_PERSISTENT => true] : [],
+            'options' => extension_loaded('pdo_pgsql') ? array_filter([
+                // Opt-in for local dev against the remote Supabase pooler: the
+                // single `php artisan serve` process reuses one connection
+                // instead of paying a fresh TLS + auth handshake (about a
+                // second) on every request.
+                PDO::ATTR_PERSISTENT => (bool) env('DB_PERSISTENT', false),
+
+                // One network round trip per query instead of three. By
+                // default the driver prepares every statement on the server
+                // first (parse, then describe, then run), which against a
+                // database 100 ms away made each query cost about 310 ms;
+                // this sends the SQL and its values together (about 104 ms).
+                // Values are still real bound parameters — this is NOT
+                // ATTR_EMULATE_PREPARES, which inlines them and breaks
+                // true/false filters on PostgreSQL. It is also what a
+                // transaction-mode pooler needs. DB_DISABLE_PREPARES=false
+                // puts the old behaviour back.
+                (PHP_VERSION_ID >= 80500 ? \Pdo\Pgsql::ATTR_DISABLE_PREPARES : PDO::PGSQL_ATTR_DISABLE_PREPARES) => (bool) env('DB_DISABLE_PREPARES', true),
+            ]) : [],
         ],
 
         'sqlsrv' => [

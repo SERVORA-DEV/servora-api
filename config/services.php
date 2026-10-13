@@ -52,6 +52,10 @@ return [
 
     'xendit' => [
         'secret_key' => env('XENDIT_SECRET_KEY'),
+        // Demo only (the default): nothing is sent to Xendit unless the key
+        // above is a TEST key (xnd_development_…), so no real card, GCash or
+        // Maya account can be charged. See XenditService.
+        'demo_only' => env('XENDIT_DEMO_ONLY', true),
         'base_url' => env('XENDIT_BASE_URL'),
         'webhook_token' => env('XENDIT_WEBHOOK_TOKEN'),
     ],

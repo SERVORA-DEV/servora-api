@@ -30,7 +30,6 @@ class StaffPolicySettingsRequest extends FormRequest
 
             'attendance_tracking' => 'sometimes|boolean',
             'require_check_in' => 'sometimes|boolean',
-            'allow_self_check_in' => 'sometimes|boolean',
             'late_threshold_minutes' => 'sometimes|required|integer|min:1|max:240',
             'allow_shift_swap' => 'sometimes|boolean',
             'require_manager_approval' => 'sometimes|boolean',

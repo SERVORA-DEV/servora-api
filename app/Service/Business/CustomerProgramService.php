@@ -9,6 +9,8 @@ use App\Models\ClientMembership;
 use App\Models\ClientPointEntry;
 use App\Models\ClientVoucher;
 use App\Models\CustomerProgram;
+use App\Models\ProgramRequest;
+use App\Models\Service;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
 use App\Models\User;
@@ -16,6 +18,7 @@ use App\Repository\Business\ClientRepository;
 use App\Repository\BillingRepository;
 use App\Repository\PaymentRepository;
 use App\Repository\SpaBusinessRepository;
+use App\Support\VoucherTarget;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
@@ -24,6 +27,10 @@ use Illuminate\Support\Facades\DB;
 // Customer programs as the business runs them:
 //   - the owner creates/edits programs and picks the branches that offer them
 //     (a manager switches programs on/off for their own branch);
+//   - a manager can ask for a new program for their branch
+//     (ProgramRequestService); an approved one is made here by store() and
+//     carries only_branch_id — the branch it was made for — until the owner
+//     offers it somewhere else;
 //   - the front desk sells memberships and redeems points for a client;
 //   - summaryFor() is what a client holds at a spa — the same shape for the
 //     front desk's client profile and the client app's Rewards tab.
@@ -38,6 +45,7 @@ class CustomerProgramService
         private BillingService $billingService,
         private ProgramRewardService $rewards,
         private BusinessSettingsService $settingsService,
+        private ManagerChangeNotifier $managerChanges,
     ) {
     }
 
@@ -56,6 +64,11 @@ class CustomerProgramService
         $programs = CustomerProgram::with(['branches', 'items'])
             ->where('spa_business_id', $business->id)
             ->when(! $isOwner, fn ($q) => $q->where('is_active', true))
+            // A program made for one branch (a manager asked for it) isn't
+            // the other branches' to switch on, so they aren't shown it.
+            ->when(! $isOwner && ProgramRequest::ready(), fn ($q) => $q->where(
+                fn ($w) => $w->whereNull('only_branch_id')->orWhereIn('only_branch_id', $branchIds)
+            ))
             ->orderBy('created_at')
             ->get();
 
@@ -66,6 +79,9 @@ class CustomerProgramService
             // Whether the current plan includes customer programs (writes are
             // gated by plan.feature:reward_access).
             'plan_allows' => (bool) $subscription?->plan?->reward_access,
+            // The same for packages (plan.feature:package_access). Sent here
+            // because every business role already reads this on each page.
+            'plan_packages' => (bool) $subscription?->plan?->package_access,
             'programs' => $programs->map(fn ($p) => (new CustomerProgramResource($p))->onlyBranches($branchIds)->resolve())->values(),
             // Per-service bonus points were removed (points come from the
             // amount paid only). Key kept so older clients don't break.
@@ -80,21 +96,26 @@ class CustomerProgramService
         return $this->index($user);
     }
 
-    public function store(User $user, array $data)
+    // $onlyFor: the program is being made for one branch (the owner approving
+    // a manager's request). It is offered there and nowhere else.
+    public function store(User $user, array $data, ?SpaBranch $onlyFor = null)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
         if (! $business) {
             return $this->noBusiness();
         }
+        if ($onlyFor) {
+            $data['branch_uuids'] = [$onlyFor->uuid];
+        }
 
-        return DB::transaction(function () use ($business, $data) {
+        return DB::transaction(function () use ($business, $data, $onlyFor) {
             // Loyalty is one program for the whole business: saving it again
             // updates the existing one.
             $program = $data['type'] === 'loyalty'
                 ? CustomerProgram::where('spa_business_id', $business->id)->where('type', 'loyalty')->first()
                 : null;
 
-            if ($problem = $this->problem($data['type'], $data)) {
+            if ($problem = $this->problem($data['type'], $data) ?? $this->targetProblem($data['type'], $data, $business)) {
                 return $this->reject($problem);
             }
 
@@ -105,6 +126,9 @@ class CustomerProgramService
             }
 
             $program ??= new CustomerProgram(['spa_business_id' => $business->id, 'type' => $data['type']]);
+            if ($onlyFor && $onlyFor->spa_business_id === $business->id) {
+                $program->only_branch_id = $onlyFor->id;
+            }
             $this->fill($program, $data, $business);
 
             return new CustomerProgramResource($program->load(['branches', 'items']));
@@ -121,7 +145,8 @@ class CustomerProgramService
         return DB::transaction(function () use ($business, $uuid, $data) {
             $program = $this->program($business, $uuid, lock: true);
 
-            if ($problem = $this->problem($program->type, array_merge($this->current($program), $data))) {
+            $merged = array_merge($this->current($program), $data);
+            if ($problem = $this->problem($program->type, $merged) ?? $this->targetProblem($program->type, $merged, $business)) {
                 return $this->reject($problem);
             }
 
@@ -164,11 +189,24 @@ class CustomerProgramService
         }
 
         $program = $this->program($business, $uuid);
+        if ($offered && $program->only_branch_id && $program->only_branch_id !== $branch->id) {
+            if ($user->role !== 'business_owner') {
+                return $this->reject("\"{$program->name}\" was made for another branch. Ask the owner to offer it at {$branch->branch_name}.");
+            }
+            // The owner offering it somewhere else: it is no longer one
+            // branch's own.
+            $program->update(['only_branch_id' => null]);
+        }
         $offered
             ? $program->branches()->syncWithoutDetaching([$branch->id])
             : $program->branches()->detach($branch->id);
         // A pivot change fires no model event: the spa page shows programs.
         \App\Support\AppCache::bumpBusiness($business->id);
+
+        $this->managerChanges->tell(
+            $user, $branch, ManagerChangeNotifier::LISTING, 'Branch Program Changed',
+            "switched the program \"{$program->name}\" " . ($offered ? 'on' : 'off') . " for {$branch->branch_name}.",
+        );
 
         return (new CustomerProgramResource($program->load(['branches', 'items'])))
             ->onlyBranches($user->role === 'business_owner' ? null : $this->branchIds($user));
@@ -223,7 +261,7 @@ class CustomerProgramService
 
             $current = ClientMembership::where('client_id', $client->id)->where('status', 'active')->where('ends_at', '>', now())->lockForUpdate()->first();
             if ($current && $current->customer_program_id !== $program->id) {
-                return $this->reject("{$client->first_name} already has {$current->program?->name} until " . $current->ends_at->format('M j, Y') . ' — cancel it first.');
+                return $this->reject("{$client->first_name} already has {$current->displayName()} until " . $current->ends_at->format('M j, Y') . ' — cancel it first.');
             }
 
             // Renewing an unexpired one extends it from its end date.
@@ -347,7 +385,7 @@ class CustomerProgramService
             'starts_at' => $m->starts_at?->toIso8601String(),
             'ends_at' => $m->ends_at?->toIso8601String(),
             'price' => (float) $m->price,
-            'program' => ['uuid' => $m->program?->uuid, 'name' => $m->program?->name],
+            'program' => ['uuid' => $m->program?->uuid, 'name' => $m->displayName()],
             'client' => ['uuid' => $m->client?->uuid, 'name' => trim(($m->client?->first_name ?? '') . ' ' . ($m->client?->last_name ?? ''))],
             'branch' => ['uuid' => $m->branch?->uuid, 'name' => $m->branch?->branch_name],
         ];
@@ -406,13 +444,18 @@ class CustomerProgramService
             : collect();
 
         $membership = $client->activeMembership()->with('program.items')->first();
-        $memberItemIds = $membership?->program?->items->pluck('id')->all() ?? [];
+        $memberItemIds = $membership?->perkIds() ?? [];
         $wallet = ClientVoucher::with('program')->where('client_id', $client->id)->where('status', 'available')
             ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
             ->orderBy('expires_at')->get();
-        $paidVisits = $this->rewards->paidVisits($client);
+        $visits = $this->rewards->paidVisitServices($client);
 
         $loyalty = $catalogue->firstWhere('type', 'loyalty');
+        // Vouchers that can still be got with points this visit; null = no limit.
+        $redeemLimit = $this->rewards->redeemLimit($loyalty);
+        $earn = $loyalty ? $this->rewards->earnRule($loyalty) : ['points' => 0.0, 'per' => 1.0];
+        $redeemedToday = $loyalty && $redeemLimit > 0 ? $this->rewards->redeemedToday($client) : 0;
+        $redeemsLeft = $redeemLimit > 0 ? max(0, $redeemLimit - $redeemedToday) : null;
         $expiring = $loyalty ? ClientPointEntry::where('client_id', $client->id)->where('type', 'earn')->where('remaining', '>', 0)
             ->whereNotNull('expires_at')->where('expires_at', '<=', now()->addDays(30))
             ->selectRaw('COALESCE(SUM(remaining), 0) AS points, MIN(expires_at) AS first_at')->first() : null;
@@ -430,9 +473,20 @@ class CustomerProgramService
                 'name' => $loyalty->name,
                 'points' => (int) $client->current_points,
                 'lifetime_points' => (int) $client->lifetime_points,
-                'points_per_peso' => (float) $loyalty->value('pointsPerPeso', 0),
-                'point_value' => (float) $loyalty->value('pointValue', 0),
-                'min_redeem' => (int) $loyalty->value('minRedeem', 0),
+                // Points are for clients who use the app (LoyaltyEarning).
+                'earns' => \App\Support\LoyaltyEarning::earns($client->usesApp()),
+                // "1 point for every ₱10": the two numbers to show. The
+                // rate per ₱1 stays for app builds that only read that.
+                'earn_points' => $earn['points'],
+                'earn_per_pesos' => $earn['per'],
+                'points_per_peso' => round($earn['points'] / $earn['per'], 6),
+                // No longer rules: points have no peso value of their own
+                // and no minimum to redeem (each voucher has its own points
+                // price). Kept at 0 for app builds that still read them.
+                'point_value' => 0,
+                'min_redeem' => 0,
+                'redeem_per_visit' => $redeemLimit ?: null,
+                'redeems_left' => $redeemsLeft,
                 'expiry' => $loyalty->value('expiryMonths', '12 months'),
                 'expiring_points' => (int) ($expiring?->points ?? 0),
                 'expiring_at' => $expiring?->first_at ? \Illuminate\Support\Carbon::parse($expiring->first_at)->toIso8601String() : null,
@@ -440,12 +494,14 @@ class CustomerProgramService
                 // app hides its "bonus" list when this is empty.
                 'bonus' => [],
             ] : null,
-            'wallet' => $wallet->filter(fn ($v) => $v->program)->map(fn ($v) => [
+            // Each voucher as it was issued: its own copy of the name and
+            // deal (ClientVoucher::dealProgram / App\Support\History).
+            'wallet' => $wallet->filter(fn ($v) => $v->dealProgram())->map(fn ($v) => [
                 'uuid' => $v->uuid,
-                'program_uuid' => $v->program->uuid,
-                'name' => $v->program->name,
-                'deal' => $this->dealText($v->program),
-                'usable_on' => $v->program->value('usableOn', 'All services'),
+                'program_uuid' => $v->dealProgram()->uuid,
+                'name' => $v->dealProgram()->name,
+                'deal' => $this->dealText($v->dealProgram()),
+                'usable_on' => $v->dealProgram()->value('usableOn', 'All services'),
                 'source' => $v->source,
                 'issued_at' => $v->issued_at?->toIso8601String(),
                 'expires_at' => $v->expires_at?->toIso8601String(),
@@ -456,11 +512,14 @@ class CustomerProgramService
                 'deal' => $this->dealText($p),
                 'usable_on' => $p->value('usableOn', 'All services'),
                 'valid_for' => $p->value('validDays', '3 months'),
-                'earn' => ['kind' => $p->condition_kind, 'value' => $p->condition_value],
+                // `on`: only visits with these services count ("a Massage
+                // service"); null when any visit does.
+                'earn' => ['kind' => $p->condition_kind, 'value' => $p->condition_value, 'on' => $this->earnOn($p)],
                 'in_wallet' => $wallet->where('customer_program_id', $p->id)->count(),
-                'progress' => $this->progress($p, $client, $paidVisits),
+                'progress' => $this->progress($p, $client, $visits),
                 'redeemable' => $p->condition_kind === 'points' && $loyalty
-                    && $client->current_points >= max((int) $p->condition_value, (int) $loyalty->value('minRedeem', 0)),
+                    && $client->current_points >= (int) $p->condition_value
+                    && ($redeemsLeft === null || $redeemsLeft > 0),
             ])->values(),
             'discounts' => $catalogue->where('type', 'discount')->map(fn ($p) => [
                 'program_uuid' => $p->uuid,
@@ -484,12 +543,12 @@ class CustomerProgramService
         ];
     }
 
-    private function progress(CustomerProgram $voucher, Client $client, int $paidVisits): ?float
+    private function progress(CustomerProgram $voucher, Client $client, array $visits): ?float
     {
         $n = (int) $voucher->condition_value;
 
         return match ($voucher->condition_kind) {
-            'visits' => $n > 0 ? round(($paidVisits % $n) / $n, 2) : null,
+            'visits' => $n > 0 ? round((VoucherTarget::visits(VoucherTarget::of($voucher->values, 'earn'), $visits) % $n) / $n, 2) : null,
             'points' => $n > 0 ? round(min(1, $client->current_points / $n), 2) : null,
             default => null,
         };
@@ -499,7 +558,11 @@ class CustomerProgramService
     {
         $deal = $p->value('dealType', '₱ off');
         if ($deal === 'Free service') {
-            return 'Free ' . $p->value('usableOn', 'service');
+            $target = VoucherTarget::of($p->values, 'usable');
+
+            // "Free Massage service"; chosen services (and older vouchers,
+            // which name the service) read as written: "Free Swedish Massage".
+            return 'Free ' . ($target['kind'] === VoucherTarget::CATEGORY ? VoucherTarget::freePhrase($target) : $p->value('usableOn', 'service'));
         }
         $v = (float) $p->value('value', 0);
 
@@ -510,8 +573,9 @@ class CustomerProgramService
     public function summaryText(CustomerProgram $p): string
     {
         return match ($p->type) {
-            'loyalty' => 'Earn ' . rtrim(rtrim(number_format((float) $p->value('pointsPerPeso', 0), 2), '0'), '.') . ' pt per ₱1',
-            'voucher' => $this->dealText($p),
+            'loyalty' => $this->earnText($p),
+            // "50% off a Massage service" when it is for certain services.
+            'voucher' => $this->dealText($p) . ($p->value('dealType') !== 'Free service' && ! VoucherTarget::isAll(VoucherTarget::of($p->values, 'usable')) ? ' ' . $p->value('usableOn', '') : ''),
             'discount' => $this->discountText($p) . ($p->audience === 'members' ? ' · members' : ''),
             'membership' => '₱' . number_format((float) $p->value('price', 0)) . ' / ' . $p->value('billing', 'Monthly'),
             default => '',
@@ -557,11 +621,46 @@ class CustomerProgramService
         ];
     }
 
+    // The services a visit must include to count toward an "after N visits"
+    // voucher, as words; null when any visit counts.
+    private function earnOn(CustomerProgram $voucher): ?string
+    {
+        if ($voucher->condition_kind !== 'visits' || VoucherTarget::isAll(VoucherTarget::of($voucher->values, 'earn'))) {
+            return null;
+        }
+
+        return $voucher->value('earnOn') ?: null;
+    }
+
     public function discountText(CustomerProgram $p): string
     {
         $v = (float) $p->value('percent', 0);
 
         return $p->value('kind') === '₱' ? '₱' . number_format($v, $v == floor($v) ? 0 : 2) . ' off' : rtrim(rtrim(number_format($v, 2), '0'), '.') . '% off';
+    }
+
+    // "Earn 1 pt per ₱10".
+    private function earnText(CustomerProgram $loyalty): string
+    {
+        $plain = fn (float $n) => rtrim(rtrim(number_format($n, 2), '0'), '.');
+        $earn = $this->rewards->earnRule($loyalty);
+
+        return 'Earn ' . $plain($earn['points']) . ' pt per ₱' . $plain($earn['per']);
+    }
+
+    // ── For ProgramRequestService: a manager's request is held to the same
+    //    rules, and tidied the same way, as the owner's own save. ──────────
+
+    /** What is wrong with a program as filled in, or null. */
+    public function check(string $type, array $data, SpaBusiness $business): ?string
+    {
+        return $this->problem($type, $data) ?? $this->targetProblem($type, $data, $business);
+    }
+
+    /** A program's values as a save would store them. */
+    public function normalise(string $type, $values, SpaBusiness $business): array
+    {
+        return $this->withTargets($type, $this->withEarnRate($type, $this->cleanValues($values)), $business);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
@@ -572,7 +671,7 @@ class CustomerProgramService
             'name' => $data['name'] ?? ($program->exists ? null : ($program->type === 'loyalty' ? 'Loyalty Points' : ucfirst($program->type))),
             'is_active' => array_key_exists('active', $data) ? (bool) $data['active'] : ($program->exists ? null : true),
             'audience' => $data['audience'] ?? ($program->exists ? null : 'all'),
-            'values' => array_key_exists('values', $data) ? $this->cleanValues($data['values']) : null,
+            'values' => array_key_exists('values', $data) ? $this->withTargets($program->type, $this->withEarnRate($program->type, $this->cleanValues($data['values'])), $business) : null,
         ], fn ($v) => $v !== null));
 
         if ($program->type === 'voucher' && array_key_exists('condition', $data)) {
@@ -586,6 +685,11 @@ class CustomerProgramService
         if (array_key_exists('branch_uuids', $data)) {
             $ids = SpaBranch::whereIn('uuid', (array) $data['branch_uuids'])->where('spa_business_id', $business->id)->pluck('id')->all();
             $program->branches()->sync($ids);
+            // Made for one branch, and now offered at another: it is no
+            // longer that branch's own (see setBranch).
+            if ($program->only_branch_id && array_diff($ids, [$program->only_branch_id])) {
+                $program->update(['only_branch_id' => null]);
+            }
         }
 
         if ($program->type === 'membership' && array_key_exists('includes', $data)) {
@@ -597,6 +701,91 @@ class CustomerProgramService
                 ->pluck('id')->all();
             $program->items()->sync($ids);
         }
+    }
+
+    // Loyalty is set as "for every ₱10, 1 point". The rate per ₱1 that
+    // older readers use is worked out from those two here, never typed.
+    private function withEarnRate(string $type, array $values): array
+    {
+        $points = (float) ($values['earnPoints'] ?? 0);
+        $per = (float) ($values['earnPerPesos'] ?? 0);
+        if ($type === 'loyalty' && $points > 0 && $per > 0) {
+            $values['pointsPerPeso'] = rtrim(rtrim(number_format($points / $per, 6, '.', ''), '0'), '.');
+        }
+
+        return $values;
+    }
+
+    // A voucher's two service targets (App\Support\VoucherTarget: what it
+    // can be used on, and which visits count toward it), tidied on save. Only
+    // what the kind uses is kept, and the readable form is written here so
+    // the client app, the wallet and the front desk all show the same words.
+    private function withTargets(string $type, array $values, SpaBusiness $business): array
+    {
+        if ($type !== 'voucher') {
+            return $values;
+        }
+
+        foreach (['usable' => 'usableOn', 'earn' => 'earnOn'] as $prefix => $label) {
+            $target = VoucherTarget::of($values, $prefix);
+            $names = [];
+            if ($target['kind'] === VoucherTarget::SERVICES) {
+                $own = Service::where('spa_business_id', $business->id)->whereIn('uuid', $target['services'])->orderBy('name')->pluck('name', 'uuid');
+                $target['services'] = $own->keys()->all();
+                $names = $own->values()->all();
+            }
+            $values[$prefix . 'Kind'] = $target['kind'];
+            $values[$prefix . 'Category'] = $target['category'];
+            $values[$prefix . 'Services'] = implode(',', $target['services']);
+
+            // An older "Free service" voucher names its service in usableOn
+            // and is matched by that name; it stays as typed.
+            $typedName = $prefix === 'usable' && VoucherTarget::isAll($target) && ($values['dealType'] ?? '') === 'Free service';
+            if (! $typedName) {
+                $values[$label] = VoucherTarget::phrase($target, $names);
+            }
+        }
+
+        return $values;
+    }
+
+    // The part of a voucher's rules that needs the business's services: a
+    // chosen category has to be one it offers, chosen services its own.
+    private function targetProblem(string $type, array $data, SpaBusiness $business): ?string
+    {
+        if ($type !== 'voucher') {
+            return null;
+        }
+        $values = $data['values'] ?? [];
+        $checks = ['usable' => 'this voucher can be used on'];
+        if (($data['condition']['kind'] ?? null) === 'visits') {
+            $checks['earn'] = 'that count toward this voucher';
+        }
+
+        foreach ($checks as $prefix => $what) {
+            $kind = (string) ($values[$prefix . 'Kind'] ?? VoucherTarget::ALL);
+            if ($kind === VoucherTarget::CATEGORY) {
+                $category = trim((string) ($values[$prefix . 'Category'] ?? ''));
+                if (! in_array($category, config('service_categories'), true)) {
+                    return "Choose the category of services {$what}.";
+                }
+                if (! Service::where('spa_business_id', $business->id)->where('category', $category)->exists()) {
+                    return "You have no {$category} services yet.";
+                }
+            } elseif ($kind === VoucherTarget::SERVICES) {
+                $uuids = VoucherTarget::uuids($values[$prefix . 'Services'] ?? '');
+                if (! $uuids) {
+                    return "Choose the services {$what}.";
+                }
+                if (Service::where('spa_business_id', $business->id)->whereIn('uuid', $uuids)->count() !== count($uuids)) {
+                    return 'One of the chosen services is no longer in your service list.';
+                }
+            } elseif ($kind !== VoucherTarget::ALL) {
+                return "Choose the services {$what}.";
+            }
+        }
+
+        return null;
     }
 
     private function cleanValues($values): array
@@ -623,11 +812,19 @@ class CustomerProgramService
         $num = fn ($key) => is_numeric($v[$key] ?? null) ? (float) $v[$key] : 0;
 
         return match ($type) {
-            'loyalty' => array_key_exists('values', $data) && $num('pointsPerPeso') <= 0 ? 'Set how many points clients earn per ₱1.' : null,
+            'loyalty' => ! array_key_exists('values', $data) ? null : match (true) {
+                filled($v['earnPerPesos'] ?? null) || filled($v['earnPoints'] ?? null)
+                    ? ($num('earnPerPesos') <= 0 || $num('earnPoints') <= 0)
+                    : $num('pointsPerPeso') <= 0 => 'Set how much a client spends to earn points, and how many points that earns.',
+                filled($v['redeemPerVisit'] ?? null) && ($num('redeemPerVisit') < 1 || floor($num('redeemPerVisit')) != $num('redeemPerVisit')) => 'Redemptions per visit must be a whole number, 1 or more. Leave it empty for no limit.',
+                default => null,
+            },
             'voucher' => match (true) {
                 ! in_array($data['condition']['kind'] ?? null, CustomerProgram::CONDITIONS, true) => 'Choose how clients earn this voucher.',
                 in_array($data['condition']['kind'], ['min_spend', 'visits', 'points'], true) && (int) ($data['condition']['value'] ?? 0) < 1 => 'Enter the amount needed to earn this voucher.',
-                ($v['dealType'] ?? '₱ off') === 'Free service' && blank($v['usableOn'] ?? null) => 'Say which service is free.',
+                // A free service is one from a category or from chosen
+                // services (older vouchers name it in usableOn instead).
+                ($v['dealType'] ?? '₱ off') === 'Free service' && ($v['usableKind'] ?? VoucherTarget::ALL) === VoucherTarget::ALL && blank($v['usableOn'] ?? null) => 'Choose which service is free.',
                 ($v['dealType'] ?? '₱ off') !== 'Free service' && $num('value') <= 0 => 'Enter the voucher amount.',
                 ($v['dealType'] ?? '') === '% off' && $num('value') > 100 => 'A percent voucher can be at most 100%.',
                 default => null,
@@ -668,7 +865,7 @@ class CustomerProgramService
 
     private function branchIds(User $user): array
     {
-        return $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
+        return $this->spaBusinessRepository->branchIdsForUser($user);
     }
 
     private function reject(string $message): JsonResponse

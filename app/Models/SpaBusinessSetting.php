@@ -20,7 +20,6 @@ class SpaBusinessSetting extends Model
             'accept_gcash' => true,
             'accept_paymaya' => true,
             'accept_card' => false,
-            'accept_xendit' => false,
             'accept_bank_transfer' => false,
             'gcash_number' => null,
             'paymaya_number' => null,
@@ -37,10 +36,13 @@ class SpaBusinessSetting extends Model
 
             'attendance_tracking' => true,
             'require_check_in' => true,
-            'allow_self_check_in' => true,
             'late_threshold_minutes' => 10,
             'allow_shift_swap' => false,
-            'require_manager_approval' => true,
+            // A manager's change to a staff schedule waits for the owner
+            // (StaffScheduleService). Off unless the owner asks for it.
+            'require_manager_approval' => false,
+            // Count time worked past the shift end, reported as overtime
+            // (AttendanceStatusCalculator). Off: hours stop at the shift end.
             'allow_overtime' => false,
 
             // Who the front desk's therapist rotation puts next: 'check_in' (first
@@ -52,7 +54,18 @@ class SpaBusinessSetting extends Model
         'booking_defaults' => [
             'online_booking_enabled' => true,
             'walk_in_enabled' => true,
-            'home_service_enabled' => true,
+            // Reservations taken at the front desk (the phone, the counter).
+            // Off: the desk can't add one at that branch — walk-ins and app
+            // bookings are their own switches (App\Support\FrontDeskPolicy).
+            'reservation_enabled' => true,
+            // Home service (HomeServiceRules): off until the owner turns it
+            // on; a flat fee in pesos that goes to the therapist; how far
+            // from the branch, in km, a client's address may be; and the
+            // least service time worth the trip, in minutes (0 = no minimum).
+            'home_service_enabled' => false,
+            'home_service_fee' => 0,
+            'home_service_radius_km' => 10,
+            'home_service_min_minutes' => 0,
             'allow_therapist_selection' => true,
             'auto_assign_therapist' => true,
             'allow_reschedule' => true,
@@ -61,14 +74,16 @@ class SpaBusinessSetting extends Model
             'booking_lead_time_minutes' => 30,
             'max_advance_booking_days' => 30,
             'max_services_per_booking' => 3,
+            // The most service time one booking may hold, in minutes
+            // (0 = no limit). The client app is refused past it; the front
+            // desk is only warned — see BookingPolicy::serviceTimeProblem.
+            'max_service_minutes_per_booking' => 0,
 
             'cancellation_window_hours' => 24,
             'cancellation_policy_tier' => 'flexible',
             'no_show_policy' => 'warn',
             'no_show_suspend_after' => 3,
 
-            'require_deposit' => false,
-            'deposit_percent' => 30,
 
             'queue_enabled' => true,
             'auto_assign_queue' => true,
@@ -96,6 +111,39 @@ class SpaBusinessSetting extends Model
             'on_cancellation' => true,
             'on_reschedule' => true,
             'on_client_no_show' => true,
+            // The desk is told when a service in progress has run its time.
+            'on_service_end' => true,
+
+            // "When a manager changes something" — the owner hears about a
+            // kind of change only after switching it on (ManagerChangeNotifier).
+            'on_manager_offerings' => false,
+            'on_manager_hours' => false,
+            'on_manager_booking_rules' => false,
+            'on_manager_rooms' => false,
+            'on_manager_staff' => false,
+            'on_manager_listing' => false,
+
+            // "Managers are always told about" — the kinds of the owner's own
+            // changes a manager cannot switch off in their notification
+            // settings (ManagerNotificationPrefs). The rest is each manager's
+            // choice.
+            'lock_owner_hours' => true,
+            'lock_owner_booking_rules' => true,
+            'lock_owner_catalog' => true,
+            'lock_owner_offerings' => false,
+            'lock_owner_staff' => false,
+            'lock_owner_rooms' => false,
+            'lock_owner_listing' => false,
+
+            // "Front desk is told about" — the kinds of change at a branch
+            // (the owner's or a manager's) its front desk accounts hear
+            // about. The owner's choice alone (ManagerChangeNotifier).
+            'frontdesk_hours' => true,
+            'frontdesk_booking_rules' => true,
+            'frontdesk_offerings' => true,
+            'frontdesk_staff' => true,
+            'frontdesk_rooms' => true,
+            'frontdesk_listing' => true,
 
             'send_client_reminder' => true,
             'reminder_timing' => 24,

@@ -24,6 +24,14 @@ class CheckoutRequest extends FormRequest
             'save_method' => 'sometimes|boolean',
             'enable_auto_renew' => 'sometimes|boolean',
 
+            // Buying a plan smaller than what the business uses: what to keep
+            // (PlanFitService). Ignored when everything fits.
+            'keep' => 'sometimes|nullable|array',
+            'keep.branch_uuids' => 'sometimes|array',
+            'keep.branch_uuids.*' => 'uuid',
+            'keep.account_uuids' => 'sometimes|array',
+            'keep.account_uuids.*' => 'uuid',
+
             'billing_address' => 'required|array',
             'billing_address.full_name' => 'required|string|max:150',
             'billing_address.email' => 'required|email|max:150',

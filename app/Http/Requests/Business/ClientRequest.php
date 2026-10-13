@@ -2,7 +2,10 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Models\Client;
+use App\Support\ClientProfile;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 // Validates POST/PATCH /business/client (register/update a client). Also
 // reused as the shape of the nested "client" object inside AppointmentRequest
@@ -10,7 +13,9 @@ use Illuminate\Foundation\Http\FormRequest;
 // Deliberately minimal — clients only stores simple operational attributes;
 // an account holder's fuller profile lives on `users` instead (see
 // ClientResource's `account` block), so there's nothing to collect here
-// beyond how to identify/contact them.
+// beyond how to identify/contact them — and, since they are the spa's own to
+// know, the client's gender (asked of every new client) and their age
+// (optional) — App\Support\ClientProfile.
 class ClientRequest extends FormRequest
 {
     public function authorize(): bool
@@ -28,6 +33,16 @@ class ClientRequest extends FormRequest
             'phone_number' => 'nullable|string|max:20',
             'email' => 'nullable|email|max:255',
             'notes' => 'nullable|string',
+            'gender' => [$isCreate && Client::hasProfile() ? 'required' : 'nullable', Rule::in(ClientProfile::GENDERS)],
+            'age' => 'nullable|integer|min:0|max:' . ClientProfile::OLDEST,
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'gender.required' => 'Choose the client\'s gender.',
+            'gender.in' => 'Choose Male or Female.',
         ];
     }
 }

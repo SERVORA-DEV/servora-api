@@ -8,6 +8,7 @@ use App\Models\Staff;
 use App\Models\StaffSchedule;
 use App\Models\TherapistAssignment;
 use App\Repository\Business\StaffServiceRepository;
+use App\Support\BranchClosures;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -51,7 +52,7 @@ class AppointmentAvailabilityService
             return ['ok' => true, 'reason' => null];
         }
 
-        return ['ok' => false, 'reason' => 'This therapist is not qualified to perform this service.'];
+        return ['ok' => false, 'reason' => 'This staff member is not qualified to perform this service.'];
     }
 
     // First real consumer of staff_schedules in this codebase. A staff
@@ -94,15 +95,6 @@ class AppointmentAvailabilityService
                 continue;
             }
 
-            if ($schedule->break_start && $schedule->break_end) {
-                $breakStart = Carbon::parse("{$date} {$schedule->break_start}");
-                $breakEnd = Carbon::parse("{$date} {$schedule->break_end}");
-
-                if ($start->lt($breakEnd) && $end->gt($breakStart)) {
-                    continue;
-                }
-            }
-
             return ['ok' => true, 'reason' => null];
         }
 
@@ -115,8 +107,8 @@ class AppointmentAvailabilityService
         return [
             'ok' => false,
             'reason' => $sawDayOff
-                ? 'This therapist is on their day off today and cannot be assigned.'
-                : 'This therapist is not scheduled to work during the requested time.',
+                ? 'This staff member is on their day off today and cannot be assigned.'
+                : 'This staff member is not scheduled to work during the requested time.',
         ];
     }
 
@@ -183,8 +175,24 @@ class AppointmentAvailabilityService
     // opening_time means the branch closes the following day (e.g. open
     // 09:00, close 00:00 = closes at midnight; open 22:00, close 02:00 =
     // open past midnight) rather than being an invalid/never-open range.
-    public function branchIsOpen(int $branchId, string $date, string $startTime): array
+    //
+    // A temporary closure (a holiday, repairs) comes first: nothing starts
+    // inside one, and nothing runs into one. $durationMinutes is how long
+    // the visit is, when the caller knows; a closure is only asked for it
+    // when there is a closure near that time to compare against.
+    public function branchIsOpen(int $branchId, string $date, string $startTime, int|\Closure|null $durationMinutes = null): array
     {
+        $start = Carbon::parse("{$date} {$startTime}");
+        $nearby = BranchClosures::overlapping($branchId, $start, $start->copy()->addDay());
+        if ($nearby->isNotEmpty()) {
+            $minutes = $durationMinutes instanceof \Closure ? $durationMinutes() : $durationMinutes;
+            $end = $start->copy()->addMinutes(max((int) $minutes, 1));
+            $closure = $nearby->first(fn ($c) => $c->starts_at->lt($end) && $c->ends_at->gt($start));
+            if ($closure) {
+                return ['ok' => false, 'reason' => BranchClosures::refusal($closure)];
+            }
+        }
+
         $dayOfWeek = Carbon::parse($date)->format('l');
 
         $schedule = BranchSchedule::where('spa_branch_id', $branchId)
@@ -220,19 +228,6 @@ class AppointmentAvailabilityService
             return ['ok' => false, 'reason' => 'The requested time is outside the branch\'s operating hours.'];
         }
 
-        if ($schedule->break_start && $schedule->break_end) {
-            $breakStart = Carbon::parse("{$date} {$schedule->break_start}");
-            $breakEnd = Carbon::parse("{$date} {$schedule->break_end}");
-
-            $inBreak = $breakEnd->gt($breakStart)
-                ? $time->gte($breakStart) && $time->lt($breakEnd)
-                : $time->gte($breakStart) || $time->lt($breakEnd);
-
-            if ($inBreak) {
-                return ['ok' => false, 'reason' => 'The requested time falls within the branch\'s break period.'];
-            }
-        }
-
         return ['ok' => true, 'reason' => null];
     }
 
@@ -257,7 +252,7 @@ class AppointmentAvailabilityService
             }
 
             if ($this->overlapsAppointment($assignment, $date, $start, $end)) {
-                return ['ok' => false, 'reason' => 'This therapist is already booked during the requested time.'];
+                return ['ok' => false, 'reason' => 'This staff member is already booked during the requested time.'];
             }
         }
 
@@ -292,23 +287,33 @@ class AppointmentAvailabilityService
     // Real-time check (not schedule-window based) — used at startService()
     // time to catch drift when an earlier service on this staff member ran
     // long past its estimated duration.
-    public function isStaffCurrentlyBusy(int $staffId, ?int $excludeAssignmentId = null): array
+    // $exceptServiceIds: services this therapist may be doing alongside — the
+    // same client's other procedure-based services (ServiceKind).
+    public function isStaffCurrentlyBusy(int $staffId, ?int $excludeAssignmentId = null, array $exceptServiceIds = []): array
     {
         $busy = TherapistAssignment::where('staff_id', $staffId)
             ->where('assignment_status', 'In Progress')
             ->when($excludeAssignmentId, fn ($q) => $q->where('id', '!=', $excludeAssignmentId))
+            ->when($exceptServiceIds, fn ($q) => $q->whereNotIn('appointment_service_id', $exceptServiceIds))
             ->exists();
 
         return $busy
-            ? ['ok' => false, 'reason' => 'This therapist is currently in another service.']
+            ? ['ok' => false, 'reason' => 'This staff member is currently in another service.']
             : ['ok' => true, 'reason' => null];
     }
 
-    public function isFacilityCurrentlyOccupied(int $facilityId, ?int $excludeAssignmentId = null): array
+    // $excludeAppointmentId: the visit a service is being started for — its
+    // own service already running in the room isn't "someone else" (whether
+    // the two may run together is App\Support\ServiceStartRules' call).
+    public function isFacilityCurrentlyOccupied(int $facilityId, ?int $excludeAssignmentId = null, ?int $excludeAppointmentId = null): array
     {
         $occupied = TherapistAssignment::where('facility_id', $facilityId)
             ->where('assignment_status', 'In Progress')
             ->when($excludeAssignmentId, fn ($q) => $q->where('id', '!=', $excludeAssignmentId))
+            ->when($excludeAppointmentId, fn ($q) => $q->whereDoesntHave(
+                'appointmentService',
+                fn ($s) => $s->where('appointment_id', $excludeAppointmentId),
+            ))
             ->exists();
 
         return $occupied
@@ -397,7 +402,7 @@ class AppointmentAvailabilityService
     {
         return $appointment->services
             ->where('status', '!=', 'Cancelled')
-            ->sum(fn ($service) => $service->serviceVariant?->duration_minutes ?? 30);
+            ->sum(fn ($service) => $service->lengthMinutes() ?? 30);
     }
 
     // Same duration math, but only services still outstanding (Pending or
@@ -410,6 +415,6 @@ class AppointmentAvailabilityService
     {
         return $appointment->services
             ->whereIn('status', ['Pending', 'In Progress'])
-            ->sum(fn ($service) => $service->serviceVariant?->duration_minutes ?? 30);
+            ->sum(fn ($service) => $service->lengthMinutes() ?? 30);
     }
 }

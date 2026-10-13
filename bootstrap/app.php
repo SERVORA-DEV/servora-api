@@ -13,13 +13,20 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // Behind Render's proxy: without this $request->ip() is the proxy's
-        // address, so every per-IP rate limit would become one global bucket.
-        // Render only forwards traffic through its own proxy layer, so
-        // trusting all hops is safe there.
+        // Behind a proxy — the host's (Render and the like) or a forwarded
+        // port / dev tunnel: without this $request->ip() is the proxy's
+        // address (every per-IP rate limit would become one global bucket),
+        // and the API would not know it is being reached over https at the
+        // public address, so the links it builds would point at
+        // http://127.0.0.1. Traffic only arrives through that proxy layer,
+        // so trusting all hops is safe.
         $middleware->trustProxies(at: '*');
         $middleware->throttleApi();
         $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
+        $middleware->append(\App\Http\Middleware\ServerTime::class);
+        // Links handed to the browser follow the address the site was opened
+        // at (localhost, LAN, a forwarded port, the hosted domain).
+        $middleware->append(\App\Http\Middleware\FrontendOrigin::class);
 
         $middleware->alias([
             'role' => \App\Http\Middleware\RoleMiddleware::class,
@@ -39,6 +46,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('appointments:send-reminders')->everyFiveMinutes();
         $schedule->command('staff:send-shift-reminders')->everyFiveMinutes();
         $schedule->command('staff:send-front-desk-alerts')->everyFiveMinutes();
+        // A service in progress that has run its time (ServiceEndNotifier).
+        $schedule->command('appointments:notify-service-ends')->everyMinute()->withoutOverlapping();
         $schedule->command('billings:send-payment-reminders')->hourly();
         $schedule->command('programs:daily')->dailyAt('00:10')->withoutOverlapping();
     })

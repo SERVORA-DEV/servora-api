@@ -11,18 +11,30 @@ class QueueRepository
         return Queue::create($payload);
     }
 
-    // Daily-reset counter per branch — Q-001, Q-002, ... resets each new
-    // appointment_date rather than being a global sequence.
-    public function nextQueueNumber(int $spaBranchId, string $date): string
+    // Daily-reset counter per branch — resets each new appointment_date
+    // rather than being a global sequence. The owner's Queue number format
+    // decides how it reads: 'numeric' → 001, 002…; 'alpha-numeric' → Q-001…
+    // The count goes by the digits, so changing the format mid-day carries on.
+    public function nextQueueNumber(int $spaBranchId, string $date, string $format = 'alpha-numeric'): string
     {
         $highest = Queue::where('spa_branch_id', $spaBranchId)
             ->where('appointment_date', $date)
-            ->where('queue_number', 'like', 'Q-%')
             ->pluck('queue_number')
-            ->map(fn (string $number) => (int) substr($number, 2))
+            ->map(fn (string $number) => (int) preg_replace('/\D+/', '', $number))
             ->max();
 
-        return 'Q-' . str_pad((string) (($highest ?? 0) + 1), 3, '0', STR_PAD_LEFT);
+        $next = str_pad((string) (($highest ?? 0) + 1), 3, '0', STR_PAD_LEFT);
+
+        return $format === 'numeric' ? $next : 'Q-' . $next;
+    }
+
+    /** How many clients are in the line right now (waiting or called). */
+    public function waitingCount(int $spaBranchId, string $date): int
+    {
+        return Queue::where('spa_branch_id', $spaBranchId)
+            ->where('appointment_date', $date)
+            ->whereIn('queue_status', ['Waiting', 'Called'])
+            ->count();
     }
 
     public function listForBranchDate(array $spaBranchIds, string $date, ?string $status = null)

@@ -58,6 +58,17 @@ class BranchDetailResource extends JsonResource
                 'business_name' => $this->business->business_name,
                 'business_logo_url' => ImageUploadService::url($this->business->business_logo),
                 'description' => $this->business->business_description,
+                // The line under the name, the "Verified business" chip and
+                // "N other locations" — shown on the app's branch page the
+                // way the owner's preview shows them.
+                'tagline' => $this->business->tagline,
+                'verified' => $this->business->verification_status === 'Verified',
+                'other_branches_count' => \App\Models\SpaBranch::where('spa_business_id', $this->spa_business_id)
+                    ->where('id', '!=', $this->id)
+                    ->where('verification_status', 'Verified')
+                    ->where('operating_status', 'Active')
+                    ->where('listing_visible', true)
+                    ->count(),
             ],
 
             'hours' => BranchHoursCalculator::resolve($this->schedules, Carbon::now()),
@@ -105,6 +116,8 @@ class BranchDetailResource extends JsonResource
                         'service_uuid' => $service->uuid,
                         'name' => $service->name,
                         'description' => $service->description,
+                        // Bookable as a home visit (the owner's tick).
+                        'home_service_available' => (bool) $service->home_service_available,
                         // Ascending by duration: that is the axis the app's
                         // dropdown labels, and sorting by price instead would let
                         // a custom_price override reorder it in a way that reads
@@ -126,26 +139,32 @@ class BranchDetailResource extends JsonResource
                 ->values(),
 
             // duration_minutes is what a booking of this package will take:
-            // the same per-service sum the server books and checks slots with
-            // (AppointmentAvailabilityService::estimatedDurationMinutes), so
-            // the app's slot lookup and the booking never disagree — the
-            // package's own duration column is often left empty.
+            // its fixed duration — the minutes each service has in it, plus
+            // the add-ons that come with it (App\Support\PackagePlan).
             'packages' => $this->packages->map(function ($bp) use ($price) {
-                $items = $bp->package->packageServiceItems;
-                $sum = (int) $items->sum(fn ($i) => $i->serviceVariant?->duration_minutes ?? 30);
+                $items = $bp->package->packageServiceItems->filter(fn ($i) => $i->theService() !== null)->values();
 
                 return [
                     'package_uuid' => $bp->package->uuid,
                     'name' => $bp->package->name,
-                    'duration_minutes' => $sum > 0 ? $sum : (int) ($bp->package->duration_minutes ?? 0),
+                    'duration_minutes' => $bp->package->totalMinutes(),
                     'price' => $price($bp->custom_price ?? $bp->package->default_price),
-                    'included_services' => $items->map(fn ($i) => $i->serviceVariant?->service?->name)->filter()->values(),
+                    'included_services' => $items->map(fn ($i) => $i->theService()->name)
+                        ->merge($bp->package->includedAddons()->map(fn ($row) => $row->addon->name))
+                        ->values(),
+                    // Only when every service in it can be done at home.
+                    'home_service_available' => $items->isNotEmpty()
+                        && $items->every(fn ($i) => (bool) $i->theService()->home_service_available),
                 ];
             })->values(),
 
             // The owner's booking rules for this branch (BookingPolicy) — the
             // app uses them for its calendar window and service limit.
             'booking_policy' => BookingPolicy::for($this->resource),
+
+            // Whether this branch sends therapists out, the flat fee and how
+            // far (km from the branch's pin) — HomeServiceRules.
+            'home_service' => \App\Service\Business\HomeServiceRules::offer($this->resource),
 
             // False when the branch can't take a booking right now (no
             // therapist, no hours… — MarketplaceReadiness). The page still
@@ -157,6 +176,11 @@ class BranchDetailResource extends JsonResource
                 'first_name' => $staff->first_name,
                 'last_name' => $staff->last_name,
                 'role' => $staff->role,
+                // What they do, main one first (App\Support\StaffSpecialty) —
+                // sent for the app to show; it doesn't yet.
+                'specialties' => $staff->specialtyList(),
+                // For the app's preferred-gender filter (App\Support\StaffGender).
+                'gender' => $staff->gender,
             ])->values(),
         ];
     }

@@ -8,7 +8,6 @@ use App\Models\Review;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
 use App\Models\User;
-use App\Services\DocumentUploadService;
 use App\Services\ImageUploadService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -136,6 +135,76 @@ class BranchSettingsTest extends TestCase
             ->assertJsonPath('data.photos.0.is_cover', true);
     }
 
+    public function test_the_gallery_order_can_be_changed(): void
+    {
+        $this->fakeImages();
+        $photos = $this->post($this->url('/photos'), [
+            'photos' => [UploadedFile::fake()->image('a.jpg'), UploadedFile::fake()->image('b.jpg'), UploadedFile::fake()->image('c.jpg')],
+        ], ['Accept' => 'application/json'])->assertOk()->json('data.photos');
+        [$a, $b, $c] = array_column($photos, 'uuid');
+
+        $this->patchJson($this->url('/photos/order'), ['photos' => [$c, $a, $b]])
+            ->assertOk()
+            ->assertJsonPath('data.photos.0.uuid', $c)
+            ->assertJsonPath('data.photos.1.uuid', $a)
+            ->assertJsonPath('data.photos.2.uuid', $b)
+            // Moving a photo doesn't change which one is the cover.
+            ->assertJsonPath('data.photos.1.is_cover', true);
+
+        $this->getJson($this->url('/marketplace'))->assertOk()->assertJsonPath('data.photos.0.uuid', $c);
+    }
+
+    public function test_an_order_that_is_not_the_whole_gallery_is_refused(): void
+    {
+        $this->fakeImages();
+        $photos = $this->post($this->url('/photos'), [
+            'photos' => [UploadedFile::fake()->image('a.jpg'), UploadedFile::fake()->image('b.jpg')],
+        ], ['Accept' => 'application/json'])->assertOk()->json('data.photos');
+
+        $this->patchJson($this->url('/photos/order'), ['photos' => [$photos[0]['uuid']]])->assertStatus(422);
+        $this->patchJson($this->url('/photos/order'), ['photos' => [$photos[0]['uuid'], (string) \Illuminate\Support\Str::uuid()]])->assertStatus(422);
+    }
+
+    // The "Branch Photo" from registration is kept on the branch itself, so the
+    // gallery used to open empty for a branch that already had a picture.
+    public function test_the_registration_photo_joins_the_gallery_as_its_cover(): void
+    {
+        $this->branch->update(['cover_photo' => 'branches/b/registration']);
+
+        $this->getJson($this->url('/marketplace'))
+            ->assertOk()
+            ->assertJsonCount(1, 'data.photos')
+            ->assertJsonPath('data.photos.0.is_cover', true);
+
+        // Taken in once, not on every visit.
+        $this->getJson($this->url('/marketplace'))->assertOk()->assertJsonCount(1, 'data.photos');
+        $this->assertSame('branches/b/registration', $this->branch->fresh()->coverPhoto->path);
+    }
+
+    public function test_the_registration_photo_does_not_replace_a_chosen_cover(): void
+    {
+        $this->fakeImages();
+        $this->post($this->url('/photos'), ['photos' => [UploadedFile::fake()->image('a.jpg')]], ['Accept' => 'application/json'])->assertOk();
+        $this->branch->update(['cover_photo' => 'branches/b/registration']);
+
+        $photos = $this->getJson($this->url('/marketplace'))->assertOk()->json('data.photos');
+
+        $this->assertCount(2, $photos);
+        $this->assertSame([false, true], array_column($photos, 'is_cover'), 'the registration photo is first, the chosen cover stays');
+    }
+
+    public function test_removing_the_registration_photo_does_not_bring_it_back(): void
+    {
+        $this->fakeImages();
+        $this->branch->update(['cover_photo' => 'branches/b/registration']);
+        $photo = $this->getJson($this->url('/marketplace'))->json('data.photos.0');
+
+        $this->deleteJson($this->url("/photos/{$photo['uuid']}"))->assertOk()->assertJsonCount(0, 'data.photos');
+
+        $this->assertNull($this->branch->fresh()->cover_photo);
+        $this->getJson($this->url('/marketplace'))->assertOk()->assertJsonCount(0, 'data.photos');
+    }
+
     public function test_gallery_is_capped_at_eight_photos(): void
     {
         $this->fakeImages();
@@ -163,16 +232,16 @@ class BranchSettingsTest extends TestCase
     {
         $this->patchJson($this->url('/booking-policy'), ['overrides' => [
             'walk_in_enabled' => false,
-            'deposit_percent' => '40',
+            'max_service_minutes_per_booking' => '120',
         ]])->assertOk()
             ->assertJsonPath('data.booking_overrides.walk_in_enabled', false)
-            ->assertJsonPath('data.booking_overrides.deposit_percent', 40);
+            ->assertJsonPath('data.booking_overrides.max_service_minutes_per_booking', 120);
 
-        // Only deposit left → walk-ins follow the default again.
-        $this->patchJson($this->url('/booking-policy'), ['overrides' => ['deposit_percent' => 25]])
+        // Only the time limit left → walk-ins follow the default again.
+        $this->patchJson($this->url('/booking-policy'), ['overrides' => ['max_service_minutes_per_booking' => 90]])
             ->assertOk()
             ->assertJsonMissingPath('data.booking_overrides.walk_in_enabled')
-            ->assertJsonPath('data.booking_overrides.deposit_percent', 25);
+            ->assertJsonPath('data.booking_overrides.max_service_minutes_per_booking', 90);
 
         $this->patchJson($this->url('/booking-policy'), ['overrides' => []])->assertOk();
         $this->assertNull($this->branch->fresh()->booking_overrides);
@@ -183,8 +252,8 @@ class BranchSettingsTest extends TestCase
         $this->patchJson($this->url('/booking-policy'), ['overrides' => ['queue_enabled' => true]])
             ->assertStatus(422)->assertJsonValidationErrors('overrides');
 
-        $this->patchJson($this->url('/booking-policy'), ['overrides' => ['deposit_percent' => 150]])
-            ->assertStatus(422)->assertJsonValidationErrors('overrides.deposit_percent');
+        $this->patchJson($this->url('/booking-policy'), ['overrides' => ['max_service_minutes_per_booking' => 5000]])
+            ->assertStatus(422)->assertJsonValidationErrors('overrides.max_service_minutes_per_booking');
     }
 
     public function test_reviews_summary_counts_only_this_branches_published_reviews(): void
@@ -219,42 +288,6 @@ class BranchSettingsTest extends TestCase
 
         $this->assertEquals(4.5, $response->json('data.average'));
         $this->assertEqualsCanonicalizing(['Ana Reyes', 'Anonymous'], collect($response->json('data.reviews'))->pluck('client_name')->all());
-    }
-
-    private function permitPayload(): array
-    {
-        return [
-            'permit_document' => UploadedFile::fake()->create('permit.pdf', 100, 'application/pdf'),
-            'permit_number' => 'MP-2027-001',
-            'permit_business_name' => 'Lotus Spa',
-            'permit_branch_location' => 'Lanang, Davao City',
-            'permit_issue_date' => '2027-01-02',
-            'permit_expiration_date' => '2027-12-31',
-            'permit_confirmed' => '1',
-        ];
-    }
-
-    public function test_a_verified_branch_can_renew_its_permit_and_stays_verified(): void
-    {
-        $docs = Mockery::mock(DocumentUploadService::class);
-        $docs->shouldReceive('replace')->once()->andReturn('verification/branch/new-permit');
-        $docs->shouldReceive('signedUrl')->andReturn('https://example.test/permit');
-        $this->app->instance(DocumentUploadService::class, $docs);
-
-        $this->post($this->url('/permit/renew'), $this->permitPayload(), ['Accept' => 'application/json'])
-            ->assertOk()
-            ->assertJsonPath('data.permit_number', 'MP-2027-001')
-            ->assertJsonPath('data.verification_status', 'Verified');
-
-        $this->assertSame('2027-12-31', $this->branch->fresh()->permit_expiration_date->toDateString());
-    }
-
-    public function test_an_unverified_branch_cannot_use_permit_renewal(): void
-    {
-        $this->branch->update(['verification_status' => 'Unregistered']);
-
-        $this->post($this->url('/permit/renew'), $this->permitPayload(), ['Accept' => 'application/json'])
-            ->assertStatus(422);
     }
 
     public function test_another_businesses_branch_is_not_found(): void

@@ -20,6 +20,8 @@ class ServiceResource extends JsonResource
             'name' => $this->name,
             'code' => $this->code,
             'category' => $this->category,
+            // time | procedure | facility (App\Support\ServiceKind).
+            'service_type' => \App\Support\ServiceKind::of($this->service_type),
             'description' => $this->description,
 
             // source_template_id is deliberately not exposed: it's provenance
@@ -29,6 +31,8 @@ class ServiceResource extends JsonResource
             'image_path' => $this->image_path,
             'image_url' => ImageUploadService::url($this->image_path),
             'is_active' => (bool) $this->is_active,
+            // The owner's "can be done at a client's home" tick.
+            'home_service_available' => (bool) $this->home_service_available,
 
             // Each bookable duration/price/points option — see
             // ServiceVariantResource. Always loaded by the repository

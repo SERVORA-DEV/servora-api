@@ -8,6 +8,43 @@ use RuntimeException;
 
 class XenditService
 {
+    // ── Demo only ─────────────────────────────────────────────────────────
+    //
+    // Servora's payments run on Xendit's TEST mode. A test key
+    // (xnd_development_…) moves no money: it only accepts Xendit's test
+    // cards, and sends GCash / Maya to Xendit's own simulation page instead
+    // of the real apps. While XENDIT_DEMO_ONLY is on (the default), nothing
+    // is sent to Xendit with any other key — so a live key pasted into .env
+    // cannot charge anyone by accident. Taking real payments is a deliberate
+    // change: XENDIT_DEMO_ONLY=false together with a live key.
+
+    public const TEST_KEY_PREFIX = 'xnd_development_';
+
+    /** Payments are simulated by Xendit: no real money moves. */
+    public function isTestMode(): bool
+    {
+        return str_starts_with((string) config('services.xendit.secret_key'), self::TEST_KEY_PREFIX);
+    }
+
+    /** Why nothing can be paid right now, or null when payments can go ahead. */
+    public function blockedReason(): ?string
+    {
+        return config('services.xendit.demo_only', true) && ! $this->isTestMode()
+            ? 'Payments are in demo mode and are not set up with a test key, so nothing can be paid right now.'
+            : null;
+    }
+
+    // The key every call below signs with: refused while the demo lock is on
+    // and the key isn't a test one.
+    private function secretKey(): string
+    {
+        if ($reason = $this->blockedReason()) {
+            throw new XenditRequestException($reason, 'DEMO_ONLY', 503);
+        }
+
+        return (string) config('services.xendit.secret_key');
+    }
+
     // Uses Xendit's Invoice API rather than the Payment Requests API: we
     // don't ask the customer which channel (GCash/Maya/card/etc.) they want
     // before creating the request — Xendit's own hosted invoice page
@@ -20,7 +57,7 @@ class XenditService
         string $failureRedirectUrl
     ): array {
         $response = Http::withBasicAuth(
-            config('services.xendit.secret_key'),
+            $this->secretKey(),
             ''
         )
             ->post(config('services.xendit.base_url') . '/v2/invoices', [
@@ -51,7 +88,7 @@ class XenditService
     public function getInvoiceByExternalId(string $externalId): ?array
     {
         $response = Http::withBasicAuth(
-            config('services.xendit.secret_key'),
+            $this->secretKey(),
             ''
         )
             ->get(config('services.xendit.base_url') . '/v2/invoices', [
@@ -76,7 +113,7 @@ class XenditService
 
     private function http()
     {
-        return Http::withBasicAuth(config('services.xendit.secret_key'), '')
+        return Http::withBasicAuth($this->secretKey(), '')
             ->baseUrl(config('services.xendit.base_url') ?: 'https://api.xendit.co')
             ->acceptJson()
             ->timeout(30);

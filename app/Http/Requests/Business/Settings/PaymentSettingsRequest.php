@@ -24,14 +24,13 @@ class PaymentSettingsRequest extends FormRequest
             'accept_gcash' => 'sometimes|boolean',
             'accept_paymaya' => 'sometimes|boolean',
             'accept_card' => 'sometimes|boolean',
-            'accept_xendit' => 'sometimes|boolean',
             'accept_bank_transfer' => 'sometimes|boolean',
             'gcash_number' => 'nullable|string|max:20',
             'paymaya_number' => 'nullable|string|max:20',
         ];
     }
 
-    public const METHODS = ['accept_cash', 'accept_gcash', 'accept_paymaya', 'accept_card', 'accept_xendit', 'accept_bank_transfer'];
+    public const METHODS = ['accept_cash', 'accept_gcash', 'accept_paymaya', 'accept_card', 'accept_bank_transfer'];
 
     // Clients need some way to pay. Only checked when the request sends every
     // method — a partial update can't tell what the others are set to.

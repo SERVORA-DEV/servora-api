@@ -15,6 +15,9 @@ class LookupFacilityResource extends JsonResource
             'category' => $this->category,
             'status' => $this->status,
             'amenities' => $this->amenities ?? [],
+            // The services this room can be used for (by service uuid). Empty
+            // means no list was set: open to any service.
+            'service_uuids' => $this->whenLoaded('services', fn () => $this->services->pluck('uuid')->values(), []),
         ];
     }
 }

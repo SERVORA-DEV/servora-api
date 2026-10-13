@@ -454,9 +454,7 @@ class DemoBusinessSeeder extends Seeder
                             ? ['day_of_week' => $day, 'is_day_off' => true]
                             : ['day_of_week' => $day, 'is_day_off' => false,
                                 'start_time' => $day === 'Sunday' ? '11:00' : ($late ? '13:00' : '10:00'),
-                                'end_time' => $day === 'Sunday' ? '20:00' : ($late ? '22:00' : '19:00'),
-                                'break_start' => $late ? '17:00' : '14:00',
-                                'break_end' => $late ? '18:00' : '15:00'],
+                                'end_time' => $day === 'Sunday' ? '20:00' : ($late ? '22:00' : '19:00')],
                             self::DAYS, array_keys(self::DAYS)),
                     ]), "schedule {$first}");
 
@@ -524,7 +522,7 @@ class DemoBusinessSeeder extends Seeder
         $this->ok($programs->setEnabled($this->owner, true), 'programs switch');
 
         $defs = [
-            ['type' => 'loyalty', 'name' => 'Lotus Points', 'values' => ['pointsPerPeso' => '1', 'pointValue' => '0.5', 'minRedeem' => '300', 'expiryMonths' => '12 months']],
+            ['type' => 'loyalty', 'name' => 'Lotus Points', 'values' => ['earnPerPesos' => '10', 'earnPoints' => '1', 'pointsPerPeso' => '0.1', 'redeemPerVisit' => '2', 'expiryMonths' => '12 months']],
             ['type' => 'voucher', 'name' => 'Welcome Treat', 'values' => ['dealType' => '₱ off', 'value' => '100', 'usableOn' => 'All services', 'validDays' => '3 months'], 'condition' => ['kind' => 'first_visit']],
             ['type' => 'voucher', 'name' => 'Big Spender', 'values' => ['dealType' => '₱ off', 'value' => '200', 'usableOn' => 'All services', 'validDays' => '3 months'], 'condition' => ['kind' => 'min_spend', 'value' => 2000]],
             ['type' => 'voucher', 'name' => 'Every 5th Visit', 'values' => ['dealType' => '% off', 'value' => '15', 'usableOn' => 'All services', 'validDays' => '3 months'], 'condition' => ['kind' => 'visits', 'value' => 5]],

@@ -19,6 +19,7 @@ class FacilityService
         FacilityRepository $facilityRepository,
         SpaBranchRepository $spaBranchRepository,
         SpaBusinessRepository $spaBusinessRepository,
+        private ManagerChangeNotifier $managerChanges,
     ) {
         $this->facilityRepository = $facilityRepository;
         $this->spaBranchRepository = $spaBranchRepository;
@@ -33,7 +34,7 @@ class FacilityService
     // branch.
     private function branchIds(User $user): array
     {
-        return $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
+        return $this->spaBusinessRepository->branchIdsForUser($user);
     }
 
     public function listFacilities(User $user, int $perPage = 15)
@@ -72,6 +73,11 @@ class FacilityService
         if ($serviceUuids !== null) {
             $model->services()->sync(Service::whereIn('uuid', $serviceUuids)->pluck('id'));
         }
+
+        $this->managerChanges->tell(
+            $user, $branch, ManagerChangeNotifier::ROOMS, 'Room Added',
+            "added the room \"{$model->name}\" at {$branch->branch_name}.",
+        );
 
         // A brand-new room can't have any live assignments yet, so
         // is_occupied is left unloaded here (falsy default) rather than
@@ -118,6 +124,11 @@ class FacilityService
             $model->services()->sync(Service::whereIn('uuid', $serviceUuids)->pluck('id'));
         }
 
+        $this->managerChanges->tell(
+            $user, fn () => $model->branch, ManagerChangeNotifier::ROOMS, 'Room Changed',
+            fn () => "changed the room \"{$model->name}\" at {$model->branch->branch_name}.",
+        );
+
         return new FacilityResource($this->facilityRepository->findByUuidForBranches($uuid, $branchIds));
     }
 
@@ -129,8 +140,14 @@ class FacilityService
             return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
-        $this->facilityRepository->findByUuidForBranches($uuid, $this->branchIds($user));
+        $room = $this->facilityRepository->findByUuidForBranches($uuid, $this->branchIds($user));
         $this->facilityRepository->delete($uuid);
+
+        $this->managerChanges->tell(
+            $user, fn () => $room->branch, ManagerChangeNotifier::ROOMS, 'Room Removed',
+            fn () => "removed the room \"{$room->name}\" at {$room->branch->branch_name}.",
+        );
+
         return true;
     }
 }

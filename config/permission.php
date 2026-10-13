@@ -176,6 +176,9 @@ return [
         'payment_create',
         // Voiding a mistaken payment / refunding a bill.
         'payment_refund',
+        // Going ahead despite a booking rule, with a reason that is kept
+        // (App\Service\Business\PolicyGate).
+        'policy_override',
 
         'commission_view',
         'commission_update',
@@ -219,6 +222,8 @@ return [
         'payment_view',
         'payment_create',
         'payment_refund',
+        // Grantable, but off by default — see default_off below.
+        'policy_override',
 
         // Customer programs: see what's offered, sell memberships, apply
         // vouchers and redeem points at the counter.
@@ -233,7 +238,7 @@ return [
     // Management). Discounts and voids/refunds move money, so the front
     // desk only gets them when the owner decides to.
     'default_off' => [
-        'front_officer' => ['billing_update', 'payment_refund'],
+        'front_officer' => ['billing_update', 'payment_refund', 'policy_override'],
     ],
 
 ];

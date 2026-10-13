@@ -44,6 +44,11 @@ class CustomerProgramResource extends JsonResource
                 'discount_uuids' => $items->where('type', 'discount')->pluck('uuid')->values(),
             ] : null,
             'branch_uuids' => $branches->pluck('uuid')->values(),
+            // The branch it was made for (a manager asked for it), while it
+            // is still that branch's own.
+            'only_branch' => $this->only_branch_id && $this->onlyBranch
+                ? ['uuid' => $this->onlyBranch->uuid, 'name' => $this->onlyBranch->branch_name]
+                : null,
             'created_at' => $this->created_at?->toIso8601String(),
         ];
     }

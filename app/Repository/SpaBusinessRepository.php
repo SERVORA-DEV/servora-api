@@ -5,6 +5,7 @@ namespace App\Repository;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
 use App\Models\User;
+use App\Support\AppCache;
 use Illuminate\Support\Collection;
 
 class SpaBusinessRepository
@@ -77,6 +78,32 @@ class SpaBusinessRepository
 
         $branch = $user->staff?->branch;
         return $branch ? collect([$branch]) : collect();
+    }
+
+    // Just the ids — all most callers need, to scope their own queries.
+    //
+    // Almost every business/* request asks this, and the database is a
+    // network round trip away, so an owner's list is kept between requests
+    // (AppCache). The key carries the business's version, which changes
+    // whenever one of its branches is saved, removed or restored
+    // (CacheInvalidation), so a list from before such a change is never read;
+    // the short lifetime only covers writes that fire no model event.
+    public function branchIdsForUser(User $user): array
+    {
+        if ($user->role !== 'business_owner') {
+            return $this->branchesForUser($user)->pluck('id')->all();
+        }
+
+        $business = $this->findByOwnerId($user->id);
+        if (! $business) {
+            return [];
+        }
+
+        return AppCache::remember(
+            "biz:{$business->id}:branch_ids:v" . AppCache::businessVersion($business->id),
+            300,
+            fn () => SpaBranch::where('spa_business_id', $business->id)->pluck('id')->all(),
+        );
     }
 
     // Public lookup — no owner scoping, since this backs the unauthenticated

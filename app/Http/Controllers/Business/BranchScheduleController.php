@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Business;
 use App\Service\Business\BranchScheduleService;
 use App\Http\Requests\Business\BranchScheduleRequest;
 use App\Http\Requests\Business\BranchScheduleUpdateRequest;
+use App\Http\Requests\Business\BranchWeekScheduleRequest;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -24,6 +25,12 @@ class BranchScheduleController extends Controller
     {
         $request->validate(['spa_branch_uuid' => 'required|string']);
         return $this->branchScheduleService->listBranchSchedule($request->user(), $request->input('spa_branch_uuid'));
+    }
+
+    // The branch's whole week in one request ({uuid} is the branch's).
+    public function saveWeek(BranchWeekScheduleRequest $request, string $uuid)
+    {
+        return $this->branchScheduleService->saveWeek($request->user(), $uuid, $request->validated()['days']);
     }
 
     public function store(BranchScheduleRequest $request)

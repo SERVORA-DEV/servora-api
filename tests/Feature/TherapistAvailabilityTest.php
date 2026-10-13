@@ -183,19 +183,16 @@ class TherapistAvailabilityTest extends TestCase
         $this->assertStringContainsString('not scheduled', $result['reason']);
     }
 
-    public function test_time_straddling_the_break_is_unavailable(): void
+    // Schedules have no break: every time inside the shift is available.
+    public function test_the_middle_of_the_shift_is_available(): void
     {
         $this->schedule([
             'start_time' => '09:00:00',
             'end_time' => '18:00:00',
-            'break_start' => '12:00:00',
-            'break_end' => '13:00:00',
         ]);
 
-        // Starts before the break but runs into it.
-        $this->assertFalse($this->lookup('11:30')['available']);
-        // Clear of it on either side.
         $this->assertTrue($this->lookup('10:00')['available']);
+        $this->assertTrue($this->lookup('11:30')['available']);
         $this->assertTrue($this->lookup('13:00')['available']);
     }
 

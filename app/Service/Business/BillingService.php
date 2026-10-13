@@ -15,6 +15,8 @@ use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\PaymentRepository;
 use App\Repository\SpaBusinessRepository;
+use App\Support\FinishedVisit;
+use App\Support\VoucherTarget;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -37,7 +39,6 @@ class BillingService
         'accept_paymaya' => ['Maya'],
         'accept_card' => ['Credit Card', 'Debit Card'],
         'accept_bank_transfer' => ['Bank Transfer'],
-        'accept_xendit' => ['Online Banking', 'QR Code'],
     ];
 
     public function __construct(
@@ -267,7 +268,8 @@ class BillingService
 
     // A payment entered by mistake (wrong amount, wrong bill, duplicate tap).
     // Only same-day, not-yet-refunded payments; the bill's balance reopens.
-    // The appointment keeps its status — the visit still happened.
+    // Not on a finished visit: once it is paid in full it is locked
+    // (FinishedVisit), so this is for a part payment on a visit still open.
     public function voidPayment(User $user, string $paymentUuid, string $reason, ?Request $request = null)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
@@ -284,6 +286,9 @@ class BillingService
 
             if ($payment->payment_status !== 'Paid') {
                 return $this->reject("This payment is already {$payment->payment_status}.");
+            }
+            if ($locked = $this->finishedVisitProblem($billing)) {
+                return $this->reject($locked);
             }
             if ((float) $payment->refunded_amount > 0) {
                 return $this->reject('Part of this payment was refunded — record another refund instead of voiding it.');
@@ -313,6 +318,8 @@ class BillingService
     // Money handed back to the client. Taken off the newest Paid payments
     // first (refunded_amount); once everything paid has been given back the
     // bill is closed as Refunded. A partial refund leaves the bill as it is.
+    // Never on a finished visit (FinishedVisit) — in practice this is what
+    // was paid on a booking that was then cancelled, or a part payment.
     public function refund(User $user, string $billingUuid, float $amount, string $reason, ?Request $request = null)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
@@ -325,6 +332,9 @@ class BillingService
 
             if (in_array($billing->status, ['Cancelled', 'Refunded'], true)) {
                 return $this->reject("This bill is already {$billing->status}.");
+            }
+            if ($locked = $this->finishedVisitProblem($billing)) {
+                return $this->reject($locked);
             }
 
             $refundable = $this->paymentRepository->paidTotalForBilling($billing->id);
@@ -382,7 +392,10 @@ class BillingService
         }
 
         $client = $billing->appointment?->client;
-        $memberItemIds = $this->memberItemIds($client);
+        // A member's perks are the ones the membership was sold with
+        // (ClientMembership::held / App\Support\History).
+        $membership = $client?->activeMembership()->with('program.items')->first();
+        $memberItemIds = $membership?->perkIds() ?? [];
 
         $describe = function (CustomerProgram $program, ?ClientVoucher $voucher = null) use ($billing) {
             $derived = $this->programDiscount($billing, $program);
@@ -401,14 +414,24 @@ class BillingService
 
         $discounts = $this->rewards->offeredAt($billing->spa_business_id, $billing->spa_branch_id, 'discount')
             ->filter(fn ($p) => $p->audience !== 'members' || in_array($p->id, $memberItemIds, true))
-            ->map(fn ($p) => $describe($p))->values();
+            ->map(fn ($p) => $describe($membership ? $membership->held($p) : $p))->values();
+        // A discount the membership was sold with stays the member's, even
+        // if it has since been switched off or removed.
+        foreach ($membership?->heldDiscounts() ?? [] as $held) {
+            if (! $discounts->contains('program_uuid', $held->uuid)) {
+                $discounts->push($describe($held));
+            }
+        }
 
         $vouchers = $client
             ? ClientVoucher::with('program')->where('client_id', $client->id)->where('status', 'available')
                 ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
                 ->orderBy('expires_at')->get()
-                ->filter(fn ($v) => $v->program && ! $v->program->trashed())
-                ->map(fn ($v) => $describe($v->program, $v))->values()
+                // A voucher is the deal it was issued with (its own copy),
+                // usable until it is used or expires — whatever has since
+                // happened to the program it came from.
+                ->filter(fn ($v) => $v->dealProgram() !== null)
+                ->map(fn ($v) => $describe($v->dealProgram(), $v))->values()
             : collect();
 
         return ['data' => ['enabled' => true, 'discounts' => $discounts, 'vouchers' => $vouchers]];
@@ -419,30 +442,35 @@ class BillingService
     {
         $clientId = $billing->appointment?->client_id;
         $voucher = $clientId ? ClientVoucher::with('program')->where('uuid', $voucherUuid)->where('client_id', $clientId)->lockForUpdate()->first() : null;
-        if (! $voucher || ! $voucher->program) {
+        $program = $voucher?->dealProgram();
+        if (! $voucher || ! $program) {
             return 'That voucher doesn\'t belong to this client.';
         }
         if ($billing->client_voucher_id !== $voucher->id && ! $voucher->isUsable()) {
             return $voucher->status === 'used' ? 'That voucher has already been used.' : 'That voucher has expired.';
         }
 
-        return [$voucher->program, $voucher];
+        return [$program, $voucher];
     }
 
     /** @return array{0: CustomerProgram, 1: null}|string */
     private function discountProgramForBill(Billing $billing, string $programUuid): array|string
     {
+        $membership = $billing->appointment?->client?->activeMembership()->with('program.items')->first();
         $program = CustomerProgram::where('uuid', $programUuid)
             ->where('spa_business_id', $billing->spa_business_id)
             ->where('type', 'discount')->where('is_active', true)->first();
         if (! $program || ! $program->offeredAt($billing->spa_branch_id)) {
-            return 'That discount isn\'t offered at this branch.';
+            // No longer on offer — unless this client's membership was sold with it.
+            $held = $membership?->heldDiscounts()->firstWhere('uuid', $programUuid);
+
+            return $held ? [$held, null] : 'That discount isn\'t offered at this branch.';
         }
-        if ($program->audience === 'members' && ! in_array($program->id, $this->memberItemIds($billing->appointment?->client), true)) {
+        if ($program->audience === 'members' && ! in_array($program->id, $membership?->perkIds() ?? [], true)) {
             return 'That discount is for members — this client\'s membership doesn\'t include it.';
         }
 
-        return [$program, null];
+        return [$membership ? $membership->held($program) : $program, null];
     }
 
     // The discount programs a client's running membership bundles.
@@ -450,7 +478,7 @@ class BillingService
     {
         $membership = $client?->activeMembership()->with('program.items')->first();
 
-        return $membership?->program?->items->pluck('id')->all() ?? [];
+        return $membership?->perkIds() ?? [];
     }
 
     /** @return array{0: string, 1: float}|string [type, value], or why it can't apply */
@@ -463,13 +491,41 @@ class BillingService
         }
 
         $deal = $program->value('dealType', '₱ off');
+        $target = VoucherTarget::of($program->values, 'usable');
+
+        // A voucher for a category or for chosen services comes off one
+        // service — the dearest one on the bill it is for — never the whole
+        // bill. Services that are part of a package aren't priced on their
+        // own, so it can't be used on those.
+        if (! VoucherTarget::isAll($target)) {
+            $value = (float) $program->value('value', 0);
+            if ($deal !== 'Free service' && $value <= 0) {
+                return 'This voucher has no amount set.';
+            }
+            $lines = $billing->appointment?->services()
+                ->with('serviceVariant.service')
+                ->where('status', '!=', 'Cancelled')
+                ->whereNull('source_appointment_package_id')
+                ->get()
+                ->map(fn ($item) => [
+                    'uuid' => $item->serviceVariant?->service?->uuid,
+                    'category' => $item->category(),
+                    'price' => (float) $item->unit_price,
+                ])->all() ?? [];
+            $line = VoucherTarget::priciest($target, $lines);
+
+            return $line
+                ? ['amount', VoucherTarget::amountOff($deal, $value, (float) $line['price'])]
+                : 'This voucher is for ' . $program->value('usableOn', 'certain services') . ' — this bill has none.';
+        }
+
         if ($deal === 'Free service') {
             $name = trim((string) $program->value('usableOn', ''));
             $line = $name === '' ? null : $billing->appointment?->services()
                 ->with('serviceVariant.service')
                 ->where('status', '!=', 'Cancelled')
                 ->get()
-                ->filter(fn ($item) => str_contains(mb_strtolower($item->serviceVariant?->service?->name ?? ''), mb_strtolower($name)))
+                ->filter(fn ($item) => str_contains(mb_strtolower($item->displayName() ?? ''), mb_strtolower($name)))
                 ->sortByDesc(fn ($item) => (float) $item->unit_price)
                 ->first();
 
@@ -492,7 +548,19 @@ class BillingService
             'appointment.services.serviceVariant.service',
             'appointment.services.therapistAssignments.staff',
             'appointment.services.therapistAssignments.facility',
+            // The package lines of the bill (see AppointmentService::getBilling).
+            'appointment.services.sourceAppointmentPackage.package',
+            'appointment.packages.package',
         ])->where('uuid', $billingUuid)->firstOrFail();
+    }
+
+    // A finished, paid visit can't be voided or refunded (FinishedVisit).
+    // Bills that aren't for a visit (subscriptions, memberships) have none.
+    private function finishedVisitProblem(Billing $billing): ?string
+    {
+        return $billing->appointment_id
+            ? FinishedVisit::problem(Appointment::whereKey($billing->appointment_id)->value('status'))
+            : null;
     }
 
     private function lockedBilling(User $user, string $billingUuid): Billing
@@ -515,7 +583,7 @@ class BillingService
 
     private function branchIds(User $user): array
     {
-        return $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
+        return $this->spaBusinessRepository->branchIdsForUser($user);
     }
 
     private function reject(string $message): JsonResponse

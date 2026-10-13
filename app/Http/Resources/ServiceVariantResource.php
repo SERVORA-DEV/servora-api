@@ -23,6 +23,7 @@ class ServiceVariantResource extends JsonResource
             // parent's is_active (see ServiceResource, which sets this
             // relation on every variant it loads to avoid an N+1 query here).
             'is_active' => (bool) $this->service->is_active,
+            'home_service_available' => (bool) $this->service->home_service_available,
 
             // Per-branch availability/price override — scoped to the
             // requesting user's own accessible branches by the repository's

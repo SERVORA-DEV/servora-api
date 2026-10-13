@@ -69,6 +69,19 @@ class SubscriptionRepository
         return $subscription && ! $subscription->is_trial ? $subscription : null;
     }
 
+    // Whether the business has ever been on a plan it paid for (a free trial
+    // doesn't count; soft-deleted rows do). With $before, only plans that
+    // began before that moment. This is what makes a purchase a renewal
+    // rather than a first subscription.
+    public function hasHadPaidPlan(int $spaBusinessId, ?\DateTimeInterface $before = null): bool
+    {
+        return Subscription::withTrashed()
+            ->where('spa_business_id', $spaBusinessId)
+            ->where('is_trial', false)
+            ->when($before, fn ($query) => $query->where('created_at', '<', $before))
+            ->exists();
+    }
+
     // One free trial per business, ever (soft-deleted rows included).
     public function hasUsedTrial(int $spaBusinessId): bool
     {
@@ -111,41 +124,34 @@ class SubscriptionRepository
             ->first();
     }
 
-    // Subscriptions due for a renewal reminder: each business's most recent
-    // subscription only (same reasoning as countOverdue — a stale superseded
-    // row shouldn't generate a reminder), still Active, not ending by the
-    // owner's own choice, and expiring within the configured window.
-    //
-    // expiry_reminder_sent_at is the LAST reminder sent (stamped by
-    // NotifyAlmostDueSubscriptions). With $repeat off it's a one-shot, as
-    // before; with $repeat on, another reminder goes out every $everyDays,
-    // and the window extends through the grace period so a lapsed owner
-    // keeps getting "payment overdue" reminders until they pay (a payment
-    // creates a new subscription row, which resets all of this). The hour of
-    // slack stops a daily run from skipping a day because yesterday's send
-    // happened a few seconds later than today's check.
-    public function findDueForReminder(int $daysBefore, bool $repeat, int $everyDays, int $graceDays)
+    // How long after access ended a subscription is still looked at, so the
+    // "access paused" notice goes out even if the daily job missed a few days.
+    private const ENDED_LOOKBACK_DAYS = 7;
+
+    // The subscriptions the daily reminder job looks at: each business's
+    // most recent one only (same reasoning as countOverdue — a stale
+    // superseded row shouldn't generate a reminder), still Active, not
+    // ending by the owner's own choice, and due somewhere between the first
+    // reminder ($firstDays ahead) and shortly after the grace period ran
+    // out. Free trials included. Whether one is actually reminded today is
+    // SubscriptionReminderSchedule's decision, from expiry_reminder_sent_at
+    // (the LAST reminder sent; a payment creates a new subscription row,
+    // which starts that over).
+    public function findInReminderWindow(int $firstDays, int $graceDays)
     {
         $latestIdsPerBusiness = Subscription::selectRaw('MAX(id) as id')
             ->groupBy('spa_business_id')
             ->pluck('id');
 
-        $windowStart = $repeat ? now()->subDays($graceDays) : now();
-
         return Subscription::with(['business.owner', 'business.settings', 'plan', 'pendingPlan', 'scheduledPlan', 'paymentMethod'])
             ->whereIn('id', $latestIdsPerBusiness)
             ->where('status', 'Active')
-            ->where('is_trial', false)
             ->where(fn ($q) => $this->notDeclined($q))
             ->whereNotNull('expires_at')
-            ->whereBetween('expires_at', [$windowStart, now()->addDays($daysBefore)])
-            ->where(function ($query) use ($repeat, $everyDays) {
-                $query->whereNull('expiry_reminder_sent_at');
-
-                if ($repeat) {
-                    $query->orWhere('expiry_reminder_sent_at', '<=', now()->subDays($everyDays)->addHour());
-                }
-            })
+            ->whereBetween('expires_at', [
+                now()->subDays($graceDays + self::ENDED_LOOKBACK_DAYS),
+                now()->addDays($firstDays + 1),
+            ])
             ->get();
     }
 

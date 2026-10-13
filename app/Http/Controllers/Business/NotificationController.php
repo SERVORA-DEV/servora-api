@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
+use App\Service\Business\ServiceEndNotifier;
 use App\Service\NotificationService;
 use Illuminate\Http\Request;
 
@@ -12,10 +13,18 @@ use Illuminate\Http\Request;
 // No announce() here — that stays admin-only.
 class NotificationController extends Controller
 {
-    public function __construct(private NotificationService $notificationService) {}
+    public function __construct(
+        private NotificationService $notificationService,
+        private ServiceEndNotifier $serviceEndNotifier,
+    ) {}
 
     public function index(Request $request)
     {
+        // A service that has just run its time is news too: looked for here,
+        // for this person's branch, so the desk hears about it on the bell's
+        // next ask even where no scheduler is running.
+        $this->serviceEndNotifier->sweepForUser($request->user());
+
         return $this->notificationService->listForUser(
             $request->user(),
             (int) $request->input('per_page', 15),

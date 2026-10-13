@@ -21,7 +21,7 @@ class BranchPackageRepository
     // mirrors BranchServiceRepository::listBookableForBranches.
     public function listBookableForBranches(array $spaBranchIds)
     {
-        return BranchPackage::with('package')
+        return BranchPackage::with(\App\Models\Package::contents('package.'))
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->where('is_available', true)
             ->get();

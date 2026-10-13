@@ -27,7 +27,6 @@ class BranchMarketplaceRequest extends FormRequest
             'display.show_therapist_profiles' => 'sometimes|boolean',
             'display.show_available_slots' => 'sometimes|boolean',
             'display.show_room_availability' => 'sometimes|boolean',
-            'display.allow_online_payment' => 'sometimes|boolean',
             'display.allow_promo_codes' => 'sometimes|boolean',
             'display.show_reviews' => 'sometimes|boolean',
             'display.show_rating_badge' => 'sometimes|boolean',

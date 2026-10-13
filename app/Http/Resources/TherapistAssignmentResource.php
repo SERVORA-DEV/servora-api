@@ -12,9 +12,10 @@ class TherapistAssignmentResource extends JsonResource
         return [
             'uuid' => $this->uuid,
             'staff_uuid' => $this->staff?->uuid,
-            'staff_name' => $this->staff ? trim("{$this->staff->first_name} {$this->staff->last_name}") : null,
+            // Names as they were when assigned (the row's own copy).
+            'staff_name' => $this->resource->staffName(),
             'facility_uuid' => $this->facility?->uuid,
-            'facility_name' => $this->facility?->name,
+            'facility_name' => $this->resource->roomName(),
             'assignment_status' => $this->assignment_status,
             'assigned_at' => optional($this->assigned_at)->toIso8601String(),
             'started_at' => optional($this->started_at)->toIso8601String(),

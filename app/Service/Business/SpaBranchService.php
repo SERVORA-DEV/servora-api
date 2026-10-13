@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Models\SpaBranchPhoto;
 use App\Models\User;
 use App\Repository\ReviewRepository;
 use App\Http\Resources\Client\PublicReviewResource;
@@ -15,6 +16,7 @@ use App\Http\Resources\BranchDetailResource;
 use App\Http\Resources\PublicTherapistAvailabilityResource;
 use App\Service\Client\BookingPolicy;
 use App\Support\AppCache;
+use App\Support\BranchClosures;
 use App\Support\BranchHoursCalculator;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -43,7 +45,9 @@ class SpaBranchService
         NotificationService $notificationService,
         ImageUploadService $imageUploadService,
         DocumentUploadService $documentUploadService,
-        AppointmentAvailabilityService $availabilityService
+        AppointmentAvailabilityService $availabilityService,
+        private ManagerChangeNotifier $managerChanges,
+        private \App\Service\PlanFitService $planFit,
     ) {
         $this->spaBranchRepository = $spaBranchRepository;
         $this->spaBusinessRepository = $spaBusinessRepository;
@@ -74,10 +78,14 @@ class SpaBranchService
                 ->filter(fn ($b) => MarketplaceReadiness::acceptsOnlineBooking($b))
                 ->values();
             app(ReviewRepository::class)->attachRatings($branches);
+            if (BranchClosures::ready() && $branches->isNotEmpty()) {
+                $branches->load(['closures' => BranchClosures::upcomingScope()]);
+            }
 
             return [
                 'data' => NearbySpaResource::collection($branches)->resolve(request()),
                 'schedules' => $branches->map(fn ($b) => $b->relationLoaded('schedules') ? $b->schedules : null)->all(),
+                'closures' => $branches->map(fn ($b) => $b->relationLoaded('closures') ? $b->closures : null)->all(),
             ];
         });
 
@@ -86,7 +94,7 @@ class SpaBranchService
         foreach ($data as $i => $row) {
             $schedules = $cached['schedules'][$i] ?? null;
             if ($schedules !== null) {
-                $hours = BranchHoursCalculator::resolve($schedules, $now);
+                $hours = BranchHoursCalculator::resolve($schedules, $now, $cached['closures'][$i] ?? null);
                 $data[$i]['is_open_now'] = $hours['is_open_now'];
                 $data[$i]['opens_at'] = $hours['opens_at'];
                 $data[$i]['closes_at'] = $hours['closes_at'];
@@ -129,11 +137,17 @@ class SpaBranchService
             return [
                 'data' => (new BranchDetailResource($branch, $services, $packages, $therapists))->resolve(request()),
                 'schedules' => $branch->schedules,
+                'closures' => BranchClosures::upcoming($branch->id),
             ];
         });
 
+        // A temporary closure: the branch reads as closed while one runs, and
+        // the page carries a notice for it (or for one coming up soon).
+        $now = Carbon::now();
+        $closures = $cached['closures'] ?? collect();
         $data = $cached['data'];
-        $data['hours'] = BranchHoursCalculator::resolve($cached['schedules'], Carbon::now());
+        $data['hours'] = BranchHoursCalculator::resolve($cached['schedules'], $now, $closures);
+        $data['closure'] = BranchClosures::notice($closures, $now);
 
         return response()->json(['data' => $data]);
     }
@@ -272,7 +286,7 @@ class SpaBranchService
             ], 422);
         }
 
-        $branchIds = $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
+        $branchIds = $this->spaBusinessRepository->branchIdsForUser($user);
         $collection = $this->spaBranchRepository->paginateForBranches($branchIds, $perPage);
         return SpaBranchResource::collection($collection);
     }
@@ -292,6 +306,16 @@ class SpaBranchService
         if (! $business) {
             return response()->json([
                 'message' => 'No spa business found for this account.',
+            ], 422);
+        }
+
+        // The plan's branch limit (branches on hold don't count). A business
+        // with no live plan yet is still being set up and isn't limited here.
+        $plan = $this->planFit->currentPlan($business);
+        if (! $this->planFit->hasRoomForBranch($business, $plan)) {
+            return response()->json([
+                'message' => "Your {$plan->name} plan allows " . ((int) $plan->max_branches === 1 ? '1 branch' : "{$plan->max_branches} branches") . '. Upgrade to add another.',
+                'code' => 'PLAN_LIMIT',
             ], 422);
         }
 
@@ -328,7 +352,7 @@ class SpaBranchService
             ], 422);
         }
 
-        $branchIds = $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
+        $branchIds = $this->spaBusinessRepository->branchIdsForUser($user);
         $model = $this->spaBranchRepository->findByUuidForBranches($uuid, $branchIds);
         return new SpaBranchResource($model);
     }
@@ -357,18 +381,65 @@ class SpaBranchService
 
         $branch = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
 
+        // On hold by the plan: it comes back through bringBack() (which
+        // checks there is room), not by flipping the ordinary on/off switch.
+        if ($branch->plan_hold_at && ($payload['operating_status'] ?? null) === 'Active') {
+            return response()->json([
+                'message' => "{$branch->branch_name} is on hold because your plan has no room for it. Upgrade, or bring it back once there is room.",
+                'code' => 'PLAN_HOLD',
+            ], 422);
+        }
+
         if (isset($payload['cover_photo']) && $payload['cover_photo'] instanceof UploadedFile) {
+            $previous = $branch->cover_photo;
             $payload['cover_photo'] = $this->imageUploadService->replace(
-                $branch->cover_photo,
+                $previous,
                 $payload['cover_photo'],
                 "branches/{$business->uuid}"
             );
+            // The old image is gone from storage. If the gallery had taken it
+            // in (BranchSettingsService::adoptBranchPhoto), point that photo
+            // at the new image instead of leaving a broken one.
+            if ($previous) {
+                SpaBranchPhoto::where('spa_branch_id', $branch->id)->where('path', $previous)
+                    ->update(['path' => $payload['cover_photo']]);
+            }
         } else {
             unset($payload['cover_photo']);
         }
 
+        $wasStatus = $branch->operating_status;
+
         $model = $this->spaBranchRepository->update($uuid, $payload);
+
+        // Activate / Deactivate: the branch's manager should know.
+        if (isset($payload['operating_status']) && $payload['operating_status'] !== $wasStatus) {
+            $this->managerChanges->tell(
+                $user, $model, ManagerChangeNotifier::HOURS, 'Branch Status Changed',
+                $payload['operating_status'] === 'Active'
+                    ? "switched {$model->branch_name} back on. Clients can find and book it again."
+                    : "switched {$model->branch_name} off. Clients can't find or book it until it is switched back on.",
+            );
+        }
+
         return new SpaBranchResource($model);
+    }
+
+    // POST business/branch/{uuid}/bring-back — switch a branch the plan put
+    // on hold back on, when the plan has room for it again.
+    public function bringBack(User $user, string $uuid)
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+        if (! $business) {
+            return response()->json(['message' => 'No spa business found for this account.'], 422);
+        }
+
+        $branch = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
+        if ($why = $this->planFit->bringBackBranch($business, $branch)) {
+            return response()->json(['message' => $why, 'code' => 'PLAN_LIMIT'], 422);
+        }
+
+        return new SpaBranchResource($branch->fresh());
     }
 
     public function deleteSpaBranch(User $user, string $uuid)

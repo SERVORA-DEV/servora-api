@@ -27,6 +27,9 @@ class Subscription extends Model
         'scheduled_plan_id',
         'scheduled_billing_cycle',
         'scheduled_at',
+        // What the owner chose to keep when the scheduled plan is smaller
+        // than what they use: ['branch_uuids' => [], 'account_uuids' => []].
+        'scheduled_keep',
 
         'billing_cycle',
         // Free trial (config/trial.php) — see SubscriptionService::startTrial.
@@ -60,6 +63,7 @@ class Subscription extends Model
             'expiry_reminder_sent_at' => 'datetime',
             'plan_change_responded_at' => 'datetime',
             'scheduled_at' => 'datetime',
+            'scheduled_keep' => 'array',
 
             'is_trial' => 'boolean',
             'auto_renew' => 'boolean',

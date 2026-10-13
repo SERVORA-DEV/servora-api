@@ -47,6 +47,9 @@ class ClientProfileRequest extends FormRequest
             ],
             // Optional — only used for birthday-month vouchers.
             'birth_date' => ['sometimes', 'nullable', 'date', 'before:today', 'after:1900-01-01'],
+            // Spas record it for their clients (App\Support\ClientProfile);
+            // left as it is when the app doesn't send it.
+            'gender' => ['sometimes', 'nullable', Rule::in(\App\Support\ClientProfile::GENDERS)],
         ];
     }
 

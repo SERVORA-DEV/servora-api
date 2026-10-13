@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Business;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Business\StaffRequest;
 use App\Http\Requests\Business\StaffServiceRequest;
+use App\Service\Business\StaffEarningsService;
 use App\Service\Business\StaffService;
 use Illuminate\Http\Request;
 
@@ -45,6 +46,17 @@ class StaffController extends Controller
         }
 
         return response()->json(['message' => 'Deleted successfully'], 200);
+    }
+
+    // What they earned between two dates, line by line (the employee page).
+    public function earnings(Request $request, StaffEarningsService $earnings, string $uuid)
+    {
+        $data = $request->validate([
+            'from' => ['nullable', 'date_format:Y-m-d'],
+            'to' => ['nullable', 'date_format:Y-m-d'],
+        ]);
+
+        return $earnings->forStaff($request->user(), $uuid, $data['from'] ?? null, $data['to'] ?? null);
     }
 
     public function services(Request $request, string $uuid)

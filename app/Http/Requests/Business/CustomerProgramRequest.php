@@ -25,7 +25,8 @@ class CustomerProgramRequest extends FormRequest
             'active' => ['sometimes', 'boolean'],
             'audience' => ['sometimes', Rule::in(CustomerProgram::AUDIENCES)],
             'values' => ['sometimes', 'array'],
-            'values.*' => ['nullable', 'max:500'],
+            // Long enough for a voucher's list of chosen services (uuids).
+            'values.*' => ['nullable', 'max:4000'],
             'condition' => ['sometimes', 'nullable', 'array'],
             'condition.kind' => ['nullable', Rule::in(CustomerProgram::CONDITIONS)],
             'condition.value' => ['nullable', 'integer', 'min:1', 'max:100000000'],

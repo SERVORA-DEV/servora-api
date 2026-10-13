@@ -7,6 +7,7 @@ use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
 use App\Models\Staff;
 use App\Models\TherapistAssignment;
+use App\Support\RotationTurn;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -104,6 +105,8 @@ class TherapistQueueCalculator
                     'uuid' => $staff->uuid,
                     'name' => trim("{$staff->first_name} {$staff->last_name}"),
                     'first_name' => $staff->first_name,
+                    // What they do, main one first (App\Support\StaffSpecialty).
+                    'specialties' => $staff->specialtyList(),
                     'position' => null,
                     'rotation_status' => $activeStatusByStaffId[$staff->id] ?? 'free',
                     'checked_in_at' => $attendance?->check_in_at,
@@ -147,10 +150,14 @@ class TherapistQueueCalculator
             ->values();
     }
 
-    /** The first row that is in the queue and genuinely takeable, or null when everyone is occupied. */
+    /**
+     * The first row in the queue who can take the next client, or null when
+     * everyone is mid-service. Someone assigned to a booking that hasn't
+     * started is still next up — see App\Support\RotationTurn.
+     */
     public function nextUp(Collection $rows): ?array
     {
-        return $rows->first(fn (array $row) => $row['in_queue'] && $row['rotation_status'] === 'free');
+        return RotationTurn::nextUp($rows);
     }
 
     private function rotationKey(array $row): int
@@ -193,7 +200,9 @@ class TherapistQueueCalculator
      *
      * Note both states keep their position in the queue — only completing a
      * service moves a therapist to the back. A client who cancels or no-shows
-     * therefore never costs their therapist a turn.
+     * therefore never costs their therapist a turn. And only 'in_service'
+     * takes them out of "next up": someone merely assigned is standing free
+     * (App\Support\RotationTurn).
      *
      * @return array<int, string>
      */

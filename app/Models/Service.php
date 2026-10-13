@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 
 class Service extends Model
 {
@@ -20,9 +22,13 @@ class Service extends Model
         'name',
         'code',
         'category',
+        // 'time' | 'procedure' | 'facility' — App\Support\ServiceKind.
+        'service_type',
         'description',
         'image_path',
         'is_active',
+        // The owner's "can be done at a client's home" tick.
+        'home_service_available',
         'is_template',
         'source_template_id',
     ];
@@ -31,6 +37,7 @@ class Service extends Model
     {
         return [
             'is_active' => 'boolean',
+            'home_service_available' => 'boolean',
             'is_template' => 'boolean',
         ];
     }
@@ -38,6 +45,26 @@ class Service extends Model
     public function uniqueIds()
     {
         return ['uuid'];
+    }
+
+    /**
+     * Whether the service-type columns exist yet (the migration has been
+     * run): services.service_type and appointment_services.extra_charge,
+     * added together. Until then every service reads as time-based and
+     * nothing writes either column.
+     */
+    public static function hasTypes(): bool
+    {
+        // Asked often, so both answers are remembered: "yes" for good, "not
+        // yet" for a minute (same as Appointment::remembersRequests).
+        $known = Cache::get('schema:service_types');
+        if (is_bool($known)) {
+            return $known;
+        }
+        $ready = Schema::hasColumn('services', 'service_type') && Schema::hasColumn('appointment_services', 'extra_charge');
+        $ready ? Cache::forever('schema:service_types', true) : Cache::put('schema:service_types', false, 60);
+
+        return $ready;
     }
 
     public function business()

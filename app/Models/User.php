@@ -63,6 +63,8 @@ class User extends Authenticatable implements MustVerifyEmail
         'phone_verified_at',
 
         'account_status',
+        // A staff login suspended by a smaller plan (PlanFitService).
+        'plan_hold_at',
         'onboarding_completed_at',
 
         'personal_email',
@@ -91,7 +93,10 @@ class User extends Authenticatable implements MustVerifyEmail
             'onboarding_completed_at' => 'datetime',
             'two_factor_confirmed_at' => 'datetime',
             'locked_until' => 'datetime',
+            'plan_hold_at' => 'datetime',
             'last_login_at' => 'datetime',
+            // A manager's own notification switches (ManagerNotificationPrefs).
+            'notification_prefs' => 'array',
             'password' => 'hashed',
             // Unlike the OTP-style secrets elsewhere (hashed, one-way), a TOTP
             // secret must be reversible to generate codes — encrypted-at-rest

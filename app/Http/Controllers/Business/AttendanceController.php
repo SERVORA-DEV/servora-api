@@ -57,7 +57,12 @@ class AttendanceController extends Controller
 
     public function destroy(Request $request, string $uuid)
     {
-        $this->attendanceService->clearAttendance($request->user(), $uuid, $request);
+        $result = $this->attendanceService->clearAttendance($request->user(), $uuid, $request);
+        // A refusal (no business, or the therapist is in a service) comes back as a response.
+        if ($result instanceof \Illuminate\Http\JsonResponse) {
+            return $result;
+        }
+
         return response()->json(['message' => 'Deleted successfully'], 200);
     }
 

@@ -41,6 +41,16 @@ class TransactionResource extends JsonResource
             'status' => strtolower($this->status),
             'payment_date' => optional($this->paid_at)->toIso8601String(),
             'renewal_date' => optional($subscription?->expires_at)->toIso8601String(),
+            // For the detail panel and the receipt: what was charged for, the
+            // VAT inside the amount, who paid, and how the payment went
+            // through. All from relations loaded above — no extra queries.
+            'description' => $this->remarks,
+            'plan_name' => $plan?->name,
+            'billing_cycle' => $subscription?->billing_cycle,
+            'vat_amount' => (float) ($this->vat_amount ?? 0),
+            'owner_email' => $owner?->email,
+            'gateway_provider' => $payment?->gateway_provider,
+            'gateway_reference' => $payment?->gateway_reference,
         ];
     }
 }

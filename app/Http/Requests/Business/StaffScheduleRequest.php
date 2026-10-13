@@ -24,8 +24,6 @@ class StaffScheduleRequest extends FormRequest
             'days.*.is_day_off' => 'sometimes|boolean',
             'days.*.start_time' => 'nullable|date_format:H:i',
             'days.*.end_time' => 'nullable|date_format:H:i',
-            'days.*.break_start' => 'nullable|date_format:H:i',
-            'days.*.break_end' => 'nullable|date_format:H:i',
         ];
     }
 }

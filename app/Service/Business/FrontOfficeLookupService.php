@@ -58,7 +58,7 @@ class FrontOfficeLookupService
 
     private function branchIds(User $user): array
     {
-        return $this->spaBusinessRepository->branchesForUser($user)->pluck('id')->all();
+        return $this->spaBusinessRepository->branchIdsForUser($user);
     }
 
     // The branch(es) this front-office user works at — just uuid + name, so
@@ -96,6 +96,8 @@ class FrontOfficeLookupService
             'uuid' => $staff->uuid,
             'name' => trim("{$staff->first_name} {$staff->last_name}"),
             'role' => $staff->role,
+            // What they do, main one first (App\Support\StaffSpecialty).
+            'specialties' => $staff->specialtyList(),
             'branch_name' => $staff->branch?->branch_name,
             'schedule' => StaffScheduleResource::collection($staff->schedules),
             'qualified_services' => $staff->qualifiedServices->map(fn ($service) => [
@@ -133,6 +135,7 @@ class FrontOfficeLookupService
             'data' => $rows->map(fn (array $row) => [
                 'uuid' => $row['uuid'],
                 'name' => $row['name'],
+                'specialties' => $row['specialties'] ?? [],
                 'position' => $row['position'],
                 'in_queue' => $row['in_queue'],
                 'rotation_status' => $row['rotation_status'],
@@ -177,8 +180,30 @@ class FrontOfficeLookupService
         return LookupServiceResource::collection($this->branchServiceRepository->listBookableForBranches($this->branchIds($user)));
     }
 
+    // The business's add-ons that are switched on — what the visit page
+    // offers on a service's card, filtered there to the ones available for
+    // that service (App\Support\ServiceAddon). None until the migration has run.
+    public function addons(User $user)
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+        if (! $business || ! \App\Models\Addon::ready()) {
+            return \App\Http\Resources\AddonResource::collection(collect());
+        }
+
+        return \App\Http\Resources\AddonResource::collection(
+            app(\App\Repository\Business\AddonRepository::class)->listForBusiness($business->id, activeOnly: true)
+        );
+    }
+
+    // Empty when the plan doesn't include packages, so the front desk is
+    // never offered one it can't add.
     public function packages(User $user)
     {
+        $business = $this->spaBusinessRepository->findForUser($user);
+        if (! $business || ! \App\Support\AppCache::planAllows($business->id, 'package_access')) {
+            return LookupPackageResource::collection(collect());
+        }
+
         return LookupPackageResource::collection($this->branchPackageRepository->listBookableForBranches($this->branchIds($user)));
     }
 
@@ -189,6 +214,36 @@ class FrontOfficeLookupService
     // branch, no picker" assumption AppointmentService::createAppointment
     // makes. Only the first branch is used even for an owner account, since
     // this lookup has no per-branch selector.
+    // This branch's scanner link — the page a member of staff opens on their
+    // own phone to start a home visit by scanning the client's QR
+    // (App\Support\HomeVisitStart, ScannerController). The link carries a
+    // secret of the branch's own, made the first time it is asked for;
+    // $replace makes a new one, which cuts the old link off.
+    public function scannerLink(User $user, bool $replace = false)
+    {
+        $branchId = $this->branchIds($user)[0] ?? null;
+        $branch = $branchId ? SpaBranch::find($branchId) : null;
+
+        if (! $branch) {
+            return response()->json(['message' => 'No branch found for this account.'], 422);
+        }
+        if (! \App\Models\Appointment::hasHomeStart()) {
+            return response()->json(['data' => ['ready' => false, 'token' => null, 'branch_name' => $branch->branch_name, 'home_service_enabled' => false]]);
+        }
+
+        if ($replace || ! $branch->scanner_token) {
+            $branch->forceFill(['scanner_token' => \Illuminate\Support\Str::random(40)])->save();
+        }
+
+        return response()->json(['data' => [
+            'ready' => true,
+            'token' => $branch->scanner_token,
+            'branch_name' => $branch->branch_name,
+            // Off: the link works, but there are no home visits to start.
+            'home_service_enabled' => (bool) HomeServiceRules::offer($branch)['enabled'],
+        ]]);
+    }
+
     public function schedule(User $user)
     {
         $branchIds = $this->branchIds($user);
@@ -203,7 +258,35 @@ class FrontOfficeLookupService
         $branch = SpaBranch::find($branchId);
 
         return BranchScheduleResource::collection($this->branchScheduleRepository->allForBranch($branchId))
-            ->additional(['walk_in_enabled' => $branch ? BookingPolicy::for($branch)['walk_in_enabled'] : true]);
+            ->additional([
+                'walk_in_enabled' => $branch ? BookingPolicy::for($branch)['walk_in_enabled'] : true,
+                // The owner's (or this branch's) rules the desk is held to,
+                // so the screens can say so before asking — the API decides
+                // (App\Support\FrontDeskPolicy, PolicyGate).
+                'policy' => $branch ? array_intersect_key(BookingPolicy::for($branch), array_flip([
+                    'reservation_enabled', 'booking_lead_time_minutes', 'max_advance_booking_days',
+                    'max_services_per_booking', 'max_service_minutes_per_booking', 'cancellation_window_hours',
+                    'queue_enabled', 'max_queue_size', 'walk_ins_first_priority', 'estimated_wait_display',
+                    'allow_service_extension', 'no_show_policy', 'no_show_suspend_after',
+                ])) + ['can_override' => app(PolicyGate::class)->mayOverride($user)] : null,
+                // For the modal's Home service option: whether it's offered,
+                // the fee and area, and the branch's own pin to measure from.
+                'home_service' => $branch ? \App\Service\Business\HomeServiceRules::offer($branch) : ['enabled' => false, 'fee' => 0.0, 'radius_km' => 0, 'min_minutes' => 0],
+                'branch_pin' => $branch && $branch->latitude !== null && $branch->longitude !== null
+                    ? ['lat' => (float) $branch->latitude, 'lng' => (float) $branch->longitude]
+                    : null,
+                // What exists yet (each arrives with its migration), so
+                // the screens ask for a client's gender and show start
+                // codes only once the API keeps them.
+                'features' => [
+                    'client_profile' => \App\Models\Client::hasProfile(),
+                    'home_start' => \App\Models\Appointment::hasHomeStart(),
+                ],
+                // Temporary closures still to come, so the modal can warn
+                // about a time inside one before it is submitted.
+                'closures' => \App\Support\BranchClosures::upcoming($branchId)
+                    ->map(fn ($closure) => \App\Support\BranchClosures::present($closure))->values(),
+            ]);
     }
 
     // Backs the appointment modal's "grey out already-booked times" — same

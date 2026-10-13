@@ -3,12 +3,16 @@
 namespace App\Service\System;
 
 use App\Http\Resources\TransactionResource;
+use App\Models\OwnerIdentityVerification;
 use App\Models\Payment;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
 use App\Models\Subscription;
+use App\Models\SystemSetting;
+use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\BillingRepository;
+use App\Repository\SubscriptionRepository;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 
@@ -18,11 +22,19 @@ class DashboardService
 
     private AuditLogRepository $auditLogRepository;
 
-    public function __construct(BillingRepository $billingRepository, AuditLogRepository $auditLogRepository)
+    private SubscriptionRepository $subscriptionRepository;
+
+    public function __construct(BillingRepository $billingRepository, AuditLogRepository $auditLogRepository, SubscriptionRepository $subscriptionRepository)
     {
         $this->billingRepository = $billingRepository;
         $this->auditLogRepository = $auditLogRepository;
+        $this->subscriptionRepository = $subscriptionRepository;
     }
+
+    // How far ahead "ending soon" looks, and how close a trial's end has to
+    // be to count as needing a look.
+    private const ENDING_SOON_DAYS = 14;
+    private const TRIAL_ENDING_DAYS = 7;
 
     /**
      * Platform-wide overview for the system administrator dashboard.
@@ -68,11 +80,41 @@ class DashboardService
             )
             ->first();
 
+        // Every subscription that is live right now — each business's latest
+        // one only (a renewal adds a row and leaves the old one "Active") —
+        // read once with its plan and business. The paid/trial split, the
+        // plan mix, "trials ending" and "ending soon" all come from it.
+        $live = $this->currentlyActiveSubscriptions()
+            ->whereRaw('subscriptions.id = (select max(s2.id) from subscriptions s2 where s2.spa_business_id = subscriptions.spa_business_id and s2.deleted_at is null)')
+            ->with(['plan', 'business'])
+            ->get();
+        $trials = $live->where('is_trial', true);
+
+        // People registered in the client app.
+        $clients = User::where('role', 'client')
+            ->selectRaw('count(*) as total, sum(case when created_at >= ? then 1 else 0 end) as this_month', [$now->copy()->startOfMonth()])
+            ->first();
+
+        $pendingBranches = SpaBranch::where('verification_status', 'Pending')->count();
+
         return [
+            // What is waiting for an administrator to do something.
+            'attention' => [
+                'owner_verifications' => OwnerIdentityVerification::where('status', 'Pending')->count(),
+                'branch_registrations' => $pendingBranches,
+                // Past its due date, not renewed, and still inside the grace
+                // period: the same businesses the Subscribers list shows as
+                // Overdue, which is where this row links. Past the grace
+                // period they are under "Did not renew" there instead.
+                'plans_overdue' => $this->subscriptionRepository->countOverdue(0)
+                    - $this->subscriptionRepository->countOverdue((int) SystemSetting::current()->subscription_grace_period_days),
+                'trials_ending' => $trials->filter(fn ($s) => $s->expires_at && $s->expires_at->lte($now->copy()->addDays(self::TRIAL_ENDING_DAYS)))->count(),
+            ],
             'kpis' => [
                 'total_businesses' => [
                     'value' => SpaBusiness::count(),
                     'trend_pct' => $this->deltaPct($businessGrowth[5], $businessGrowth[4]),
+                    'new_this_month' => $businessGrowth[5],
                 ],
                 'total_branches' => [
                     'value' => (int) $branchCounts->total,
@@ -80,23 +122,60 @@ class DashboardService
                         (int) $branchCounts->this_month,
                         (int) $branchCounts->last_month
                     ),
+                    'new_this_month' => max(0, (int) $branchCounts->this_month - (int) $branchCounts->last_month),
                 ],
                 'active_customers' => null,
+                'client_accounts' => [
+                    'value' => (int) ($clients->total ?? 0),
+                    'new_this_month' => (int) ($clients->this_month ?? 0),
+                ],
                 'monthly_revenue' => [
                     'value' => $revenueTrend[5],
                     'trend_pct' => $this->deltaPct($revenueTrend[5], $revenueTrend[4]),
+                    'last_month' => $revenueTrend[4],
                 ],
                 'active_subscriptions' => [
-                    'value' => $this->currentlyActiveSubscriptions()->count(),
+                    'value' => $live->count(),
                     'trend_pct' => $this->deltaPct($subscriptionGrowth[5], $subscriptionGrowth[4]),
+                    'paid' => $live->count() - $trials->count(),
+                    'trial' => $trials->count(),
                 ],
+            ],
+            'subscriptions' => [
+                // Live subscriptions by plan, biggest first.
+                'by_plan' => $live
+                    ->groupBy(fn ($s) => $s->plan?->category ?? 'Other')
+                    ->map(fn ($group, $category) => [
+                        'category' => $category,
+                        'name' => $group->first()->plan?->name ?? $category,
+                        'count' => $group->count(),
+                    ])
+                    ->sortByDesc('count')
+                    ->values()
+                    ->all(),
+                // Reaching their end date in the next two weeks, soonest first.
+                'ending_soon' => $live
+                    ->filter(fn ($s) => $s->expires_at && $s->expires_at->lte($now->copy()->addDays(self::ENDING_SOON_DAYS)))
+                    ->sortBy('expires_at')
+                    ->take(6)
+                    ->map(fn ($s) => [
+                        'business_uuid' => $s->business?->uuid,
+                        'business_name' => $s->business?->business_name,
+                        'plan_name' => $s->plan?->name,
+                        'is_trial' => (bool) $s->is_trial,
+                        'auto_renew' => (bool) $s->auto_renew,
+                        'expires_at' => $s->expires_at->toIso8601String(),
+                    ])
+                    ->values()
+                    ->all(),
+                'ending_soon_days' => self::ENDING_SOON_DAYS,
             ],
             'analytics' => [
                 'business_growth' => $businessGrowth,
                 'subscription_growth' => $subscriptionGrowth,
                 'revenue_trend' => $revenueTrend,
             ],
-            'pending_registrations' => SpaBranch::where('verification_status', 'Pending')->count(),
+            'pending_registrations' => $pendingBranches,
             'recent_transactions' => TransactionResource::collection(
                 $this->billingRepository->recentSubscriptionTransactions(8)
             )->resolve(),
@@ -160,12 +239,18 @@ class DashboardService
         return array_map(fn ($m) => (int) ($counts[$m['key']] ?? 0), $months);
     }
 
-    // Paid revenue per month, one grouped query.
+    // The platform's own revenue per month, one grouped query: what
+    // businesses paid for their plans, less anything given back. Payments
+    // are shared with the spas' own bills (a client paying for a massage is
+    // the spa's money, billing_type 'Appointment'), so only payments on a
+    // subscription bill count here — the same bills as "Recent
+    // Transactions" below it and the Subscribers list.
     private function revenueSeries(array $months): array
     {
         $sums = Payment::where('payment_status', 'Paid')
+            ->whereHas('billing', fn ($q) => $q->where('billing_type', 'Subscription'))
             ->whereBetween('paid_at', [$months[0]['start'], $months[5]['end']])
-            ->selectRaw("to_char(paid_at, 'YYYY-MM') as month, sum(amount) as total")
+            ->selectRaw("to_char(paid_at, 'YYYY-MM') as month, sum(amount - coalesce(refunded_amount, 0)) as total")
             ->groupBy('month')
             ->pluck('total', 'month');
 
