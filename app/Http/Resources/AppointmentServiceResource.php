@@ -20,6 +20,9 @@ class AppointmentServiceResource extends JsonResource
             'service_name' => $this->resource->displayName(),
             // time | procedure | facility (App\Support\ServiceKind).
             'service_type' => $this->resource->kind(),
+            // A facility has to be chosen before it can start (the booking's
+            // own copy — AppointmentServiceItem::needsFacility).
+            'facility_required' => $this->resource->needsFacility(),
             'duration_minutes' => $this->resource->lengthMinutes(),
             'quantity' => (int) $this->quantity,
             'sort_order' => (int) $this->sort_order,

@@ -4,6 +4,7 @@ namespace App\Http\Resources;
 
 use App\Services\DocumentUploadService;
 use App\Services\ImageUploadService;
+use App\Support\SocialLinks;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -35,6 +36,8 @@ class SpaBranchResource extends JsonResource
             'facebook_url' => $this->facebook_url,
             'instagram_handle' => $this->instagram_handle,
             'website_url' => $this->website_url,
+            // The links shown for this branch: its own, else the company's.
+            'social_links' => (object) SocialLinks::forBranch($this->resource),
             'description' => $this->description,
 
             'formatted_address' => $this->formatted_address,
@@ -48,7 +51,6 @@ class SpaBranchResource extends JsonResource
             'permit_business_name' => $this->permit_business_name,
             'permit_branch_location' => $this->permit_branch_location,
             'permit_issue_date' => $this->permit_issue_date,
-            'permit_expiration_date' => $this->permit_expiration_date,
             'permit_confirmed' => (bool) $this->permit_confirmed,
             'permit_document_url' => app(DocumentUploadService::class)->signedUrl($this->permit_document_path),
 
@@ -100,6 +102,18 @@ class SpaBranchResource extends JsonResource
             'manager_name' => $this->when(
                 array_key_exists('manager_name', $this->resource->getAttributes()),
                 fn () => $this->resource->getAttribute('manager_name'),
+            ),
+            // How it is doing — the same list query (paginateForBranches).
+            'performance' => $this->when(
+                array_key_exists('month_visits', $this->resource->getAttributes()),
+                fn () => [
+                    'month_visits' => (int) $this->resource->getAttribute('month_visits'),
+                    'month_completed' => (int) $this->resource->getAttribute('month_completed'),
+                    'month_revenue' => (float) $this->resource->getAttribute('month_revenue'),
+                    'month_clients' => (int) $this->resource->getAttribute('month_clients'),
+                    'last_month_revenue' => (float) $this->resource->getAttribute('last_month_revenue'),
+                    'today_visits' => (int) $this->resource->getAttribute('today_visits'),
+                ],
             ),
 
             // Full detail-page relations — only present when the caller

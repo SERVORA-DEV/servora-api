@@ -94,6 +94,6 @@ class SpaBranchRequest extends FormRequest
             return \App\Models\SpaBusiness::where('owner_id', $user->id)->value('id');
         }
 
-        return $user->staff?->branch?->business?->id;
+        return \App\Support\AccountScope::business($user)?->id;
     }
 }

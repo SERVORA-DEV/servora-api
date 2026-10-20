@@ -3,7 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Billing;
-use App\Models\SpaBusinessSetting;
+use App\Support\ReminderPolicy;
 use App\Repository\PaymentRepository;
 use App\Service\Business\ClientNotifier;
 use App\Service\Business\StaffNotifier;
@@ -45,12 +45,11 @@ class SendPaymentReminders extends Command
     private function remind(Billing $billing, ClientNotifier $clients, StaffNotifier $staff, PaymentRepository $payments): bool
     {
         $appointment = $billing->appointment;
-        $settings = $appointment?->branch?->business?->settings?->section('notifications')
-            ?? SpaBusinessSetting::DEFAULTS['notifications'];
 
         $billing->forceFill(['payment_reminder_sent_at' => now()])->saveQuietly();
 
-        if (! $appointment || ! $settings['send_payment_reminder'] || ! $settings['in_app_channel']) {
+        // The branch's own rule, else the business's (ReminderPolicy).
+        if (! $appointment?->branch || ! ReminderPolicy::remindsPayments(ReminderPolicy::for($appointment->branch))) {
             return false;
         }
 

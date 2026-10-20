@@ -137,7 +137,7 @@ class UserService
                 ], 403);
             }
 
-            $userBusinessUuid = $user->staff?->branch?->business?->uuid;
+            $userBusinessUuid = \App\Support\AccountScope::business($user)?->uuid;
 
             if (! $userBusinessUuid || $userBusinessUuid !== $payload->business_uuid) {
                 return response()->json([

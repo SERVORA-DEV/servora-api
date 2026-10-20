@@ -118,4 +118,39 @@ class VoucherTargetTest extends TestCase
         $this->assertSame('Swedish, Hilot or 3 others', VoucherTarget::phrase($services('a', 'b', 'c', 'd', 'e'), ['Swedish', 'Hilot', 'Hot Stone', 'Shiatsu', 'Thai']));
         $this->assertSame('Swedish or Hilot', VoucherTarget::freePhrase($services('a', 'b'), ['Swedish', 'Hilot']));
     }
+
+    public function test_a_voucher_only_fits_a_booking_that_has_what_it_is_for(): void
+    {
+        $hilot = ['uuid' => 'hi', 'category' => 'Massage', 'name' => 'Hilot'];
+        $facial = ['uuid' => 'fa', 'category' => 'Facial', 'name' => 'Classic Facial'];
+        $chosen = VoucherTarget::of(['usableKind' => 'services', 'usableServices' => 'hi,sw'], 'usable');
+
+        // A category or chosen services: one of the booked services must be covered
+        // (a service inside a package counts: it is in the list too).
+        $this->assertTrue(VoucherTarget::fits('Free service', $this->massage(), 'a Massage service', [$hilot, $facial]));
+        $this->assertFalse(VoucherTarget::fits('Free service', $this->massage(), 'a Massage service', [$facial]));
+        $this->assertTrue(VoucherTarget::fits('% off', $chosen, 'Hilot', [$hilot]));
+        $this->assertFalse(VoucherTarget::fits('% off', $chosen, 'Hilot', [$facial]));
+        $this->assertFalse(VoucherTarget::fits('Free service', $this->massage(), 'a Massage service', []));
+    }
+
+    public function test_an_older_free_service_voucher_is_found_by_its_name(): void
+    {
+        $footSpa = ['uuid' => 'fs', 'category' => 'Foot', 'name' => 'Foot Spa'];
+        $facial = ['uuid' => 'fa', 'category' => 'Facial', 'name' => 'Classic Facial'];
+        $all = VoucherTarget::of(['dealType' => 'Free service', 'usableOn' => 'Foot Spa'], 'usable');
+
+        $this->assertTrue(VoucherTarget::fits('Free service', $all, 'Foot Spa', [$footSpa]));
+        $this->assertFalse(VoucherTarget::fits('Free service', $all, 'Foot Spa', [$facial]));
+        // A free service with no name to look for fits nothing (as at the bill).
+        $this->assertFalse(VoucherTarget::fits('Free service', $all, '', [$footSpa]));
+    }
+
+    public function test_a_voucher_for_all_services_fits_any_booking(): void
+    {
+        $all = VoucherTarget::of(['dealType' => '% off', 'value' => '10', 'usableOn' => 'All services'], 'usable');
+
+        $this->assertTrue(VoucherTarget::fits('% off', $all, 'All services', []));
+        $this->assertTrue(VoucherTarget::fits('₱ off', $all, 'All services', [['uuid' => 'x', 'category' => null, 'name' => 'Anything']]));
+    }
 }

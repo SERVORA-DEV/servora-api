@@ -191,9 +191,29 @@ class SpaBranchRepository
     // Counted in the same query rather than loaded, so a list of branches
     // stays one round trip. The week's hours come along too (one query for
     // every branch), instead of the page asking per branch afterwards.
+    //
+    // And how it is doing (the "This month" strip): this month's visits,
+    // finished ones, what those came to and how many clients they were, the
+    // same takings last month, and today's visits. Each is a subquery of the
+    // same query. Dates are the spa's (app timezone).
     public function paginateForBranches(array $spaBranchIds, int $perPage = 15)
     {
+        $monthStart = now()->startOfMonth()->toDateString();
+        $today = now()->toDateString();
+        $lastStart = now()->startOfMonth()->subMonthNoOverflow()->toDateString();
+        $lastEnd = now()->startOfMonth()->subDay()->toDateString();
+        $visits = fn () => \App\Models\Appointment::query()->whereColumn('spa_branch_id', 'spa_branches.id');
+        $kept = fn ($q) => $q->whereNotIn('status', ['cancelled', 'no_show']);
+
         return SpaBranch::whereIn('id', $spaBranchIds)
+            ->addSelect([
+                'month_visits' => $kept($visits()->selectRaw('count(*)')->whereBetween('appointment_date', [$monthStart, $today])),
+                'month_completed' => $visits()->selectRaw('count(*)')->where('status', 'completed')->whereBetween('appointment_date', [$monthStart, $today]),
+                'month_revenue' => $visits()->selectRaw('coalesce(sum(total_amount), 0)')->where('status', 'completed')->whereBetween('appointment_date', [$monthStart, $today]),
+                'month_clients' => $visits()->selectRaw('count(distinct client_id)')->where('status', 'completed')->whereBetween('appointment_date', [$monthStart, $today]),
+                'last_month_revenue' => $visits()->selectRaw('coalesce(sum(total_amount), 0)')->where('status', 'completed')->whereBetween('appointment_date', [$lastStart, $lastEnd]),
+                'today_visits' => $kept($visits()->selectRaw('count(*)')->where('appointment_date', $today)),
+            ])
             ->with(\App\Support\BranchClosures::ready()
                 ? ['schedules', 'closures' => \App\Support\BranchClosures::upcomingScope()]
                 : ['schedules'])

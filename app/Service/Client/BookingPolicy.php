@@ -13,25 +13,27 @@ use Carbon\Carbon;
 // them, so booking, reschedule, cancel and the app all agree.
 class BookingPolicy
 {
+    // Always on, so not rules at all: a listed branch takes bookings from the
+    // app, a client may pick their staff (when the branch shows its staff), the
+    // front desk takes reservations, and a service with no one picked gets a
+    // qualified therapist assigned. Any value saved for them is ignored.
     public const KEYS = [
-        'online_booking_enabled',
-        'booking_lead_time_minutes',
         'max_advance_booking_days',
         'max_services_per_booking',
+        // How many bookings one client may have at the business on one day
+        // (the client app is held to it; the front desk isn't).
+        'max_bookings_per_client_per_day',
         'max_service_minutes_per_booking',
         'allow_reschedule',
+        'max_reschedules_per_booking',
         'allow_cancellation',
         'cancellation_window_hours',
-        'walk_in_enabled',
-        'cancellation_policy_tier',
         // What the front desk is held to as well (App\Support\FrontDeskPolicy).
-        'reservation_enabled',
         'no_show_policy',
         'no_show_suspend_after',
         'queue_enabled',
         'max_queue_size',
         'queue_number_format',
-        'estimated_wait_display',
         'walk_ins_first_priority',
         'allow_service_extension',
         'max_extension_mins',
@@ -43,7 +45,9 @@ class BookingPolicy
         'home_service_min_minutes',
     ];
 
-    public const TIERS = ['flexible', 'moderate', 'strict'];
+    // How far ahead a booking must be made. The same for every spa and branch,
+    // so it isn't a setting; the policy still carries it for the app and desk.
+    public const LEAD_TIME_MINUTES = 60;
 
     // Per-request cache (a bookings or spa list asks once per row). Scoped
     // in the container, so a queue worker or long-lived process starts each
@@ -55,6 +59,14 @@ class BookingPolicy
         $cache = self::cache();
 
         return $cache[$branch->id] ??= self::resolve($branch);
+    }
+
+    // Whether a client may pick their therapist at this branch: when the branch
+    // shows its staff (Branch Settings → Marketplace → Show staff profiles).
+    // Otherwise the app has no therapist step.
+    public static function clientMayChooseTherapist(SpaBranch $branch): bool
+    {
+        return $branch->displaySettings()['show_therapist_profiles'];
     }
 
     // Drops cached policies — after the rules change within one request/test.
@@ -94,14 +106,8 @@ class BookingPolicy
             };
         }
 
-        // The refund share of the tier in force here. The tiers' percentages
-        // are company-wide (Business Defaults → Refund by cancellation
-        // policy); only which tier applies can differ per branch.
-        if (! in_array($policy['cancellation_policy_tier'], self::TIERS, true)) {
-            $policy['cancellation_policy_tier'] = SpaBusinessSetting::DEFAULTS['booking_defaults']['cancellation_policy_tier'];
-        }
-        $tiers = $defaults['cancellation_tiers'] ?? SpaBusinessSetting::DEFAULTS['booking_defaults']['cancellation_tiers'];
-        $policy['refund_percent'] = min(100, max(0, (int) ($tiers[$policy['cancellation_policy_tier']] ?? 0)));
+        $policy['max_bookings_per_client_per_day'] = max(1, $policy['max_bookings_per_client_per_day']);
+        $policy['booking_lead_time_minutes'] = self::LEAD_TIME_MINUTES;
 
         return $policy;
     }
@@ -113,14 +119,39 @@ class BookingPolicy
         return Carbon::now('Asia/Manila');
     }
 
+    // What the client is told about their missed bookings under the branch's
+    // no-show policy ("Pause their booking in the app after N"): how many they
+    // have missed since they last came in, whether booking is paused, and the
+    // words for it. Nothing to say unless the policy pauses booking.
+    //
+    // @return array{missed: int, limit: ?int, blocked: bool, message: ?string}
+    public static function missedBookingsNotice(array $policy, int $missed, string $spa = ''): array
+    {
+        $limit = (int) ($policy['no_show_suspend_after'] ?? 0);
+        if (($policy['no_show_policy'] ?? 'warn') !== 'suspend' || $limit <= 0) {
+            return ['missed' => $missed, 'limit' => null, 'blocked' => false, 'message' => null];
+        }
+
+        $who = $spa !== '' ? $spa : 'the spa';
+        $blocked = $missed >= $limit;
+        $times = $missed === 1 ? '1 booking' : "{$missed} bookings";
+
+        return [
+            'missed' => $missed,
+            'limit' => $limit,
+            'blocked' => $blocked,
+            'message' => match (true) {
+                $blocked => "Booking in the app is paused: you missed {$times} without a visit in between. Please contact {$who} to book.",
+                $missed > 0 => "You missed {$times}. Missing {$limit} without a visit in between pauses booking in the app; coming to your next visit starts the count again.",
+                default => null,
+            },
+        ];
+    }
+
     // Why a client may not book this start time under $policy, or null.
     public static function startTimeProblem(array $policy, Carbon $startsAt): ?string
     {
         $now = self::now();
-
-        if (! $policy['online_booking_enabled']) {
-            return "This spa isn't taking online bookings right now. Please call or walk in.";
-        }
 
         if ($startsAt->lt($now)) {
             return 'Please choose a future time.';
@@ -128,7 +159,7 @@ class BookingPolicy
 
         $lead = $policy['booking_lead_time_minutes'];
         if ($lead > 0 && $startsAt->lt($now->copy()->addMinutes($lead))) {
-            return "Please book at least {$lead} minutes ahead.";
+            return 'Please book at least ' . self::formatMinutes($lead) . ' ahead.';
         }
 
         $days = $policy['max_advance_booking_days'];
@@ -174,13 +205,25 @@ class BookingPolicy
     // Why a client may not cancel/reschedule now (null = allowed). Only the
     // policy side — ClientAppointmentResource::clientCanChange still owns
     // "is this booking still just a reservation".
-    public static function changeProblem(array $policy, Carbon $startsAt, string $action): ?string
+    // $reschedules: how many times the client has already moved this booking.
+    public static function changeProblem(array $policy, Carbon $startsAt, string $action, int $reschedules = 0): ?string
     {
         $allowed = $action === 'cancel' ? $policy['allow_cancellation'] : $policy['allow_reschedule'];
         if (! $allowed) {
             return $action === 'cancel'
                 ? "This spa doesn't allow cancelling from the app. Please contact the spa."
                 : "This spa doesn't allow rescheduling from the app. Please contact the spa.";
+        }
+
+        if ($action !== 'cancel') {
+            $limit = (int) ($policy['max_reschedules_per_booking'] ?? 0);
+            if ($limit <= 0) {
+                return "This spa doesn't allow rescheduling from the app. Please contact the spa.";
+            }
+            if ($reschedules >= $limit) {
+                return "You've already moved this booking {$reschedules} " . ($reschedules === 1 ? 'time' : 'times')
+                    . ", the most this spa allows. Please contact the spa.";
+            }
         }
 
         $window = $policy['cancellation_window_hours'];

@@ -109,7 +109,7 @@ class ServiceExtensionService
                     // The rules this choice breaks (it then needs an override).
                     'policy' => $policy ? array_column(FrontDeskPolicy::extension($policy, $already, $option['extra_minutes']), 'message') : [],
                     'warnings' => array_values(array_unique(array_map(function (array $clash) use ($staff, $rooms) {
-                        $who = $clash['kind'] === 'therapist' ? ($staff[$clash['id']] ?? 'The staff member') : ($rooms[$clash['id']] ?? 'The room');
+                        $who = $clash['kind'] === 'therapist' ? ($staff[$clash['id']] ?? 'The staff member') : ($rooms[$clash['id']] ?? 'The facility');
                         $at = Carbon::today()->addMinutes($clash['start'])->format('g:i A');
 
                         return match (true) {
@@ -172,9 +172,7 @@ class ServiceExtensionService
                 return $overrides;
             }
 
-            $staff = $user->staff;
-            $by = ($staff ? trim("{$staff->first_name} {$staff->last_name}") : '')
-                ?: (trim("{$user->first_name} {$user->last_name}") ?: 'the front desk');
+            $by = $user->displayName();
             $price = (float) ($offered->custom_price ?? $target->price);
             $quantity = max(1, (int) $service->quantity);
 

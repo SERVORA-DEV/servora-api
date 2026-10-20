@@ -48,7 +48,37 @@ class ClientAppointmentResource extends JsonResource
 
         $startsAt = Carbon::parse($appointment->appointment_date->format('Y-m-d') . ' ' . $appointment->appointment_time);
 
-        return BookingPolicy::changeProblem(BookingPolicy::for($branch), $startsAt, $action);
+        return BookingPolicy::changeProblem(
+            BookingPolicy::for($branch), $startsAt, $action,
+            Appointment::countsReschedules() ? (int) $appointment->client_reschedule_count : 0,
+        );
+    }
+
+    private function bookedVoucher(): ?array
+    {
+        if (! Appointment::holdsVouchers() || ! $this->client_voucher_id) {
+            return null;
+        }
+        $voucher = $this->voucher;
+        $program = $voucher?->dealProgram();
+
+        return $program ? [
+            'uuid' => $voucher->uuid,
+            'name' => $program->name,
+            'deal' => app(\App\Service\Business\CustomerProgramService::class)->dealText($program),
+        ] : null;
+    }
+
+    /** @return array{reschedules_used: ?int, reschedules_left: ?int} */
+    private function rescheduleAllowance(): array
+    {
+        if (! Appointment::countsReschedules() || ! $this->branch) {
+            return ['reschedules_used' => null, 'reschedules_left' => null];
+        }
+        $used = (int) $this->client_reschedule_count;
+        $limit = (int) (BookingPolicy::for($this->branch)['max_reschedules_per_booking'] ?? 0);
+
+        return ['reschedules_used' => $used, 'reschedules_left' => max(0, $limit - $used)];
     }
 
     public function toArray(Request $request): array
@@ -166,6 +196,12 @@ class ClientAppointmentResource extends JsonResource
             'cancel_blocked_reason' => $this->status === Appointment::STATUS_SCHEDULED ? $cancelProblem : null,
             'reschedule_blocked_reason' => $this->status === Appointment::STATUS_SCHEDULED ? $rescheduleProblem : null,
             'can_review' => $this->status === Appointment::STATUS_COMPLETED && ! $this->review,
+            // The limit on moving this booking in the app: how many times it
+            // has been, and how many are left (null: no count yet).
+            ...$this->rescheduleAllowance(),
+            // The voucher booked with (held for this booking, put on the bill
+            // when it is made); null for none.
+            'voucher' => $this->bookedVoucher(),
 
             'created_at' => optional($this->created_at)->toIso8601String(),
         ];

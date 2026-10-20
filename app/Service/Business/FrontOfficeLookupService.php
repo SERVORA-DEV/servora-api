@@ -253,20 +253,17 @@ class FrontOfficeLookupService
             return response()->json(['message' => 'No branch found for this account.'], 422);
         }
 
-        // walk_in_enabled rides along so the New Appointment modal can hide
-        // the Walk-In option when the branch has walk-ins switched off.
         $branch = SpaBranch::find($branchId);
 
         return BranchScheduleResource::collection($this->branchScheduleRepository->allForBranch($branchId))
             ->additional([
-                'walk_in_enabled' => $branch ? BookingPolicy::for($branch)['walk_in_enabled'] : true,
                 // The owner's (or this branch's) rules the desk is held to,
                 // so the screens can say so before asking — the API decides
                 // (App\Support\FrontDeskPolicy, PolicyGate).
                 'policy' => $branch ? array_intersect_key(BookingPolicy::for($branch), array_flip([
-                    'reservation_enabled', 'booking_lead_time_minutes', 'max_advance_booking_days',
+                    'booking_lead_time_minutes', 'max_advance_booking_days',
                     'max_services_per_booking', 'max_service_minutes_per_booking', 'cancellation_window_hours',
-                    'queue_enabled', 'max_queue_size', 'walk_ins_first_priority', 'estimated_wait_display',
+                    'queue_enabled', 'max_queue_size', 'walk_ins_first_priority',
                     'allow_service_extension', 'no_show_policy', 'no_show_suspend_after',
                 ])) + ['can_override' => app(PolicyGate::class)->mayOverride($user)] : null,
                 // For the modal's Home service option: whether it's offered,

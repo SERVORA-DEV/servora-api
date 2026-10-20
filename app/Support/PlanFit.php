@@ -10,8 +10,9 @@ namespace App\Support;
 //   $branches  [['id' => 1, 'name' => 'Main', 'upcoming' => 3], …]
 //              `upcoming`: appointments still booked on or after the day the
 //              plan changes. A branch can't be put on hold over them.
-//   $accounts  [['id' => 10, 'branch_id' => 1, 'name' => 'Ana'], …]
-//              staff logins (manager / front desk).
+//   $accounts  [['id' => 10, 'branch_ids' => [1, 2], 'name' => 'Ana'], …]
+//              staff logins (manager / front desk) and the branches each
+//              works at (a lone `branch_id` is read as one branch).
 //
 // Only what is NOT already on hold is passed in.
 final class PlanFit
@@ -60,8 +61,10 @@ final class PlanFit
             return ['One of the staff logins chosen isn\'t one of yours, or is already on hold.'];
         }
         foreach ($keepAccountIds as $id) {
-            if (! in_array($byId[$id]['branch_id'], $keepBranchIds, true)) {
-                $problems[] = "{$byId[$id]['name']} works at a branch that is going on hold, so their login can't be kept.";
+            // Kept while at least one branch they work at is.
+            $theirs = $byId[$id]['branch_ids'] ?? [$byId[$id]['branch_id'] ?? null];
+            if (! array_intersect($theirs, $keepBranchIds)) {
+                $problems[] = "{$byId[$id]['name']} works only at " . (count($theirs) > 1 ? 'branches that are' : 'a branch that is') . " going on hold, so their login can't be kept.";
             }
         }
         if (self::over($maxAccounts, count($keepAccountIds))) {

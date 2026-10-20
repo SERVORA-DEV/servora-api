@@ -146,7 +146,13 @@ class AttendanceService
             return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
-        $roster = $this->attendanceRepository->rosterForDate($this->branchIds($user), $date);
+        // Marking everyone at once is for one branch: the owner picks it first.
+        $branchIds = $this->branchIds($user);
+        if (count($branchIds) > 1) {
+            return response()->json(['message' => 'Pick a branch first, then mark everyone there present.'], 422);
+        }
+
+        $roster = $this->attendanceRepository->rosterForDate($branchIds, $date);
 
         foreach ($roster as $staff) {
             if ($staff->attendance->isEmpty()) {
@@ -229,8 +235,9 @@ class AttendanceService
                 'staff_uuid' => $a->staff?->uuid,
                 'staff_name' => trim("{$a->staff?->first_name} {$a->staff?->last_name}"),
                 'role' => $a->staff?->role,
-                'branch_uuid' => $a->staff?->branch?->uuid,
-                'branch_name' => $a->staff?->branch?->branch_name,
+                // Where it was recorded, not where they are now.
+                'branch_uuid' => $a->ownBranch()?->uuid,
+                'branch_name' => $a->ownBranch()?->branch_name,
                 'attendance_date' => $a->attendance_date->format('Y-m-d'),
                 'status' => $a->status,
                 'check_in_at' => $a->check_in_at?->format('H:i'),
@@ -350,11 +357,12 @@ class AttendanceService
     /**
      * Every active staff member of these branches on every day of the range,
      * with what AttendanceStatusCalculator makes of it. The one place the
-     * manager's roster and the owner's report are built from.
+     * manager's roster and the owner's report are built from — and the late
+     * and absent days the Earnings penalties count (AttendancePenaltyReader).
      *
      * @return array{0: \Illuminate\Support\Collection<int, Staff>, 1: \Illuminate\Support\Collection<int, array>}
      */
-    private function rosterEntries(\App\Models\SpaBusiness $business, array $branchIds, string $dateFrom, string $dateTo): array
+    public function rosterEntries(\App\Models\SpaBusiness $business, array $branchIds, string $dateFrom, string $dateTo): array
     {
         // Only read below (the late-grace and overtime policies), so the
         // cached copy of the settings does instead of another query.

@@ -15,7 +15,7 @@ class CatalogRequestController extends Controller
 
     public function index(Request $request)
     {
-        return $this->catalogRequestService->list($request->user());
+        return $this->catalogRequestService->list($request->user(), $request->query('scope'));
     }
 
     public function store(CatalogRequestRequest $request)

@@ -40,6 +40,11 @@ class ClientBookingController extends Controller
         return $this->bookings->reschedule($request->user(), $uuid, $request->validated());
     }
 
+    public function bookingStatus(Request $request, string $branchUuid)
+    {
+        return $this->bookings->bookingStatus($request->user(), $branchUuid);
+    }
+
     public function queue(Request $request, string $uuid)
     {
         return $this->bookings->queue($request->user(), $uuid);

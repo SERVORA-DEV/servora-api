@@ -126,6 +126,24 @@ class User extends Authenticatable implements MustVerifyEmail
     // for manager/front_officer accounts (see AccountService). Which branch
     // this account operates at is reached transitively via ->staff->branch
     // (or eager-load 'staff.branch') rather than a column on this table.
+    /** The branches this staff login works at, and at which level (App\Support\AccountScope). */
+    public function accountBranches()
+    {
+        return $this->hasMany(AccountBranch::class);
+    }
+
+    /** "Who did it", in a sentence: their name, else their username, else their email. */
+    public function displayName(): string
+    {
+        $name = trim(($this->first_name ?? '') . ' ' . ($this->last_name ?? ''));
+        if ($name === '' && ! AccountBranch::ready()) {
+            // Before logins had names of their own, they used their employee's.
+            $name = trim(($this->staff?->first_name ?? '') . ' ' . ($this->staff?->last_name ?? ''));
+        }
+
+        return $name ?: ($this->username ?: ($this->email ?: 'A staff member'));
+    }
+
     public function staff()
     {
         return $this->hasOne(Staff::class);

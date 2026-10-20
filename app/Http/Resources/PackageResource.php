@@ -42,7 +42,10 @@ class PackageResource extends JsonResource
                     'service_type' => \App\Support\ServiceKind::of($item->theService()->service_type),
                     'duration_minutes' => $item->minutes(),
                     'quantity' => (int) $item->quantity,
-                    'unit_price' => (float) ($item->guideVariant()?->price ?? 0),
+                    // What one is worth in this package: the owner's price, else the menu's.
+                    'unit_price' => $item->unitPrice(),
+                    // True when the owner set it (false: it is the menu price).
+                    'price_set' => \App\Models\Package::hasLinePrice() && $item->price !== null,
                     'addons' => $this->resource->includedAddons()
                         ->where('service_id', $item->theService()->id)
                         ->values()
@@ -56,7 +59,7 @@ class PackageResource extends JsonResource
             'original_price' => $this->whenLoaded('packageServiceItems', fn () => \App\Support\PackagePlan::estimate(
                 $this->packageServiceItems
                     ->filter(fn ($item) => $item->theService() !== null)
-                    ->map(fn ($item) => ['price' => $item->guideVariant()?->price, 'quantity' => $item->quantity])
+                    ->map(fn ($item) => ['price' => $item->unitPrice(), 'quantity' => $item->quantity])
                     ->all(),
                 $this->resource->includedAddons()->map(fn ($row) => $row->addon->price)->all(),
             )),

@@ -4,6 +4,9 @@ namespace App\Http\Resources;
 
 use App\Services\ImageUploadService;
 use App\Support\BranchHoursCalculator;
+use App\Models\SpaBusinessSetting;
+use App\Support\ReminderPolicy;
+use App\Support\SocialLinks;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -31,15 +34,40 @@ class BranchDetailResource extends JsonResource
         parent::__construct($branch);
     }
 
+    /** Whether the client is reminded of a booking here, and how many hours before (ReminderPolicy). */
+    private function clientReminder(): array
+    {
+        $policy = ReminderPolicy::for($this->resource);
+
+        return ['enabled' => ReminderPolicy::remindsClients($policy), 'hours' => $policy['reminder_timing']];
+    }
+
+    /** @return array{methods: list<array{key: string, label: string}>, gcash_number: ?string, paymaya_number: ?string} */
+    private function acceptedPayments(): array
+    {
+        $settings = \App\Support\AppCache::businessSettings($this->spa_business_id)?->section('payments')
+            ?? SpaBusinessSetting::DEFAULTS['payments'];
+
+        $methods = [];
+        foreach (['cash' => 'Cash', 'gcash' => 'GCash', 'paymaya' => 'Maya', 'card' => 'Card', 'bank_transfer' => 'Bank transfer'] as $key => $label) {
+            if (! empty($settings["accept_{$key}"])) {
+                $methods[] = ['key' => $key, 'label' => $label];
+            }
+        }
+        $number = fn (string $key) => ! empty($settings["accept_{$key}"]) && is_string($settings["{$key}_number"] ?? null) && trim($settings["{$key}_number"]) !== ''
+            ? trim($settings["{$key}_number"])
+            : null;
+
+        return ['methods' => $methods, 'gcash_number' => $number('gcash'), 'paymaya_number' => $number('paymaya')];
+    }
+
     public function toArray(Request $request): array
     {
-        // Branch Settings → Marketplace. Hidden prices go out as null (the app
-        // shows "Price at the spa"; the booking is still priced server-side),
-        // and without the rating badge the rating isn't shared.
+        // Branch Settings → Marketplace: without the rating badge the rating
+        // isn't shared. Prices are always shown.
         $display = $this->resource->displaySettings();
-        $showPrices = (bool) $display['show_prices'];
         $showRating = $display['show_reviews'] && $display['show_rating_badge'];
-        $price = fn ($value) => $showPrices ? (float) $value : null;
+        $price = fn ($value) => (float) $value;
 
         return [
             'uuid' => $this->uuid,
@@ -51,7 +79,7 @@ class BranchDetailResource extends JsonResource
             // Set by ReviewRepository::attachRatings() in SpaBranchService::publicShow.
             'rating_avg' => $showRating ? $this->rating_avg : null,
             'rating_count' => $showRating ? (int) ($this->rating_count ?? 0) : 0,
-            'prices_hidden' => ! $showPrices,
+            'prices_hidden' => false,
 
             'business' => [
                 'uuid' => $this->business->uuid,
@@ -95,6 +123,10 @@ class BranchDetailResource extends JsonResource
                 'facebook_url' => $this->facebook_url,
                 'instagram_handle' => $this->instagram_handle,
                 'website_url' => $this->website_url,
+                // What the app opens: the branch's own link, else the
+                // company's (SocialLinks). Each: url, label, source
+                // ('branch' | 'company'); a kind with no link is absent.
+                'links' => (object) SocialLinks::forBranch($this->resource),
             ],
 
             // One entry per parent Service, with its bookable durations nested
@@ -115,6 +147,8 @@ class BranchDetailResource extends JsonResource
                     return [
                         'service_uuid' => $service->uuid,
                         'name' => $service->name,
+                        // For vouchers that are for a category of service.
+                        'category' => $service->category,
                         'description' => $service->description,
                         // Bookable as a home visit (the owner's tick).
                         'home_service_available' => (bool) $service->home_service_available,
@@ -149,6 +183,14 @@ class BranchDetailResource extends JsonResource
                     'name' => $bp->package->name,
                     'duration_minutes' => $bp->package->totalMinutes(),
                     'price' => $price($bp->custom_price ?? $bp->package->default_price),
+                    // Each service in it, with what it is worth in the package:
+                    // a voucher for that service takes that much off.
+                    'services' => $items->map(fn ($i) => [
+                        'service_uuid' => $i->theService()->uuid,
+                        'name' => $i->theService()->name,
+                        'category' => $i->theService()->category,
+                        'price' => $i->unitPrice(),
+                    ])->values(),
                     'included_services' => $items->map(fn ($i) => $i->theService()->name)
                         ->merge($bp->package->includedAddons()->map(fn ($row) => $row->addon->name))
                         ->values(),
@@ -160,7 +202,11 @@ class BranchDetailResource extends JsonResource
 
             // The owner's booking rules for this branch (BookingPolicy) — the
             // app uses them for its calendar window and service limit.
-            'booking_policy' => BookingPolicy::for($this->resource),
+            'booking_policy' => BookingPolicy::for($this->resource) + ['client_reminder' => $this->clientReminder()],
+
+            // What this spa takes at the counter (Business Settings →
+            // Payments), with the wallet numbers of the accepted ones.
+            'payments' => $this->acceptedPayments(),
 
             // Whether this branch sends therapists out, the flat fee and how
             // far (km from the branch's pin) — HomeServiceRules.

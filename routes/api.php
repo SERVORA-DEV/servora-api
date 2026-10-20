@@ -162,6 +162,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('appointments/{uuid}/queue', [ClientBookingController::class, 'queue'])->whereUuid('uuid');
             Route::post('appointments/{uuid}/review', [ClientBookingController::class, 'review'])->whereUuid('uuid');
             Route::get('reviews', [ClientBookingController::class, 'reviews']);
+            Route::get('spas/{branchUuid}/booking-status', [ClientBookingController::class, 'bookingStatus'])->whereUuid('branchUuid');
 
             Route::get('favorites', [ClientAccountController::class, 'favorites']);
             Route::put('favorites/{branchUuid}', [ClientAccountController::class, 'addFavorite'])->whereUuid('branchUuid');
@@ -301,7 +302,10 @@ Route::middleware('auth:sanctum')->group(function () {
     // frontend and SpaBusinessRepository::findForUser, which resolves
     // "their" business the same way for both), but not billing, account
     // grants, or branch editing — those stay owner-only.
+    // Every change made here is written to the business's Audit Log
+    // (RecordBusinessActivity).
     Route::prefix('business')
+        ->middleware('activity')
         ->group(function () {
             // Deliberately outside verified.business / subscribed.business: the
             // notices an owner most needs to see (verification decided, plan
@@ -311,13 +315,13 @@ Route::middleware('auth:sanctum')->group(function () {
                 // The signed-in staff member's OWN feed — same
                 // NotificationService as the admin's /system/notifications,
                 // scoped to the caller's user_id.
-                Route::get('notifications', [BusinessNotificationController::class, 'index']);
+                Route::get('notifications', [BusinessNotificationController::class, 'index'])->middleware('permission:notification_view');
                 Route::post('notifications/read-all', [BusinessNotificationController::class, 'markAllRead']);
                 Route::post('notifications/{id}/read', [BusinessNotificationController::class, 'markRead'])->whereNumber('id');
                 // Deletes every notification the caller has already read.
                 Route::delete('notifications/read', [BusinessNotificationController::class, 'clearRead']);
                 Route::delete('notifications/{id}', [BusinessNotificationController::class, 'destroy'])->whereNumber('id');
-                Route::get('notifications/{id}', [BusinessNotificationController::class, 'show'])->whereNumber('id');
+                Route::get('notifications/{id}', [BusinessNotificationController::class, 'show'])->middleware('permission:notification_view')->whereNumber('id');
 
                 // The signed-in account's OWN password (Profile → Security).
                 // Same SecurityService as the admin's /system/security: the
@@ -342,40 +346,58 @@ Route::middleware('auth:sanctum')->group(function () {
             // EnsureBusinessSubscribed), so a manager passes through
             // unaffected here exactly like today.
             Route::middleware(['role:business_owner,manager', 'verified.business', 'subscribed.business'])->group(function () {
-                Route::apiResource('staff', StaffController::class);
+                // Each staff action needs its own permission: the owner turns
+                // them on and off per account (EnsurePermission).
+                Route::apiResource('staff', StaffController::class)->only(['index', 'show'])->middleware('permission:staff_view');
+                Route::apiResource('staff', StaffController::class)->only(['store'])->middleware('permission:staff_create');
+                Route::apiResource('staff', StaffController::class)->only(['update'])->middleware('permission:staff_update');
+                Route::apiResource('staff', StaffController::class)->only(['destroy'])->middleware('permission:staff_delete');
+
+                // Business → Audit Log: the owner's whole business, or the
+                // branches a manager runs (BusinessAuditLogService).
+                Route::get('audit-log', [\App\Http\Controllers\Business\BusinessAuditLogController::class, 'index'])->middleware('permission:audit_log_view');
+                // The commission plans a staff member can be given: read by the
+                // owner and managers, managed by the owner (below).
+                Route::get('commission-plan', [\App\Http\Controllers\Business\CommissionPlanController::class, 'index']);
 
                 // Mutation + the single-day operational roster stay
                 // manager-only — the Owner gets a separate read-only
                 // analytics report below (attendance/report) instead. Real
                 // enforcement, not just a hidden UI, per the Owner
                 // Attendance Analytics feature.
-                Route::middleware('role:manager')->group(function () {
-                    Route::apiResource('attendance', AttendanceController::class)->only(['index', 'store', 'destroy']);
-                    Route::post('attendance/bulk-mark-present', [AttendanceController::class, 'bulkMarkPresent']);
-                    Route::get('attendance/roster', [AttendanceController::class, 'roster']);
+                // The owner runs attendance too (everything a manager does).
+                Route::middleware('role:business_owner,manager')->group(function () {
+                    Route::apiResource('attendance', AttendanceController::class)->only(['index'])->middleware('permission:attendance_view');
+                    Route::apiResource('attendance', AttendanceController::class)->only(['store'])->middleware('permission:attendance_create');
+                    Route::apiResource('attendance', AttendanceController::class)->only(['destroy'])->middleware('permission:attendance_delete');
+                    Route::post('attendance/bulk-mark-present', [AttendanceController::class, 'bulkMarkPresent'])->middleware('permission:attendance_create');
+                    Route::get('attendance/roster', [AttendanceController::class, 'roster'])->middleware('permission:attendance_view');
                 });
-                Route::get('attendance/report', [AttendanceController::class, 'report']);
+                Route::get('attendance/report', [AttendanceController::class, 'report'])->middleware('permission:attendance_view');
                 // attendance/{uuid} is registered after every literal
                 // attendance/... segment above (roster, report,
                 // bulk-mark-present) so Laravel matches those first instead
                 // of swallowing them as a {uuid}.
-                Route::middleware('role:manager')->group(function () {
-                    Route::get('attendance/{uuid}', [AttendanceController::class, 'show']);
+                Route::middleware('role:business_owner,manager')->group(function () {
+                    Route::get('attendance/{uuid}', [AttendanceController::class, 'show'])->middleware('permission:attendance_view');
                     Route::patch('attendance/{uuid}', [AttendanceController::class, 'update'])->middleware('permission:attendance_update');
                 });
 
-                Route::apiResource('branch', SpaBranchController::class)->only(['index', 'show']);
-                Route::apiResource('facility', FacilityController::class);
-                Route::get('dashboard', [DashboardController::class, 'index']);
+                Route::apiResource('branch', SpaBranchController::class)->only(['index', 'show'])->middleware('permission:branch_view');
+                Route::apiResource('facility', FacilityController::class)->only(['index', 'show'])->middleware('permission:facility_view');
+                Route::apiResource('facility', FacilityController::class)->only(['store'])->middleware('permission:facility_create');
+                Route::apiResource('facility', FacilityController::class)->only(['update'])->middleware('permission:facility_update');
+                Route::apiResource('facility', FacilityController::class)->only(['destroy'])->middleware('permission:facility_delete');
+                Route::get('dashboard', [DashboardController::class, 'index'])->middleware('permission:dashboard_view');
 
                 // The catalog is shared by every branch, so a manager can only
                 // read it here — creating, editing and retiring entries stay
                 // owner-only below. What a manager controls is their own
                 // branch's availability and price (the /branches routes next).
-                Route::apiResource('service', ServiceController::class)->only(['index', 'show']);
-                Route::apiResource('package', PackageController::class)->only(['index', 'show']);
+                Route::apiResource('service', ServiceController::class)->only(['index', 'show'])->middleware('permission:service_view');
+                Route::apiResource('package', PackageController::class)->only(['index', 'show'])->middleware('permission:package_view');
                 // Add-ons: extras put on a service during the visit.
-                Route::apiResource('addon', AddonController::class)->only(['index', 'show']);
+                Route::apiResource('addon', AddonController::class)->only(['index', 'show'])->middleware('permission:service_view');
 
                 // Per-branch availability toggle (branch_services/branch_packages) —
                 // scoped server-side to the caller's own branches (manager can only
@@ -383,21 +405,21 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Service-side is scoped to one variant (a specific duration/price
                 // option), not the whole service, since price/availability live
                 // per variant now.
-                Route::patch('service/variant/{uuid}/branches', [ServiceController::class, 'updateVariantBranches']);
-                Route::patch('package/{uuid}/branches', [PackageController::class, 'updateBranches'])->middleware('plan.feature:package_access');
+                Route::patch('service/variant/{uuid}/branches', [ServiceController::class, 'updateVariantBranches'])->middleware('permission:branch_update');
+                Route::patch('package/{uuid}/branches', [PackageController::class, 'updateBranches'])->middleware(['permission:branch_update', 'plan.feature:package_access']);
                 // The same, for one branch at a time: every service and
                 // package change saved in one request (the picker in Branch
                 // Settings → Services & Packages).
-                Route::patch('branch/{uuid}/offerings', [BranchOfferingController::class, 'update']);
+                Route::patch('branch/{uuid}/offerings', [BranchOfferingController::class, 'update'])->middleware('permission:branch_update');
 
                 // A manager asking the owner for a service or package the
                 // catalog doesn't have. Only a manager asks; only the owner
                 // answers (both checked in CatalogRequestService).
-                Route::get('catalog-requests', [CatalogRequestController::class, 'index']);
-                Route::post('catalog-requests', [CatalogRequestController::class, 'store'])->middleware('throttle:20,1');
-                Route::delete('catalog-requests/{uuid}', [CatalogRequestController::class, 'destroy'])->whereUuid('uuid');
-                Route::post('catalog-requests/{uuid}/added', [CatalogRequestController::class, 'added'])->whereUuid('uuid');
-                Route::post('catalog-requests/{uuid}/decline', [CatalogRequestController::class, 'decline'])->whereUuid('uuid');
+                Route::get('catalog-requests', [CatalogRequestController::class, 'index'])->middleware('permission:service_view');
+                Route::post('catalog-requests', [CatalogRequestController::class, 'store'])->middleware(['permission:service_view', 'throttle:20,1']);
+                Route::delete('catalog-requests/{uuid}', [CatalogRequestController::class, 'destroy'])->middleware('permission:service_view')->whereUuid('uuid');
+                Route::post('catalog-requests/{uuid}/added', [CatalogRequestController::class, 'added'])->middleware(['role:business_owner', 'permission:service_create'])->whereUuid('uuid');
+                Route::post('catalog-requests/{uuid}/decline', [CatalogRequestController::class, 'decline'])->middleware(['role:business_owner', 'permission:service_create'])->whereUuid('uuid');
 
                 // A manager's own notification switches: which of the owner's
                 // changes at their branch they are told about.
@@ -412,18 +434,19 @@ Route::middleware('auth:sanctum')->group(function () {
                 // or touch another branch's schedule. Needed for full parity
                 // with the Owner's Marketplace Listing access (its Booking &
                 // Policies quick-edit reads/writes this).
-                Route::apiResource('branch-schedule', BranchScheduleController::class);
+                Route::apiResource('branch-schedule', BranchScheduleController::class)->only(['index', 'show'])->middleware('permission:branch_view');
+                Route::apiResource('branch-schedule', BranchScheduleController::class)->only(['store', 'update', 'destroy'])->middleware('permission:branch_update');
                 // The whole week at once — what the hours editors save with.
-                Route::put('branch/{uuid}/schedule', [BranchScheduleController::class, 'saveWeek']);
+                Route::put('branch/{uuid}/schedule', [BranchScheduleController::class, 'saveWeek'])->middleware('permission:branch_update');
 
                 // Temporary closures outside the weekly hours (a holiday,
                 // repairs). The owner for any branch, a manager for their
                 // own — scoped in BranchClosureService like the hours above.
-                Route::get('branch/{uuid}/closures', [BranchClosureController::class, 'index']);
-                Route::get('branch/{uuid}/closures/conflicts', [BranchClosureController::class, 'conflicts']);
-                Route::post('branch/{uuid}/closures', [BranchClosureController::class, 'store']);
-                Route::patch('branch/{uuid}/closures/{closure}', [BranchClosureController::class, 'update'])->whereUuid('closure');
-                Route::delete('branch/{uuid}/closures/{closure}', [BranchClosureController::class, 'destroy'])->whereUuid('closure');
+                Route::get('branch/{uuid}/closures', [BranchClosureController::class, 'index'])->middleware('permission:branch_view');
+                Route::get('branch/{uuid}/closures/conflicts', [BranchClosureController::class, 'conflicts'])->middleware('permission:branch_view');
+                Route::post('branch/{uuid}/closures', [BranchClosureController::class, 'store'])->middleware('permission:branch_update');
+                Route::patch('branch/{uuid}/closures/{closure}', [BranchClosureController::class, 'update'])->middleware('permission:branch_update')->whereUuid('closure');
+                Route::delete('branch/{uuid}/closures/{closure}', [BranchClosureController::class, 'destroy'])->middleware('permission:branch_update')->whereUuid('closure');
 
                 // Staff service qualifications (staff_services) — which
                 // services a therapist is qualified to perform, consumed by
@@ -441,6 +464,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 // commission line (the owner's and manager's employee page).
                 Route::get('staff/{uuid}/earnings', [StaffController::class, 'earnings'])
                     ->middleware(['role:business_owner,manager', 'permission:staff_view'])->whereUuid('uuid');
+                // Every staff member's earnings for a pay period, less
+                // attendance penalties (the Earnings page).
+                Route::get('earnings', [\App\Http\Controllers\Business\StaffEarningsController::class, 'index'])
+                    ->middleware(['role:business_owner,manager', 'permission:commission_view']);
                 Route::patch('staff/{uuid}/services', [StaffController::class, 'updateServices'])->middleware('permission:staff_update');
 
                 // A staff member's current weekly schedule (working hours,
@@ -457,9 +484,21 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Policies → "Owner approval for schedule changes"). Approve
                 // and reject are owner-only (checked in StaffScheduleService).
                 Route::get('schedule-requests', [StaffScheduleController::class, 'requests'])->middleware('permission:staff_view');
-                Route::post('schedule-requests/{uuid}/approve', [StaffScheduleController::class, 'approveRequest'])->whereUuid('uuid');
-                Route::post('schedule-requests/{uuid}/reject', [StaffScheduleController::class, 'rejectRequest'])->whereUuid('uuid');
+                Route::post('schedule-requests/{uuid}/approve', [StaffScheduleController::class, 'approveRequest'])->middleware(['role:business_owner', 'permission:staff_update'])->whereUuid('uuid');
+                Route::post('schedule-requests/{uuid}/reject', [StaffScheduleController::class, 'rejectRequest'])->middleware(['role:business_owner', 'permission:staff_update'])->whereUuid('uuid');
                 Route::delete('schedule-requests/{uuid}', [StaffScheduleController::class, 'withdrawRequest'])->middleware('permission:staff_update')->whereUuid('uuid');
+
+                // Moving a staff member to another branch: the owner's applies
+                // at once; a manager's is a request waiting here for the owner
+                // (approve and decline are owner-only, checked in
+                // StaffTransferService). Asked for by saving the employee's
+                // Branch. branch-options lists every branch of the business,
+                // which a manager's own branch list does not.
+                Route::get('branch-options', [\App\Http\Controllers\Business\StaffTransferController::class, 'branchOptions'])->middleware('permission:staff_view');
+                Route::get('transfer-requests', [\App\Http\Controllers\Business\StaffTransferController::class, 'index'])->middleware('permission:staff_view');
+                Route::post('transfer-requests/{uuid}/approve', [\App\Http\Controllers\Business\StaffTransferController::class, 'approve'])->middleware(['role:business_owner', 'permission:staff_update'])->whereUuid('uuid');
+                Route::post('transfer-requests/{uuid}/decline', [\App\Http\Controllers\Business\StaffTransferController::class, 'decline'])->middleware(['role:business_owner', 'permission:staff_update'])->whereUuid('uuid');
+                Route::delete('transfer-requests/{uuid}', [\App\Http\Controllers\Business\StaffTransferController::class, 'withdraw'])->middleware('permission:staff_update')->whereUuid('uuid');
             });
 
             // Day-to-day front-desk operations: appointment creation,
@@ -491,36 +530,36 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('appointment', [AppointmentController::class, 'store'])->middleware('permission:appointment_create');
                 Route::get('appointment/{uuid}', [AppointmentController::class, 'show'])->middleware('permission:appointment_view');
                 Route::post('appointment/{uuid}/checkin', [AppointmentController::class, 'checkIn'])->middleware('permission:appointment_checkin');
-                Route::post('appointment/{uuid}/cancel', [AppointmentController::class, 'cancel']);
-                Route::post('appointment/{uuid}/no-show', [AppointmentController::class, 'markNoShow']);
-                Route::patch('appointment/{uuid}/reschedule', [AppointmentController::class, 'reschedule']);
-                Route::post('appointment/{uuid}/services', [AppointmentController::class, 'addService']);
-                Route::delete('appointment-service/{uuid}', [AppointmentController::class, 'removeService']);
+                Route::post('appointment/{uuid}/cancel', [AppointmentController::class, 'cancel'])->middleware('permission:appointment_cancel');
+                Route::post('appointment/{uuid}/no-show', [AppointmentController::class, 'markNoShow'])->middleware('permission:appointment_cancel');
+                Route::patch('appointment/{uuid}/reschedule', [AppointmentController::class, 'reschedule'])->middleware('permission:appointment_update');
+                Route::post('appointment/{uuid}/services', [AppointmentController::class, 'addService'])->middleware('permission:appointment_update');
+                Route::delete('appointment-service/{uuid}', [AppointmentController::class, 'removeService'])->middleware('permission:appointment_update');
                 // Taking a started or finished service off the visit changes
                 // what is charged: for staff allowed to change a bill.
                 Route::post('appointment-service/{uuid}/void', [AppointmentController::class, 'voidService'])->middleware('permission:billing_update');
-                Route::post('appointment/{uuid}/packages', [AppointmentController::class, 'addPackage'])->middleware('plan.feature:package_access');
-                Route::post('appointment/{uuid}/additional-services', [AppointmentServiceController::class, 'addAdditionalService']);
+                Route::post('appointment/{uuid}/packages', [AppointmentController::class, 'addPackage'])->middleware(['permission:appointment_update', 'plan.feature:package_access']);
+                Route::post('appointment/{uuid}/additional-services', [AppointmentServiceController::class, 'addAdditionalService'])->middleware('permission:appointment_update');
                 Route::post('appointment/{uuid}/billing', [AppointmentController::class, 'proceedToBilling'])->middleware('permission:billing_create');
 
-                Route::get('appointment-service/{uuid}/therapist-options', [AppointmentServiceController::class, 'therapistOptions']);
-                Route::post('appointment-service/{uuid}/assignments', [AppointmentServiceController::class, 'assignTherapist']);
-                Route::delete('assignment/{uuid}', [AppointmentServiceController::class, 'cancelAssignment']);
-                Route::patch('assignment/{uuid}/room', [AppointmentServiceController::class, 'assignRoom']);
+                Route::get('appointment-service/{uuid}/therapist-options', [AppointmentServiceController::class, 'therapistOptions'])->middleware('permission:appointment_view');
+                Route::post('appointment-service/{uuid}/assignments', [AppointmentServiceController::class, 'assignTherapist'])->middleware('permission:appointment_update');
+                Route::delete('assignment/{uuid}', [AppointmentServiceController::class, 'cancelAssignment'])->middleware('permission:appointment_update');
+                Route::patch('assignment/{uuid}/room', [AppointmentServiceController::class, 'assignRoom'])->middleware('permission:appointment_update');
                 // Clears just the room, keeping the therapist on the assignment.
-                Route::delete('assignment/{uuid}/room', [AppointmentServiceController::class, 'clearRoom']);
-                Route::post('appointment-service/{uuid}/start', [AppointmentServiceController::class, 'startService']);
-                Route::post('appointment-service/{uuid}/complete', [AppointmentServiceController::class, 'completeService']);
+                Route::delete('assignment/{uuid}/room', [AppointmentServiceController::class, 'clearRoom'])->middleware('permission:appointment_update');
+                Route::post('appointment-service/{uuid}/start', [AppointmentServiceController::class, 'startService'])->middleware('permission:appointment_complete');
+                Route::post('appointment-service/{uuid}/complete', [AppointmentServiceController::class, 'completeService'])->middleware('permission:appointment_complete');
                 // The client wants longer: a longer length of the same service.
-                Route::get('appointment-service/{uuid}/extend-options', [AppointmentServiceController::class, 'extendOptions']);
-                Route::post('appointment-service/{uuid}/extend', [AppointmentServiceController::class, 'extendService']);
+                Route::get('appointment-service/{uuid}/extend-options', [AppointmentServiceController::class, 'extendOptions'])->middleware('permission:appointment_view');
+                Route::post('appointment-service/{uuid}/extend', [AppointmentServiceController::class, 'extendService'])->middleware('permission:appointment_update');
                 // An add-on on this service, from the ones available for it.
-                Route::post('appointment-service/{uuid}/addons', [AppointmentServiceController::class, 'addAddon']);
+                Route::post('appointment-service/{uuid}/addons', [AppointmentServiceController::class, 'addAddon'])->middleware('permission:appointment_update');
 
                 Route::get('queue', [QueueController::class, 'index'])->middleware('permission:queue_view');
-                Route::post('appointment/{uuid}/queue/call', [AppointmentController::class, 'callQueue']);
-                Route::post('appointment/{uuid}/queue/skip', [AppointmentController::class, 'skipQueue']);
-                Route::post('appointment/{uuid}/queue/recall', [AppointmentController::class, 'recallQueue']);
+                Route::post('appointment/{uuid}/queue/call', [AppointmentController::class, 'callQueue'])->middleware('permission:queue_update');
+                Route::post('appointment/{uuid}/queue/skip', [AppointmentController::class, 'skipQueue'])->middleware('permission:queue_update');
+                Route::post('appointment/{uuid}/queue/recall', [AppointmentController::class, 'recallQueue'])->middleware('permission:queue_update');
 
                 Route::get('billings', [BillingController::class, 'index'])->middleware('permission:billing_view');
                 Route::get('billing/{uuid}', [BillingController::class, 'show'])->middleware('permission:billing_view');
@@ -534,7 +573,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('billing/{uuid}/refund', [BillingController::class, 'refund'])->middleware('permission:payment_refund');
                 Route::post('payment/{uuid}/void', [PaymentController::class, 'void'])->middleware('permission:payment_refund');
 
-                Route::get('frontoffice/dashboard', [FrontOfficeDashboardController::class, 'index']);
+                Route::get('frontoffice/dashboard', [FrontOfficeDashboardController::class, 'index'])->middleware('permission:dashboard_view');
 
                 // Front Desk's narrow attendance surface — today only,
                 // check-in/check-out only (no arbitrary status/date). See
@@ -561,6 +600,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('programs', [CustomerProgramController::class, 'index'])->middleware('permission:reward_view');
                 Route::get('programs/memberships', [CustomerProgramController::class, 'memberships'])->middleware('permission:reward_view');
                 Route::get('client/{uuid}/rewards', [CustomerProgramController::class, 'clientRewards'])->middleware('permission:reward_view');
+                Route::get('client/{uuid}/vouchers', [CustomerProgramController::class, 'clientVouchers'])->middleware('permission:reward_view');
                 // A manager asking the owner for a new voucher, discount or
                 // membership for their branch. Only a manager asks; only the
                 // owner answers (checked again in ProgramRequestService).
@@ -570,11 +610,11 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('program-requests', [ProgramRequestController::class, 'store'])
                         ->middleware(['role:manager', 'permission:reward_view', 'throttle:20,1']);
                     Route::delete('program-requests/{uuid}', [ProgramRequestController::class, 'destroy'])
-                        ->middleware('role:business_owner,manager')->whereUuid('uuid');
+                        ->middleware(['role:business_owner,manager', 'permission:reward_update'])->whereUuid('uuid');
                     Route::post('program-requests/{uuid}/approve', [ProgramRequestController::class, 'approve'])
                         ->middleware(['role:business_owner', 'permission:reward_create'])->whereUuid('uuid');
                     Route::post('program-requests/{uuid}/decline', [ProgramRequestController::class, 'decline'])
-                        ->middleware('role:business_owner')->whereUuid('uuid');
+                        ->middleware(['role:business_owner', 'permission:reward_create'])->whereUuid('uuid');
                 });
                 Route::middleware('plan.feature:reward_access')->group(function () {
                     Route::middleware('role:business_owner')->group(function () {
@@ -592,26 +632,26 @@ Route::middleware('auth:sanctum')->group(function () {
                 });
 
                 Route::get('frontoffice/branches', [FrontOfficeLookupController::class, 'branches']);
-                Route::get('frontoffice/therapists', [FrontOfficeLookupController::class, 'therapists']);
-                Route::get('frontoffice/therapists/{uuid}', [FrontOfficeLookupController::class, 'therapist']);
+                Route::get('frontoffice/therapists', [FrontOfficeLookupController::class, 'therapists'])->middleware('permission:appointment_view');
+                Route::get('frontoffice/therapists/{uuid}', [FrontOfficeLookupController::class, 'therapist'])->middleware('permission:appointment_view');
                 // Today's therapist rotation (who's next in line) — a read of
                 // attendance + completed assignments, no state of its own.
                 // Role-gated only, like its sibling lookups above.
-                Route::get('frontoffice/therapist-queue', [FrontOfficeLookupController::class, 'therapistQueue']);
-                Route::get('frontoffice/facilities', [FrontOfficeLookupController::class, 'facilities']);
-                Route::get('frontoffice/services', [FrontOfficeLookupController::class, 'services']);
-                Route::get('frontoffice/packages', [FrontOfficeLookupController::class, 'packages']);
-                Route::get('frontoffice/addons', [FrontOfficeLookupController::class, 'addons']);
-                Route::get('frontoffice/schedule', [FrontOfficeLookupController::class, 'schedule']);
+                Route::get('frontoffice/therapist-queue', [FrontOfficeLookupController::class, 'therapistQueue'])->middleware('permission:appointment_view');
+                Route::get('frontoffice/facilities', [FrontOfficeLookupController::class, 'facilities'])->middleware('permission:appointment_view');
+                Route::get('frontoffice/services', [FrontOfficeLookupController::class, 'services'])->middleware('permission:appointment_view');
+                Route::get('frontoffice/packages', [FrontOfficeLookupController::class, 'packages'])->middleware('permission:appointment_view');
+                Route::get('frontoffice/addons', [FrontOfficeLookupController::class, 'addons'])->middleware('permission:appointment_view');
+                Route::get('frontoffice/schedule', [FrontOfficeLookupController::class, 'schedule'])->middleware('permission:appointment_view');
                 // The branch's scanner link (staff start a home visit by
                 // scanning the client's QR — see ScannerController).
-                Route::get('frontoffice/scanner-link', [FrontOfficeLookupController::class, 'scannerLink']);
-                Route::post('frontoffice/scanner-link/replace', [FrontOfficeLookupController::class, 'replaceScannerLink']);
-                Route::get('frontoffice/booked-times', [FrontOfficeLookupController::class, 'busyTimes']);
+                Route::get('frontoffice/scanner-link', [FrontOfficeLookupController::class, 'scannerLink'])->middleware('permission:attendance_view');
+                Route::post('frontoffice/scanner-link/replace', [FrontOfficeLookupController::class, 'replaceScannerLink'])->middleware('permission:attendance_checkin');
+                Route::get('frontoffice/booked-times', [FrontOfficeLookupController::class, 'busyTimes'])->middleware('permission:appointment_view');
                 // The New Appointment page: each therapist's free start times
                 // for a day and visit length. Read-only, role-gated like its
                 // sibling lookups above.
-                Route::get('frontoffice/booking-board', [FrontOfficeLookupController::class, 'bookingBoard']);
+                Route::get('frontoffice/booking-board', [FrontOfficeLookupController::class, 'bookingBoard'])->middleware('permission:appointment_view');
             });
 
             // Branch Settings (web /business/settings/branch/*): the owner for
@@ -619,14 +659,14 @@ Route::middleware('auth:sanctum')->group(function () {
             // BranchSettingsService resolves the uuid through the caller's
             // branchesForUser(), so any other branch is a 404.
             Route::middleware('role:business_owner,manager')->group(function () {
-                Route::get('branch/{uuid}/marketplace', [BranchSettingsController::class, 'marketplace']);
-                Route::patch('branch/{uuid}/marketplace', [BranchSettingsController::class, 'updateMarketplace']);
-                Route::post('branch/{uuid}/photos', [BranchSettingsController::class, 'uploadPhotos']);
-                Route::delete('branch/{uuid}/photos/{photo}', [BranchSettingsController::class, 'deletePhoto']);
-                Route::post('branch/{uuid}/photos/{photo}/cover', [BranchSettingsController::class, 'setCover']);
-                Route::patch('branch/{uuid}/photos/order', [BranchSettingsController::class, 'reorderPhotos']);
-                Route::patch('branch/{uuid}/booking-policy', [BranchSettingsController::class, 'updateBookingPolicy']);
-                Route::get('branch/{uuid}/reviews-summary', [BranchSettingsController::class, 'reviewsSummary']);
+                Route::get('branch/{uuid}/marketplace', [BranchSettingsController::class, 'marketplace'])->middleware('permission:branch_view');
+                Route::patch('branch/{uuid}/marketplace', [BranchSettingsController::class, 'updateMarketplace'])->middleware('permission:branch_update');
+                Route::post('branch/{uuid}/photos', [BranchSettingsController::class, 'uploadPhotos'])->middleware('permission:branch_update');
+                Route::delete('branch/{uuid}/photos/{photo}', [BranchSettingsController::class, 'deletePhoto'])->middleware('permission:branch_update');
+                Route::post('branch/{uuid}/photos/{photo}/cover', [BranchSettingsController::class, 'setCover'])->middleware('permission:branch_update');
+                Route::patch('branch/{uuid}/photos/order', [BranchSettingsController::class, 'reorderPhotos'])->middleware('permission:branch_update');
+                Route::patch('branch/{uuid}/booking-policy', [BranchSettingsController::class, 'updateBookingPolicy'])->middleware('permission:branch_update');
+                Route::get('branch/{uuid}/reviews-summary', [BranchSettingsController::class, 'reviewsSummary'])->middleware('permission:review_view');
 
                 // Read side of Business Settings. A manager gets only what a
                 // branch inherits (identity + booking defaults); every write
@@ -709,6 +749,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('service-templates', [ServiceController::class, 'templates']);
                 Route::apiResource('service', ServiceController::class)->only(['store', 'update', 'destroy']);
                 Route::apiResource('addon', AddonController::class)->only(['store', 'update', 'destroy']);
+                Route::apiResource('commission-plan', \App\Http\Controllers\Business\CommissionPlanController::class)->only(['store', 'update', 'destroy']);
                 // Managing packages needs a plan that includes them. Reading
                 // the list stays open (the page shows what the plan is missing).
                 Route::apiResource('package', PackageController::class)->only(['store', 'update', 'destroy'])->middleware('plan.feature:package_access');

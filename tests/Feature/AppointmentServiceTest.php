@@ -382,4 +382,75 @@ class AppointmentServiceTest extends TestCase
         $this->assertNull($appointment->check_in_at);
         $this->assertNull($appointment->queue);
     }
+
+    // ── A service that needs a facility can't start without one ───────────
+
+    private function variantOf(array $service): ServiceVariant
+    {
+        $svc = Service::factory()->create(['spa_business_id' => $this->business->id] + $service);
+        $variant = ServiceVariant::factory()->create(['service_id' => $svc->id, 'duration_minutes' => 60]);
+        BranchService::factory()->create(['spa_branch_id' => $this->branch->id, 'service_variant_id' => $variant->id]);
+
+        return $variant;
+    }
+
+    private function checkedInWith(ServiceVariant $variant): AppointmentServiceItem
+    {
+        $appointment = $this->createAppointment();
+        $line = $this->addService($appointment, $variant);
+        $this->service->checkIn($this->owner, $appointment->uuid);
+
+        return $line;
+    }
+
+    public function test_a_service_that_needs_a_facility_cannot_start_without_one(): void
+    {
+        $line = $this->checkedInWith($this->variantOf(['facility_required' => true]));
+        $this->service->assignTherapist($this->owner, $line->uuid, ['staff_uuid' => $this->therapistA->uuid]);
+
+        $refused = $this->service->startService($this->owner, $line->uuid);
+        $this->assertInstanceOf(JsonResponse::class, $refused);
+        $this->assertSame(422, $refused->getStatusCode());
+        $this->assertStringContainsString('Choose a facility', $this->msg($refused));
+        $this->assertSame('Pending', $line->fresh()->status);
+
+        $this->service->assignRoom($this->owner, $line->therapistAssignments()->firstOrFail()->uuid, ['facility_uuid' => $this->facilityA->uuid]);
+        $started = $this->service->startService($this->owner, $line->uuid);
+        $this->assertNotInstanceOf(JsonResponse::class, $started, $this->msg($started));
+        $this->assertSame('In Progress', $line->fresh()->status);
+    }
+
+    public function test_an_optional_facility_does_not_stop_a_service_starting(): void
+    {
+        $line = $this->checkedInWith($this->variantOf(['facility_required' => false]));
+        $this->service->assignTherapist($this->owner, $line->uuid, ['staff_uuid' => $this->therapistA->uuid]);
+
+        $started = $this->service->startService($this->owner, $line->uuid);
+        $this->assertNotInstanceOf(JsonResponse::class, $started, $this->msg($started));
+    }
+
+    public function test_a_facility_based_service_always_needs_a_facility(): void
+    {
+        // Not ticked, and still: facility-based means it always does.
+        $line = $this->checkedInWith($this->variantOf(['service_type' => 'facility', 'facility_required' => false]));
+
+        $refused = $this->service->startService($this->owner, $line->uuid);
+        $this->assertInstanceOf(JsonResponse::class, $refused);
+        $this->assertStringContainsString('Choose a facility', $this->msg($refused));
+
+        $this->service->assignTherapist($this->owner, $line->uuid, ['facility_uuid' => $this->facilityA->uuid]);
+        $started = $this->service->startService($this->owner, $line->uuid);
+        $this->assertNotInstanceOf(JsonResponse::class, $started, $this->msg($started));
+    }
+
+    public function test_a_booked_service_keeps_what_it_needed_when_booked(): void
+    {
+        $variant = $this->variantOf(['facility_required' => true]);
+        $line = $this->checkedInWith($variant);
+        $this->assertTrue($line->fresh()->needsFacility());
+
+        // The owner relaxes it afterwards: the visit already booked doesn't change.
+        $variant->service->update(['facility_required' => false]);
+        $this->assertTrue($line->fresh()->needsFacility());
+    }
 }

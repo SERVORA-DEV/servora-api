@@ -26,6 +26,10 @@ class AppServiceProvider extends ServiceProvider
             Cloudinary::class,
             fn () => new Cloudinary(config('services.cloudinary.url')),
         );
+
+        // What one business request changed, for its Audit Log row
+        // (RecordBusinessActivity).
+        $this->app->singleton(\App\Support\ActivityRecorder::class);
     }
 
     /**
@@ -36,6 +40,9 @@ class AppServiceProvider extends ServiceProvider
         // Keeps AppCache (settings, subscriptions, permissions, public spa
         // pages) in step with writes.
         \App\Support\CacheInvalidation::register();
+
+        // Notes every model saved during a business request (Audit Log).
+        \App\Support\ActivityRecorder::register();
 
         // Skips Sanctum's last_used_at UPDATE when it was touched recently.
         \Laravel\Sanctum\Sanctum::usePersonalAccessTokenModel(\App\Models\PersonalAccessToken::class);

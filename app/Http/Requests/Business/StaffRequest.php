@@ -46,6 +46,8 @@ class StaffRequest extends FormRequest
             // Staff Policies; null or left out: the standard. StaffService
             // settles it against the role and the kind (CommissionShare::clean).
             'commission_rate' => 'sometimes|nullable|numeric|min:0|max:1000000',
+            // The commission plan they are on (App\Models\CommissionPlan); blank: Standard.
+            'commission_plan_uuid' => 'sometimes|nullable|uuid',
             'employment_type' => [$isCreate ? 'required' : 'sometimes', Rule::in(['Full-Time', 'Part-Time', 'Contractual'])],
             'status' => ['sometimes', Rule::in(['active', 'inactive', 'on-leave', 'terminated'])],
 
@@ -63,6 +65,16 @@ class StaffRequest extends FormRequest
     // StaffService does before the uniqueness rule can be built.
     private function resolvedBranchId(): ?int
     {
+        // Saving someone already on file: their number is checked where they
+        // are now. A move to another branch is settled by StaffTransferService,
+        // which gives them a new number if theirs is taken at the destination.
+        if (! $this->isMethod('post') && $this->route('staff')) {
+            $current = \App\Models\Staff::where('uuid', $this->route('staff'))->value('spa_branch_id');
+            if ($current && \App\Models\StaffTransferRequest::ready()) {
+                return $current;
+            }
+        }
+
         $uuid = $this->input('spa_branch_uuid');
         if (! $uuid) {
             return null;

@@ -49,8 +49,6 @@ class NotificationSettingsRequest extends FormRequest
 
             'send_client_reminder' => 'sometimes|boolean',
             'reminder_timing' => 'sometimes|required|integer|'.$hours,
-            'send_staff_reminder' => 'sometimes|boolean',
-            'staff_reminder_timing' => 'sometimes|required|integer|'.$hours,
             'send_payment_reminder' => 'sometimes|boolean',
             'send_birthday_greeting' => 'sometimes|boolean',
 

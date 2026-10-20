@@ -24,11 +24,18 @@ class ServiceKindTest extends TestCase
         $this->assertFalse(ServiceKind::needsTherapist('facility'));
     }
 
-    // An open bed, a chair, the sauna itself: a room is anyone's to pick and
-    // nobody's to need.
-    public function test_no_kind_needs_a_room(): void
+    // A facility-based service always needs one; anything else only when the
+    // owner ticked "Facility required" — a haircut or nails usually doesn't.
+    public function test_a_facility_based_service_always_needs_a_facility_and_others_only_when_ticked(): void
     {
-        $this->assertFalse(method_exists(ServiceKind::class, 'needsRoom'));
+        $this->assertTrue(ServiceKind::needsFacility('facility'));
+        $this->assertTrue(ServiceKind::needsFacility('facility', false));
+
+        foreach (['time', 'procedure', null, 'package'] as $kind) {
+            $this->assertFalse(ServiceKind::needsFacility($kind), "{$kind} defaults to optional");
+            $this->assertFalse(ServiceKind::needsFacility($kind, false));
+            $this->assertTrue(ServiceKind::needsFacility($kind, true));
+        }
     }
 
     public function test_a_procedure_is_an_estimate_with_one_price(): void

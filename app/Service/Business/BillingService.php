@@ -231,17 +231,7 @@ class BillingService
             }
 
             $old = $billing->only(['subtotal', 'discount_type', 'discount_value', 'discount_amount', 'discount_reason', 'amount']);
-            $billing->update($value > 0 ? [
-                'subtotal' => $subtotal,
-                'discount_type' => $type,
-                'discount_value' => $value,
-                'discount_amount' => $discount,
-                'discount_reason' => $reason,
-                'discounted_by' => $user->id,
-                'discount_program_id' => $program?->id,
-                'client_voucher_id' => $voucher?->id,
-                'amount' => round($subtotal - $discount, 2),
-            ] : [
+            $billing->update($value > 0 ? $this->discountFields($subtotal, $type, $value, $discount, $reason, $user->id, $program, $voucher) : [
                 'subtotal' => $subtotal,
                 'discount_type' => null,
                 'discount_value' => null,
@@ -262,6 +252,57 @@ class BillingService
 
             return new BillingResource($this->detailed($billing->uuid));
         });
+    }
+
+    // The bill's columns for a discount that is on it.
+    private function discountFields(float $subtotal, string $type, float $value, float $discount, string $reason, ?int $byUserId, ?CustomerProgram $program, ?ClientVoucher $voucher): array
+    {
+        return [
+            'subtotal' => $subtotal,
+            'discount_type' => $type,
+            'discount_value' => $value,
+            'discount_amount' => $discount,
+            'discount_reason' => $reason,
+            'discounted_by' => $byUserId,
+            'discount_program_id' => $program?->id,
+            'client_voucher_id' => $voucher?->id,
+            'amount' => round($subtotal - $discount, 2),
+        ];
+    }
+
+    // The voucher a client booked with in the app (appointments.client_voucher_id)
+    // goes on the bill when it is made: worked out from the bill's own services
+    // like one the front desk applies, but by the system rather than a person.
+    // When it no longer fits (a service was cancelled…) or can't be used any
+    // more, the bill stays as it is and the booking lets go of it.
+    public function applyReservedVoucher(Billing $billing): void
+    {
+        $appointment = Appointment::holdsVouchers() && $billing->appointment_id ? Appointment::find($billing->appointment_id) : null;
+        if (! $appointment?->client_voucher_id) {
+            return;
+        }
+
+        $voucher = ClientVoucher::with('program')->find($appointment->client_voucher_id);
+        $program = $voucher?->dealProgram();
+        $derived = $voucher && $voucher->isUsable() && $program ? $this->programDiscount($billing, $program) : null;
+        if (! is_array($derived)) {
+            $appointment->update(['client_voucher_id' => null]);
+
+            return;
+        }
+
+        [$type, $value] = $derived;
+        $subtotal = (float) ($billing->subtotal ?? $billing->amount);
+        $discount = $type === 'percent' ? round($subtotal * min($value, 100) / 100, 2) : round(min($value, $subtotal), 2);
+        if ($discount <= 0) {
+            $appointment->update(['client_voucher_id' => null]);
+
+            return;
+        }
+
+        $billing->update($this->discountFields($subtotal, $type, $value, $discount, 'Voucher: ' . $program->name, null, $program, $voucher));
+        $voucher->update(['status' => 'used', 'used_at' => now(), 'used_billing_id' => $billing->id, 'used_by' => null]);
+        $this->settle($billing->fresh());
     }
 
     // ── Void / refund ─────────────────────────────────────────────────────
@@ -346,37 +387,54 @@ class BillingService
                 return $this->reject('You can refund at most ₱' . number_format($refundable, 2) . '.');
             }
 
-            $left = $amount;
-            $payments = Payment::where('billing_id', $billing->id)->where('payment_status', 'Paid')->orderByDesc('paid_at')->lockForUpdate()->get();
-            foreach ($payments as $payment) {
-                if ($left <= 0) {
-                    break;
-                }
-                $available = (float) $payment->amount - (float) $payment->refunded_amount;
-                $take = min($available, $left);
-                if ($take <= 0) {
-                    continue;
-                }
-                $old = $payment->only(['refunded_amount', 'refund_reason', 'payment_status']);
-                $refunded = round((float) $payment->refunded_amount + $take, 2);
-                $payment->update([
-                    'refunded_amount' => $refunded,
-                    'refund_reason' => $reason,
-                    'payment_status' => $refunded + 0.004 >= (float) $payment->amount ? 'Refunded' : 'Paid',
-                ]);
-                $this->auditLogRepository->record($user->id, 'payments', $payment->id, 'Refund', $old, $payment->only(array_keys($old)), $request);
-                $left = round($left - $take, 2);
-            }
-
-            if ($this->paymentRepository->paidTotalForBilling($billing->id) <= 0.004) {
-                $billing->update(['status' => 'Refunded']);
-                $this->rewards->onBillReopened($billing, refunded: true);
-            }
+            $this->giveBack($billing, $amount, $reason, $user, $request);
 
             $this->notify($billing, 'Refund issued', '₱' . number_format($amount, 2) . " refunded on {$billing->billing_number} — {$reason}.", $user);
 
             return new BillingResource($this->detailed($billing->uuid));
         });
+    }
+
+    /**
+     * Hands $amount back off a bill already checked and locked by the caller
+     * (inside its transaction): taken off the newest Paid payments first
+     * (refunded_amount, audited); once everything paid has been given back
+     * the bill is closed as Refunded.
+     */
+    public function giveBack(Billing $billing, float $amount, string $reason, User $user, ?Request $request = null): void
+    {
+        $left = round($amount, 2);
+        $payments = Payment::where('billing_id', $billing->id)->where('payment_status', 'Paid')->orderByDesc('paid_at')->lockForUpdate()->get();
+        foreach ($payments as $payment) {
+            if ($left <= 0) {
+                break;
+            }
+            $available = (float) $payment->amount - (float) $payment->refunded_amount;
+            $take = min($available, $left);
+            if ($take <= 0) {
+                continue;
+            }
+            $old = $payment->only(['refunded_amount', 'refund_reason', 'payment_status']);
+            $refunded = round((float) $payment->refunded_amount + $take, 2);
+            $payment->update([
+                'refunded_amount' => $refunded,
+                'refund_reason' => $reason,
+                'payment_status' => $refunded + 0.004 >= (float) $payment->amount ? 'Refunded' : 'Paid',
+            ]);
+            $this->auditLogRepository->record($user->id, 'payments', $payment->id, 'Refund', $old, $payment->only(array_keys($old)), $request);
+            $left = round($left - $take, 2);
+        }
+
+        if ($this->paymentRepository->paidTotalForBilling($billing->id) <= 0.004) {
+            $billing->update(['status' => 'Refunded']);
+            $this->rewards->onBillReopened($billing, refunded: true);
+        }
+    }
+
+    /** The bill as the detail screens read it (BillingResource with everything loaded). */
+    public function present(string $billingUuid): BillingResource
+    {
+        return new BillingResource($this->detailed($billingUuid));
     }
 
     // ── Customer programs at checkout ─────────────────────────────────────
@@ -397,8 +455,14 @@ class BillingService
         $membership = $client?->activeMembership()->with('program.items')->first();
         $memberItemIds = $membership?->perkIds() ?? [];
 
-        $describe = function (CustomerProgram $program, ?ClientVoucher $voucher = null) use ($billing) {
+        // Vouchers on another booking the client made in the app can't be used
+        // here; the one made for this booking is flagged.
+        $heldElsewhere = $client ? ClientVoucher::heldIds(ClientVoucher::where('client_id', $client->id)->pluck('id'), $billing->appointment_id) : [];
+        $reservedHere = Appointment::holdsVouchers() ? $billing->appointment?->client_voucher_id : null;
+
+        $describe = function (CustomerProgram $program, ?ClientVoucher $voucher = null) use ($billing, $heldElsewhere, $reservedHere) {
             $derived = $this->programDiscount($billing, $program);
+            $elsewhere = $voucher && in_array($voucher->id, $heldElsewhere, true);
 
             return [
                 'uuid' => $voucher?->uuid ?? $program->uuid,
@@ -406,7 +470,11 @@ class BillingService
                 'name' => $program->name,
                 'type' => is_string($derived) ? null : $derived[0],
                 'value' => is_string($derived) ? null : $derived[1],
-                'unavailable_reason' => is_string($derived) ? $derived : null,
+                'unavailable_reason' => $elsewhere ? 'Reserved for another booking' : (is_string($derived) ? $derived : null),
+                // The voucher the client booked this visit with.
+                'reserved' => $voucher !== null && $voucher->id === $reservedHere,
+                // "Free service" | "% off" | "₱ off" for a voucher.
+                'deal_type' => $voucher ? $program->value('dealType', '₱ off') : null,
                 'expires_at' => $voucher?->expires_at?->toIso8601String(),
                 'members_only' => $program->audience === 'members',
             ];
@@ -448,6 +516,9 @@ class BillingService
         }
         if ($billing->client_voucher_id !== $voucher->id && ! $voucher->isUsable()) {
             return $voucher->status === 'used' ? 'That voucher has already been used.' : 'That voucher has expired.';
+        }
+        if (ClientVoucher::heldIds([$voucher->id], $billing->appointment_id) !== []) {
+            return 'That voucher is reserved for another booking.';
         }
 
         return [$program, $voucher];
@@ -495,8 +566,8 @@ class BillingService
 
         // A voucher for a category or for chosen services comes off one
         // service — the dearest one on the bill it is for — never the whole
-        // bill. Services that are part of a package aren't priced on their
-        // own, so it can't be used on those.
+        // bill. A service inside a package counts too, at what the package
+        // says it is worth (its line's price).
         if (! VoucherTarget::isAll($target)) {
             $value = (float) $program->value('value', 0);
             if ($deal !== 'Free service' && $value <= 0) {
@@ -505,7 +576,6 @@ class BillingService
             $lines = $billing->appointment?->services()
                 ->with('serviceVariant.service')
                 ->where('status', '!=', 'Cancelled')
-                ->whereNull('source_appointment_package_id')
                 ->get()
                 ->map(fn ($item) => [
                     'uuid' => $item->serviceVariant?->service?->uuid,

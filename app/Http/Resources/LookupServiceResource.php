@@ -27,6 +27,8 @@ class LookupServiceResource extends JsonResource
             // time | procedure | facility: a procedure's duration below is an
             // estimate, a facility-based service needs no therapist.
             'service_type' => \App\Support\ServiceKind::of($this->serviceVariant->service?->service_type),
+            'facility_required' => \App\Models\Service::hasFacilityRequirement()
+                && \App\Support\ServiceKind::needsFacility($this->serviceVariant->service?->service_type, (bool) $this->serviceVariant->service?->facility_required),
             'description' => $this->serviceVariant->service?->description,
             'duration_minutes' => $this->serviceVariant->duration_minutes,
             'price' => (float) ($this->custom_price ?? $this->serviceVariant->price),

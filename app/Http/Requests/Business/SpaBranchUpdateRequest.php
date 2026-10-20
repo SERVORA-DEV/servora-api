@@ -2,6 +2,8 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Rules\SocialLink;
+use App\Support\SocialLinks;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -51,9 +53,11 @@ class SpaBranchUpdateRequest extends FormRequest
             'phone_number' => 'nullable|string|max:20',
 
             // Branch Settings → Branch Details → Social links.
-            'facebook_url' => 'nullable|string|max:255',
-            'instagram_handle' => 'nullable|string|max:100',
-            'website_url' => 'nullable|string|max:255',
+            // Each branch's own links; any left empty show the company's
+            // (App\Support\SocialLinks).
+            'facebook_url' => ['nullable', 'string', 'max:255', new SocialLink(SocialLinks::FACEBOOK)],
+            'instagram_handle' => ['nullable', 'string', 'max:100', new SocialLink(SocialLinks::INSTAGRAM)],
+            'website_url' => ['nullable', 'string', 'max:255', new SocialLink(SocialLinks::WEBSITE)],
 
             'description' => 'nullable|string',
 
@@ -100,6 +104,6 @@ class SpaBranchUpdateRequest extends FormRequest
             return \App\Models\SpaBusiness::where('owner_id', $user->id)->value('id');
         }
 
-        return $user->staff?->branch?->business?->id;
+        return \App\Support\AccountScope::business($user)?->id;
     }
 }

@@ -76,12 +76,9 @@ class StaffNotifier
             }
         }
 
-        $recipients = Staff::query()
-            ->where('spa_branch_id', $branch->id)
-            ->where('status', 'active')
-            ->whereIn('role', $roles)
-            ->whereNotNull('user_id')
-            ->pluck('user_id')
+        // The logins given this branch: 'manager' = Management there,
+        // 'frontdesk' = Operation there (App\Support\AccountScope).
+        $recipients = collect(\App\Support\AccountScope::userIdsAt([$branch->id], $roles))
             ->when($includeOwner, fn ($ids) => $ids->push($business->owner_id))
             ->filter()
             ->unique()

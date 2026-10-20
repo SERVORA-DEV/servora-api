@@ -30,10 +30,17 @@ class AccountResource extends JsonResource
             'username' => $this->username,
             'email' => $this->email,
             'role' => self::ROLE_LABELS[$this->role] ?? $this->role,
-            'staff_uuid' => $this->staff?->uuid,
-            'staff_name' => $this->staff ? trim("{$this->staff->first_name} {$this->staff->last_name}") : null,
-            'spa_branch_uuid' => $this->staff?->branch?->uuid,
-            'branch_name' => $this->staff?->branch?->branch_name,
+            // The account's own name, and where it works at which level.
+            'first_name' => $this->first_name,
+            'last_name' => $this->last_name,
+            'name' => $this->resource->displayName(),
+            'branches' => $this->branchList(),
+            // The first branch (what screens that show one read).
+            'spa_branch_uuid' => $this->branchList()[0]['uuid'] ?? null,
+            'branch_name' => $this->branchList()[0]['name'] ?? null,
+            // Before logins were given branches, the employee it was made from.
+            'staff_uuid' => \App\Models\AccountBranch::ready() ? null : $this->staff?->uuid,
+            'staff_name' => $this->resource->displayName(),
             'account_status' => $this->account_status,
             // Suspended by a smaller plan (PlanFitService), not by the owner.
             'on_hold' => (bool) $this->plan_hold_at,
@@ -43,5 +50,24 @@ class AccountResource extends JsonResource
                 ? $this->permission->only(config('permission.' . $this->role))
                 : null,
         ];
+    }
+
+    private ?array $branches = null;
+
+    private function branchList(): array
+    {
+        if ($this->branches !== null) {
+            return $this->branches;
+        }
+        if (\App\Models\AccountBranch::ready()) {
+            return $this->branches = $this->resource->accountBranches
+                ->filter(fn ($r) => $r->branch)
+                ->sortBy(fn ($r) => $r->branch->branch_name)
+                ->map(fn ($r) => ['uuid' => $r->branch->uuid, 'name' => $r->branch->branch_name, 'level' => $r->level])
+                ->values()->all();
+        }
+        $branch = $this->staff?->branch;
+
+        return $this->branches = $branch ? [['uuid' => $branch->uuid, 'name' => $branch->branch_name, 'level' => $this->role === 'manager' ? 'management' : 'operation']] : [];
     }
 }

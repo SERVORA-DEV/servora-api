@@ -18,6 +18,7 @@ class StaffPolicySettingsRequest extends FormRequest
     public function rules(): array
     {
         $isPercentage = $this->input('commission_type', 'percentage') === 'percentage';
+        $homeIsPercentage = $this->input('home_commission_type', 'percentage') === 'percentage';
 
         return [
             'commission_enabled' => 'sometimes|boolean',
@@ -27,6 +28,10 @@ class StaffPolicySettingsRequest extends FormRequest
             'commission_release_cycle' => 'sometimes|required|in:daily,weekly,monthly',
             'commission_includes_extension' => 'sometimes|boolean',
             'commission_includes_tips' => 'sometimes|boolean',
+            // What a therapist earns for a service done on a home visit, in place of their plan's rate.
+            'home_commission_enabled' => 'sometimes|boolean',
+            'home_commission_type' => 'sometimes|required|in:percentage,fixed',
+            'home_commission_rate' => 'sometimes|required|numeric|min:0|max:'.($homeIsPercentage ? 100 : 1000000),
 
             'attendance_tracking' => 'sometimes|boolean',
             'require_check_in' => 'sometimes|boolean',
@@ -35,6 +40,12 @@ class StaffPolicySettingsRequest extends FormRequest
             'require_manager_approval' => 'sometimes|boolean',
             'allow_overtime' => 'sometimes|boolean',
             'therapist_rotation' => 'sometimes|required|in:check_in,lowest_earnings',
+            // Penalties taken off the pay period's earnings.
+            'late_penalty_enabled' => 'sometimes|boolean',
+            'late_penalty_mode' => 'sometimes|required|in:day,hour',
+            'late_penalty_amount' => 'sometimes|required|numeric|min:0|max:1000000',
+            'absent_penalty_enabled' => 'sometimes|boolean',
+            'absent_penalty_amount' => 'sometimes|required|numeric|min:0|max:1000000',
 
             // Default permissions per account role — keys are checked
             // against each role's bundle in withValidator().
@@ -71,6 +82,7 @@ class StaffPolicySettingsRequest extends FormRequest
     {
         return [
             'default_commission_rate.max' => 'A percentage commission can be at most 100%.',
+            'home_commission_rate.max' => 'A percentage commission can be at most 100%.',
         ];
     }
 }

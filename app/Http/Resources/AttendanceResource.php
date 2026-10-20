@@ -18,7 +18,7 @@ class AttendanceResource extends JsonResource
             'uuid' => $this->uuid,
             'staff_uuid' => $this->staff?->uuid,
             'staff_name' => trim($this->staff->first_name . ' ' . $this->staff->last_name),
-            'branch_name' => $this->staff?->branch?->branch_name,
+            'branch_name' => $this->resource->ownBranch()?->branch_name,
             'attendance_date' => $this->attendance_date,
             'status' => $this->status,
             'check_in_at' => $this->check_in_at?->format('H:i'),

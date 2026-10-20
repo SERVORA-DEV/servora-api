@@ -187,11 +187,6 @@ class AppointmentService
                 return response()->json(['message' => 'spa_branch_uuid is required.'], 422);
             }
 
-            // Business Defaults → Walk-ins (or this branch's own rule).
-            if (($payload['appointment_type'] ?? null) === 'Walk-in' && ! BookingPolicy::for($branch)['walk_in_enabled']) {
-                return response()->json(['message' => "{$branch->branch_name} isn't accepting walk-ins. Turn them on in Settings → Booking & Policies, or add a reservation instead."], 422);
-            }
-
             // A walk-in is here now — on the server's clock, whatever the
             // desk's laptop says the time is.
             if (($payload['appointment_type'] ?? null) === 'Walk-in') {
@@ -384,8 +379,15 @@ class AppointmentService
         if ($policy['no_show_policy'] === 'suspend') {
             $mine = \App\Models\Client::where('spa_business_id', $branch->spa_business_id)->where('user_id', $user->id)->value('id');
             if ($mine && FrontDeskPolicy::clientSuspended($policy, $this->noShowCount($mine))) {
-                return response()->json(['message' => 'Booking from the app is paused for your account at this spa after missed bookings. Please contact the spa to book.'], 422);
+                return response()->json(['message' => BookingPolicy::missedBookingsNotice($policy, $this->noShowCount($mine), (string) $branch->business?->business_name)['message']], 422);
             }
+        }
+
+        // The most bookings one client may have in a day here (Booking &
+        // Policies; any branch counts): beyond it they book another day.
+        $dayLimit = $policy['max_bookings_per_client_per_day'];
+        if ($this->clientBookingsOn($user, $branch->spa_business_id, $payload['appointment_date']) >= $dayLimit) {
+            return response()->json(['message' => self::dayLimitMessage($dayLimit, $payload['appointment_date'])], 422);
         }
 
         $serviceCount = count($payload['services'] ?? []) + (empty($payload['package_uuid']) ? 0 : 1);
@@ -410,25 +412,37 @@ class AppointmentService
             return response()->json(['message' => $scheduleCheck['reason']], 422);
         }
 
-        // A retried request (slow network) must not book the same visit twice.
-        $duplicate = Appointment::where('spa_branch_id', $branch->id)
+        // A booking of theirs already at this day and time (any branch of the
+        // business) is a warning, not a refusal: the app shows it before they
+        // confirm and sends acknowledge_overlap when they book anyway. Without
+        // it (a retried request after a slow network, or an app that did not
+        // know) the booking is held back with a code the app understands.
+        $overlap = Appointment::with('branch')
+            ->whereHas('branch', fn ($q) => $q->where('spa_business_id', $branch->spa_business_id))
             ->whereDate('appointment_date', $payload['appointment_date'])
             ->where('appointment_time', 'like', substr($payload['appointment_time'], 0, 5).'%')
             ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW])
             ->whereHas('client', fn ($q) => $q->where('user_id', $user->id))
-            ->exists();
-        if ($duplicate) {
-            return response()->json(['message' => 'You already have a booking here at this time.'], 422);
+            ->first();
+        if ($overlap && empty($payload['acknowledge_overlap'])) {
+            $at = Carbon::parse($payload['appointment_date'] . ' ' . $payload['appointment_time'])->format('g:i A');
+
+            return response()->json([
+                'message' => "You already have a booking at {$at} that day ({$overlap->branch?->branch_name}). Tap Confirm Booking again to book this one too.",
+                'code' => 'overlaps_existing_booking',
+            ], 409);
         }
 
-        // Branch Settings → Marketplace → Show therapist profiles off: the app
-        // offers no therapist picker, so a requested therapist (an older app,
-        // a direct call) is dropped and the front desk assigns one as usual.
-        if (! $branch->displaySettings()['show_therapist_profiles']) {
+        // Show therapist profiles off, or Client Can Choose Staff off (for the
+        // business or this branch): the app offers no therapist picker, so a
+        // requested therapist (an older app, a direct call) is dropped.
+        // Who does the service is then up to the branch: assigned for the
+        // client when Auto-Assign Staff is on, else by the front desk.
+        if (! BookingPolicy::clientMayChooseTherapist($branch)) {
             unset($payload['requested_therapist_uuid']);
         }
 
-        return DB::transaction(function () use ($user, $branch, $payload, $home) {
+        return DB::transaction(function () use ($user, $branch, $payload, $home, $policy) {
             // One booking at a time per branch, so two clients can't both
             // take the last therapist for the same slot.
             SpaBranch::whereKey($branch->id)->lockForUpdate()->first();
@@ -471,6 +485,13 @@ class AppointmentService
                     $serviceItems,
                     $appointment->services()->where('source_appointment_package_id', $appointmentPackage->id)->get()->all(),
                 );
+            }
+
+            // A voucher from the client's wallet for this visit: checked now, so
+            // it can't come to nothing at the bill, and held for this booking.
+            if (! empty($payload['voucher_uuid']) && Appointment::holdsVouchers()) {
+                $voucher = $this->voucherForBooking($client, $payload['voucher_uuid'], $serviceItems);
+                Appointment::whereKey($appointment->id)->update(['client_voucher_id' => $voucher->id]);
             }
 
             $warnings = [];
@@ -536,6 +557,14 @@ class AppointmentService
                 foreach ($serviceItems as $service) {
                     $this->applyRequestedTherapist($appointment, $branch->id, $service, $payload['requested_therapist_uuid'], $warnings);
                 }
+            }
+
+            // No therapist asked for: each service someone performs gets a
+            // qualified therapist who is working and free then — the client's
+            // staff-gender preference respected. Nobody free: it is left for the
+            // front desk, as it always was.
+            if (empty($payload['requested_therapist_uuid'])) {
+                $this->autoAssignTherapists($appointment, $branch->id, $serviceItems, $payload['appointment_date'], $payload['appointment_time']);
             }
 
             $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
@@ -732,9 +761,33 @@ class AppointmentService
     }
 
     /** How many bookings this client has missed (no-shows). */
+    // The bookings this client has missed since their last visit.
     public function noShowCount(int $clientId): int
     {
-        return Appointment::where('client_id', $clientId)->where('status', Appointment::STATUS_NO_SHOW)->count();
+        return Appointment::where('client_id', $clientId)->missedSinceLastVisit()->count();
+    }
+
+    // How many bookings this signed-in client already has at the business on
+    // that day (whichever branch): cancelled and missed ones don't count.
+    // $exceptAppointmentId is the booking being moved.
+    public function clientBookingsOn(User $user, int $businessId, string $date, ?int $exceptAppointmentId = null): int
+    {
+        return Appointment::whereHas('client', fn ($q) => $q->where('user_id', $user->id)->where('spa_business_id', $businessId))
+            ->whereDate('appointment_date', $date)
+            ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW])
+            ->when($exceptAppointmentId, fn ($q) => $q->where('id', '!=', $exceptAppointmentId))
+            ->count();
+    }
+
+    // What a client is told when a day already holds the most bookings the
+    // spa allows one client (Booking & Policies → bookings per client per day).
+    public static function dayLimitMessage(int $limit, string $date): string
+    {
+        $day = Carbon::parse($date)->format('F j');
+
+        return $limit === 1
+            ? "You already have a booking on {$day}. This spa takes one booking per client a day — please pick another day."
+            : "You already have {$limit} bookings on {$day}, the most this spa takes from one client in a day. Please pick another day.";
     }
 
     // ── Queue actions (front-desk manual control, not lifecycle side
@@ -757,6 +810,12 @@ class AppointmentService
 
         if (! $queue || $queue->queue_status !== 'Waiting') {
             return response()->json(['message' => 'Only a waiting client can be called.'], 422);
+        }
+
+        // Calling is an alert in the client's app; a client without the app
+        // has nothing to be alerted on, and is called out at the desk.
+        if (! $appointment->client?->usesApp()) {
+            return response()->json(['message' => 'Only clients who use the Servora app can be called. Call them at the desk, then start their service.'], 422);
         }
 
         $this->queueRepository->updateStatus($queue, 'Called', ['called_at' => now()]);
@@ -1320,9 +1379,7 @@ class AppointmentService
                 return response()->json(['message' => $problem], 422);
             }
 
-            $staff = $user->staff;
-            $by = ($staff ? trim("{$staff->first_name} {$staff->last_name}") : '')
-                ?: (trim("{$user->first_name} {$user->last_name}") ?: 'the front desk');
+            $by = $user->displayName();
 
             foreach ($line->therapistAssignments->whereIn('assignment_status', ['Assigned', 'In Progress', 'Completed']) as $assignment) {
                 $assignment->update(['assignment_status' => 'Cancelled']);
@@ -1606,7 +1663,7 @@ class AppointmentService
             if (in_array($service->status, ['Cancelled', 'Completed'], true)) {
                 return response()->json(['message' => 'Cannot assign staff to a cancelled or completed service.'], 422);
             }
-            if ($refusal = $this->addonFollows($service, 'shares its staff and room')) {
+            if ($refusal = $this->addonFollows($service, 'shares its staff and facility')) {
                 return $refusal;
             }
 
@@ -1616,7 +1673,7 @@ class AppointmentService
             // the same row later via assignTherapistInternal().
             if (empty($payload['staff_uuid'])) {
                 if (empty($payload['facility_uuid'])) {
-                    return response()->json(['message' => 'Choose a staff member or a room.'], 422);
+                    return response()->json(['message' => 'Choose a staff member or a facility.'], 422);
                 }
 
                 $roomResult = $this->assignRoomOnlyInternal($service, $service->appointment, $payload['facility_uuid']);
@@ -1701,7 +1758,7 @@ class AppointmentService
                 ->firstOrFail();
 
             if (in_array($assignment->assignment_status, ['Completed', 'Cancelled'], true)) {
-                return response()->json(['message' => 'Cannot assign a room to a completed or cancelled assignment.'], 422);
+                return response()->json(['message' => 'Cannot assign a facility to a completed or cancelled assignment.'], 422);
             }
 
             $service = $assignment->appointmentService;
@@ -1713,7 +1770,7 @@ class AppointmentService
             if (in_array($service->status, ['Completed', 'Cancelled'], true)) {
                 return response()->json(['message' => 'This service is already completed — its assignments can no longer be changed.'], 422);
             }
-            if ($refusal = $this->addonFollows($service, 'shares its staff and room')) {
+            if ($refusal = $this->addonFollows($service, 'shares its staff and facility')) {
                 return $refusal;
             }
 
@@ -1748,7 +1805,7 @@ class AppointmentService
 
             if (in_array($assignment->assignment_status, ['Completed', 'Cancelled'], true)
                 || in_array($assignment->appointmentService->status, ['Completed', 'Cancelled'], true)) {
-                return response()->json(['message' => 'This service is already finished — its room can no longer be changed.'], 422);
+                return response()->json(['message' => 'This service is already finished — its facility can no longer be changed.'], 422);
             }
 
             $assignment->update($assignment->staff_id
@@ -1976,11 +2033,16 @@ class AppointmentService
 
         // What it needs depends on its kind (ServiceKind): a therapist,
         // unless nobody performs it (a facility-based service — a sauna).
-        // A room is never required: an open bed, a chair, the sauna itself.
+        // And a facility, when the service needs one (always for a
+        // facility-based one, else the owner's tick) — except on a home
+        // visit, which has none.
         $kind = $this->kindOf($service);
         $activeAssignments = $service->therapistAssignments->where('assignment_status', 'Assigned');
         if (ServiceKind::needsTherapist($kind) && $activeAssignments->whereNotNull('staff_id')->isEmpty()) {
             return ['ok' => false, 'reason' => 'Assign at least one staff member before starting this service.'];
+        }
+        if ($service->needsFacility() && ! $service->appointment->isHomeService() && $activeAssignments->whereNotNull('facility_id')->isEmpty()) {
+            return ['ok' => false, 'reason' => 'Choose a facility for ' . ($service->displayName() ?? 'this service') . ' before starting it.'];
         }
 
         // One client, one place: while another service of this visit is in
@@ -2203,6 +2265,34 @@ class AppointmentService
         });
     }
 
+    // The wallet voucher a client booked with, or a 422 saying why it can't be
+    // used: not theirs, used or expired, already on another booking, or for
+    // services this booking doesn't have (VoucherTarget::fits).
+    private function voucherForBooking(\App\Models\Client $client, string $voucherUuid, array $serviceItems): \App\Models\ClientVoucher
+    {
+        $voucher = \App\Models\ClientVoucher::with('program')->where('uuid', $voucherUuid)->where('client_id', $client->id)->lockForUpdate()->first();
+        $program = $voucher?->dealProgram();
+        abort_if(! $voucher || ! $program, 422, "That voucher isn't in your wallet.");
+        abort_if(! $voucher->isUsable(), 422, $voucher->status === 'used' ? 'That voucher has already been used.' : 'That voucher has expired.');
+        abort_if(\App\Models\ClientVoucher::heldIds([$voucher->id]) !== [], 422, 'That voucher is already on another booking.');
+
+        $describe = function ($item) {
+            $item->loadMissing('serviceVariant.service');
+
+            return ['uuid' => $item->serviceVariant?->service?->uuid, 'category' => $item->category(), 'name' => $item->displayName()];
+        };
+        $services = collect($serviceItems)->map($describe)->all();
+
+        abort_if(! \App\Support\VoucherTarget::fits(
+            (string) $program->value('dealType', '₱ off'),
+            \App\Support\VoucherTarget::of($program->values, 'usable'),
+            (string) $program->value('usableOn', ''),
+            $services,
+        ), 422, 'This voucher is for ' . $program->value('usableOn', 'certain services') . '. Add one to your booking to use it.');
+
+        return $voucher;
+    }
+
     // ── Billing / payment ────────────────────────────────────────────────
 
     // Rejects unless every service is Completed or Cancelled (rule 12/14),
@@ -2241,7 +2331,7 @@ class AppointmentService
                 return response()->json(['message' => 'This appointment has no billable amount.'], 422);
             }
 
-            $this->billingRepository->create([
+            $billing = $this->billingRepository->create([
                 'appointment_id' => $appointment->id,
                 'spa_business_id' => $business->id,
                 'spa_branch_id' => $appointment->spa_branch_id,
@@ -2252,6 +2342,9 @@ class AppointmentService
                 'status' => 'Pending',
                 'issued_at' => now(),
             ]);
+
+            // The voucher the client booked with goes on the bill.
+            $this->billingService->applyReservedVoucher($billing);
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
         });
@@ -2432,7 +2525,12 @@ class AppointmentService
                 ->where('is_available', true)
                 ->first();
 
-            $componentPrice = (float) ($branchService?->custom_price ?? $variant->price);
+            // What the owner says this service is worth in the package, else the
+            // branch's or the menu's price. It is what a voided service takes off
+            // the package (App\Support\PackageShare), not an extra charge.
+            $componentPrice = Package::hasLinePrice() && $item->price !== null
+                ? (float) $item->price
+                : (float) ($branchService?->custom_price ?? $variant->price);
             $componentQty = ($item->quantity ?? 1) * $quantity;
 
             $line = $this->appointmentServiceRepository->create([
@@ -2506,6 +2604,33 @@ class AppointmentService
         $result = $this->assignTherapistInternal($service, $appointment, $staff);
         if (! $result['ok']) {
             $warnings[] = $result['reason'];
+        }
+    }
+
+    // Gives each service someone performs the first therapist who is
+    // qualified, working and free at the visit's start (the same checks the
+    // app's therapist list is built from). A failed assignment is not an error.
+    private function autoAssignTherapists(Appointment $appointment, int $branchId, array $serviceItems, string $date, string $time): void
+    {
+        foreach ($serviceItems as $service) {
+            $service->load('serviceVariant.service');
+            if (! ServiceKind::needsTherapist($this->kindOf($service))) {
+                continue;
+            }
+
+            $candidates = $this->availabilityService->suggestTherapists(
+                $branchId,
+                $service->serviceVariant->service_id,
+                $date,
+                $time,
+                max($service->lengthMinutes() ?? 30, 30),
+            )->filter(fn (Staff $staff) => StaffGender::matches($staff->gender, $appointment->preferred_staff_gender));
+
+            foreach ($candidates as $staff) {
+                if ($this->assignTherapistInternal($service, $appointment, $staff)['ok']) {
+                    break;
+                }
+            }
         }
     }
 
@@ -2660,7 +2785,7 @@ class AppointmentService
     {
         $facility = Facility::where('uuid', $facilityUuid)->where('spa_branch_id', $appointment->spa_branch_id)->first();
         if (! $facility) {
-            return ['ok' => false, 'reason' => 'Room not found at this branch.'];
+            return ['ok' => false, 'reason' => 'Facility not found at this branch.'];
         }
 
         $roomCheck = $this->checkRoomEligibility($facility, $appointment, $service, $assignment->id);
@@ -2679,7 +2804,7 @@ class AppointmentService
     {
         $facility = Facility::where('uuid', $facilityUuid)->where('spa_branch_id', $appointment->spa_branch_id)->first();
         if (! $facility) {
-            return ['ok' => false, 'reason' => 'Room not found at this branch.'];
+            return ['ok' => false, 'reason' => 'Facility not found at this branch.'];
         }
 
         $roomCheck = $this->checkRoomEligibility($facility, $appointment, $service, null);
@@ -2706,7 +2831,7 @@ class AppointmentService
     {
         $serviceId = $service->serviceVariant?->service_id;
         if ($serviceId && $facility->services()->exists() && ! $facility->services()->where('services.id', $serviceId)->exists()) {
-            return ['ok' => false, 'reason' => 'This room does not support the selected service.'];
+            return ['ok' => false, 'reason' => 'This facility does not support the selected service.'];
         }
 
         $duration = $service->lengthMinutes() ?? 30;

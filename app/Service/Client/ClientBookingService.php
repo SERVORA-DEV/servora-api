@@ -7,6 +7,7 @@ use App\Http\Resources\Client\ClientReviewResource;
 use App\Models\Appointment;
 use App\Models\Queue;
 use App\Models\Review;
+use App\Models\SpaBranch;
 use App\Models\Staff;
 use App\Models\User;
 use App\Service\Business\AppointmentAvailabilityService;
@@ -123,6 +124,43 @@ class ClientBookingService
         });
     }
 
+    // What the app needs before offering "Book now" at a spa: whether the
+    // client's booking in the app is paused for missed bookings, how many they
+    // have missed since their last visit, and the days that already hold as
+    // many bookings of theirs as the spa allows in one day.
+    public function bookingStatus(User $user, string $branchUuid)
+    {
+        $branch = SpaBranch::with('business')->where('uuid', $branchUuid)->firstOrFail();
+        $policy = BookingPolicy::for($branch);
+        $client = \App\Models\Client::where('spa_business_id', $branch->spa_business_id)->where('user_id', $user->id)->first();
+        $missed = $client ? $this->appointmentService->noShowCount($client->id) : 0;
+
+        $dayLimit = $policy['max_bookings_per_client_per_day'];
+        $busy = $client
+            ? Appointment::where('client_id', $client->id)
+                ->whereDate('appointment_date', '>=', BookingPolicy::now()->toDateString())
+                ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW])
+                ->pluck('appointment_date')->map(fn ($d) => Carbon::parse($d)->toDateString())
+                ->countBy()->filter(fn ($n) => $n >= $dayLimit)->keys()->values()
+            : collect();
+
+        // Their upcoming bookings (day, start time, branch), so the app can warn
+        // when the one being made lands on the same day and time.
+        $upcoming = $client
+            ? Appointment::with('branch')->where('client_id', $client->id)
+                ->whereDate('appointment_date', '>=', BookingPolicy::now()->toDateString())
+                ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW])
+                ->get()
+                ->map(fn ($a) => [
+                    'date' => Carbon::parse($a->appointment_date)->toDateString(),
+                    'time' => substr((string) $a->appointment_time, 0, 5),
+                    'branch' => $a->branch?->branch_name,
+                ])->values()
+            : collect();
+
+        return ['data' => BookingPolicy::missedBookingsNotice($policy, $missed, (string) $branch->business?->business_name) + ['booked_dates' => $busy, 'bookings' => $upcoming]];
+    }
+
     public function reschedule(User $user, string $uuid, array $payload)
     {
         return DB::transaction(function () use ($user, $uuid, $payload) {
@@ -141,6 +179,11 @@ class ClientBookingService
             }
             if (! MarketplaceReadiness::isBookable($branch)) {
                 return response()->json(['message' => MarketplaceReadiness::NOT_BOOKABLE], 422);
+            }
+            // Not onto a day that already holds the most bookings one client may have.
+            $dayLimit = BookingPolicy::for($branch)['max_bookings_per_client_per_day'];
+            if ($this->appointmentService->clientBookingsOn($user, $branch->spa_business_id, $payload['appointment_date'], $appointment->id) >= $dayLimit) {
+                return response()->json(['message' => AppointmentService::dayLimitMessage($dayLimit, $payload['appointment_date'])], 422);
             }
 
             // Same hard gate as booking: a therapist the client asked for
@@ -186,6 +229,11 @@ class ClientBookingService
             ]);
             if ($error) {
                 return $error;
+            }
+
+            // The client's own move, counted against the spa's limit.
+            if (Appointment::countsReschedules()) {
+                $appointment->increment('client_reschedule_count');
             }
 
             $this->staffNotifier->appointment(

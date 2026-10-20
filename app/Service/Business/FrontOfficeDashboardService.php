@@ -36,7 +36,9 @@ class FrontOfficeDashboardService
 
     public function getOverview(User $user)
     {
-        $branch = $this->spaBusinessRepository->branchesForUser($user)->first();
+        // The branch the front desk is working in (the web sends it).
+        $branches = $this->spaBusinessRepository->branchesForUser($user);
+        $branch = $branches->firstWhere('id', \App\Support\AccountScope::workingBranchId($branches->pluck('id')->all()));
 
         if (! $branch) {
             return response()->json(['message' => 'No branch found for this account.'], 422);

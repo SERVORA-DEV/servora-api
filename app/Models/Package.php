@@ -65,6 +65,23 @@ class Package extends Model
     }
 
     /**
+     * Whether package_services.price exists yet (the migration has been run):
+     * what each service is worth in the package. Until then nothing writes it
+     * and every line is the menu's price, as before.
+     */
+    public static function hasLinePrice(): bool
+    {
+        $known = Cache::get('schema:package_service_price');
+        if (is_bool($known)) {
+            return $known;
+        }
+        $ready = Schema::hasColumn('package_services', 'price');
+        $ready ? Cache::forever('schema:package_service_price', true) : Cache::put('schema:package_service_price', false, 60);
+
+        return $ready;
+    }
+
+    /**
      * What to load with a package to read what is in it — each row's service
      * and its menu lengths (the guide), and the add-ons that come with it.
      * $via is the path to the package from the model being loaded

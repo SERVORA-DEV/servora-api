@@ -26,7 +26,7 @@ class ServiceStartRulesTest extends TestCase
     {
         $problem = ServiceStartRules::problem(['staff' => [11 => 'Jomar Castillo'], 'room' => self::FACIAL_ROOM], [$this->running()]);
 
-        $this->assertSame('This client is still having Hair Spa Treatment in Nail and Hair Lounge. Complete it first, or put this service in the same room to do both together.', $problem);
+        $this->assertSame('This client is still having Hair Spa Treatment in Nail and Hair Lounge. Complete it first, or put this service in the same facility to do both together.', $problem);
     }
 
     // A room is never required, so a service without one is not "somewhere
@@ -126,7 +126,7 @@ class ServiceStartRulesTest extends TestCase
             [$this->running(['room_name' => null])],
         );
 
-        $this->assertStringContainsString('in another room', (string) $problem);
+        $this->assertStringContainsString('in another facility', (string) $problem);
     }
 
     // ── Service kinds (App\Support\ServiceKind) ──────────────────────────────

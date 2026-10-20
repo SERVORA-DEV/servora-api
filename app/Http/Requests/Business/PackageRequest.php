@@ -51,6 +51,8 @@ class PackageRequest extends FormRequest
             'services.*.service_variant_uuid' => 'nullable|uuid',
             'services.*.duration_minutes' => 'nullable|integer|min:1|max:600',
             'services.*.quantity' => 'nullable|integer|min:1|max:20',
+            // What this service is worth in the package, per one (blank: its menu price).
+            'services.*.price' => 'nullable|numeric|min:0|max:10000000',
             'services.*.addon_uuids' => 'sometimes|array',
             'services.*.addon_uuids.*' => 'uuid|distinct',
         ];
@@ -75,6 +77,6 @@ class PackageRequest extends FormRequest
             return SpaBusiness::where('owner_id', $user->id)->value('id');
         }
 
-        return $user->staff?->branch?->business?->id;
+        return \App\Support\AccountScope::business($user)?->id;
     }
 }

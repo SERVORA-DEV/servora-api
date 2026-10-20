@@ -21,12 +21,7 @@ class AttendanceDetailResource extends JsonResource
             return null;
         }
 
-        $staffName = trim("{$user->staff?->first_name} {$user->staff?->last_name}");
-        if ($staffName) {
-            return $staffName;
-        }
-
-        return trim("{$user->first_name} {$user->last_name}") ?: null;
+        return $user->displayName();
     }
 
     public function toArray(Request $request): array

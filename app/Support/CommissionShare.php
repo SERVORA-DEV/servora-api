@@ -44,9 +44,10 @@ class CommissionShare
      * @param  float  $listPrice  its list price × quantity, used when the line carries no price of its own (a package line)
      * @param  bool  $fromPackage  the line came out of a package
      * @param  int  $sharedBy  how many completed it
-     * @param  ?float  $ownRate  this person's custom rate; null: the standard
+     * @param  ?float  $ownRate  the rate of this person's commission plan; null: the standard
+     * @param  bool  $home  the service was done on a home visit: the home service commission replaces the plan's rate when the owner turned it on
      */
-    public static function amount(?array $policy, float $price, float $listPrice, bool $fromPackage, int $sharedBy = 1, ?float $ownRate = null): float
+    public static function amount(?array $policy, float $price, float $listPrice, bool $fromPackage, int $sharedBy = 1, ?float $ownRate = null, bool $home = false): float
     {
         if ($policy === null || ! ($policy['commission_enabled'] ?? true)) {
             return 0.0;
@@ -57,10 +58,10 @@ class CommissionShare
             return 0.0;
         }
 
-        $rate = self::rate($policy, $ownRate);
+        $rate = self::rate($policy, $ownRate, $home);
         $sharedBy = max(1, $sharedBy);
 
-        if (($policy['commission_type'] ?? 'percentage') === 'fixed') {
+        if (self::type($policy, $home) === 'fixed') {
             return $rate / $sharedBy;
         }
 
@@ -69,10 +70,34 @@ class CommissionShare
         return $base * $rate / 100 / $sharedBy;
     }
 
-    /** The rate that applies to someone: their own when they have one, else the standard. */
-    public static function rate(?array $policy, ?float $ownRate = null): float
+    /** Whether a service done at home earns the home service commission instead of the plan's rate. */
+    public static function homeApplies(?array $policy, bool $home): bool
     {
+        return $home && (bool) ($policy['home_commission_enabled'] ?? false);
+    }
+
+    /**
+     * The rate that applies to someone: the home service commission for a
+     * service done at home (when the owner turned it on), else their plan's
+     * rate, else the standard.
+     */
+    public static function rate(?array $policy, ?float $ownRate = null, bool $home = false): float
+    {
+        if (self::homeApplies($policy, $home)) {
+            return (float) ($policy['home_commission_rate'] ?? 0);
+        }
+
         return $ownRate ?? (float) ($policy['default_commission_rate'] ?? 0);
+    }
+
+    /** The kind that rate is in: 'percentage' or 'fixed'. */
+    public static function type(?array $policy, bool $home = false): string
+    {
+        if (self::homeApplies($policy, $home)) {
+            return ($policy['home_commission_type'] ?? 'percentage') === 'fixed' ? 'fixed' : 'percentage';
+        }
+
+        return ($policy['commission_type'] ?? 'percentage') === 'fixed' ? 'fixed' : 'percentage';
     }
 
     /**
@@ -108,7 +133,16 @@ class CommissionShare
         return (fmod($rate, 1) ? rtrim(number_format($rate, 2), '0') : number_format($rate, 0)) . '%';
     }
 
-    /** "Standard (15%)" or "20%" — how someone's commission reads in a sentence. */
+    /** "Starter (10%)" or "Standard (15%)" — how someone's commission plan reads in a sentence. */
+    public static function describePlan(?array $policy, ?string $planName, ?float $ownRate): string
+    {
+        $type = $policy['commission_type'] ?? 'percentage';
+        $rate = self::rate($policy, $ownRate);
+
+        return ($planName && $ownRate !== null ? $planName : 'Standard') . ' (' . self::label($rate, $type) . ')';
+    }
+
+    /** "Standard (15%)" or "20%" — how someone's commission reads in a sentence (before plans). */
     public static function describe(?array $policy, ?float $ownRate): string
     {
         $type = $policy['commission_type'] ?? 'percentage';

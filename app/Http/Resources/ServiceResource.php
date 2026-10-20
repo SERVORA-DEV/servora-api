@@ -22,6 +22,9 @@ class ServiceResource extends JsonResource
             'category' => $this->category,
             // time | procedure | facility (App\Support\ServiceKind).
             'service_type' => \App\Support\ServiceKind::of($this->service_type),
+            // A facility has to be chosen before the front desk may start it.
+            'facility_required' => \App\Models\Service::hasFacilityRequirement()
+                && \App\Support\ServiceKind::needsFacility($this->service_type, (bool) $this->facility_required),
             'description' => $this->description,
 
             // source_template_id is deliberately not exposed: it's provenance

@@ -33,7 +33,17 @@ class AccountRequest extends FormRequest
             // ownership, eligibility (manager/frontdesk only), and the
             // one-account-per-staff rule are all enforced in
             // AccountService::createAccount, not here.
-            'staff_uuid' => [$isCreate ? 'required' : 'prohibited', 'uuid', 'exists:staff,uuid'],
+            // The account's own name.
+            'first_name' => ['sometimes', 'nullable', 'string', 'max:100'],
+            'last_name' => ['sometimes', 'nullable', 'string', 'max:100'],
+
+            // Where it works and at which level (AccountService checks the
+            // branches are the owner's own). Before that migration, a login is
+            // made from an employee instead (staff_uuid).
+            'branches' => [\App\Models\AccountBranch::ready() && $isCreate ? 'required' : 'sometimes', 'array', 'min:1', 'max:50'],
+            'branches.*.branch_uuid' => ['required', 'uuid'],
+            'branches.*.level' => ['required', Rule::in(\App\Models\AccountBranch::LEVELS)],
+            'staff_uuid' => [$isCreate && ! \App\Models\AccountBranch::ready() ? 'required' : 'prohibited', 'uuid', 'exists:staff,uuid'],
 
             // Never client-settable — derived from the staff member's job
             // role in AccountService::createAccount. Still validated as

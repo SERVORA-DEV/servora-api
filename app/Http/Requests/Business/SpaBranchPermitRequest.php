@@ -33,7 +33,6 @@ class SpaBranchPermitRequest extends FormRequest
             'permit_branch_location' => 'required|string',
 
             'permit_issue_date' => 'required|date',
-            'permit_expiration_date' => 'required|date|after:permit_issue_date',
 
             // The owner's "The information provided is accurate" checkbox —
             // required and must be checked, not just present.

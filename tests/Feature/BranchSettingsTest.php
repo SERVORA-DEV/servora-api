@@ -73,18 +73,18 @@ class BranchSettingsTest extends TestCase
         $this->getJson($this->url('/marketplace'))
             ->assertOk()
             ->assertJsonPath('data.listing_visible', true)
-            ->assertJsonPath('data.display.show_prices', true)
+            ->assertJsonPath('data.display.show_therapist_profiles', true)
             ->assertJsonPath('data.display.review_sort', 'newest')
             ->assertJsonPath('data.photos', []);
 
         $this->patchJson($this->url('/marketplace'), [
             'promo_text' => '  Book 2, get 1 free  ',
             'highlights' => ['Private Rooms', 'Private Rooms', ' Parking '],
-            'display' => ['show_prices' => false, 'review_sort' => 'highest'],
+            'display' => ['show_therapist_profiles' => false, 'review_sort' => 'highest'],
         ])->assertOk()
             ->assertJsonPath('data.promo_text', 'Book 2, get 1 free')
             ->assertJsonPath('data.highlights', ['Private Rooms', 'Parking'])
-            ->assertJsonPath('data.display.show_prices', false)
+            ->assertJsonPath('data.display.show_therapist_profiles', false)
             ->assertJsonPath('data.display.show_reviews', true)
             ->assertJsonPath('data.display.review_sort', 'highest');
     }
@@ -231,16 +231,16 @@ class BranchSettingsTest extends TestCase
     public function test_booking_overrides_replace_the_whole_map(): void
     {
         $this->patchJson($this->url('/booking-policy'), ['overrides' => [
-            'walk_in_enabled' => false,
+            'allow_reschedule' => false,
             'max_service_minutes_per_booking' => '120',
         ]])->assertOk()
-            ->assertJsonPath('data.booking_overrides.walk_in_enabled', false)
+            ->assertJsonPath('data.booking_overrides.allow_reschedule', false)
             ->assertJsonPath('data.booking_overrides.max_service_minutes_per_booking', 120);
 
-        // Only the time limit left → walk-ins follow the default again.
+        // Only the time limit left → rescheduling follows the default again.
         $this->patchJson($this->url('/booking-policy'), ['overrides' => ['max_service_minutes_per_booking' => 90]])
             ->assertOk()
-            ->assertJsonMissingPath('data.booking_overrides.walk_in_enabled')
+            ->assertJsonMissingPath('data.booking_overrides.allow_reschedule')
             ->assertJsonPath('data.booking_overrides.max_service_minutes_per_booking', 90);
 
         $this->patchJson($this->url('/booking-policy'), ['overrides' => []])->assertOk();

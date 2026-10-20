@@ -41,7 +41,6 @@ class ClientAccountService
         $order = array_flip($ids);
 
         $branches = $this->branches->publicByIds($ids)
-            ->filter(fn (SpaBranch $b) => MarketplaceReadiness::acceptsOnlineBooking($b))
             ->sortBy(fn (SpaBranch $b) => $order[$b->id] ?? PHP_INT_MAX)
             ->values();
 

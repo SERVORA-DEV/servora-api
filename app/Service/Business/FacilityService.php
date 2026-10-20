@@ -75,8 +75,8 @@ class FacilityService
         }
 
         $this->managerChanges->tell(
-            $user, $branch, ManagerChangeNotifier::ROOMS, 'Room Added',
-            "added the room \"{$model->name}\" at {$branch->branch_name}.",
+            $user, $branch, ManagerChangeNotifier::ROOMS, 'Facility Added',
+            "added the facility \"{$model->name}\" at {$branch->branch_name}.",
         );
 
         // A brand-new room can't have any live assignments yet, so
@@ -125,8 +125,8 @@ class FacilityService
         }
 
         $this->managerChanges->tell(
-            $user, fn () => $model->branch, ManagerChangeNotifier::ROOMS, 'Room Changed',
-            fn () => "changed the room \"{$model->name}\" at {$model->branch->branch_name}.",
+            $user, fn () => $model->branch, ManagerChangeNotifier::ROOMS, 'Facility Changed',
+            fn () => "changed the facility \"{$model->name}\" at {$model->branch->branch_name}.",
         );
 
         return new FacilityResource($this->facilityRepository->findByUuidForBranches($uuid, $branchIds));
@@ -144,8 +144,8 @@ class FacilityService
         $this->facilityRepository->delete($uuid);
 
         $this->managerChanges->tell(
-            $user, fn () => $room->branch, ManagerChangeNotifier::ROOMS, 'Room Removed',
-            fn () => "removed the room \"{$room->name}\" at {$room->branch->branch_name}.",
+            $user, fn () => $room->branch, ManagerChangeNotifier::ROOMS, 'Facility Removed',
+            fn () => "removed the facility \"{$room->name}\" at {$room->branch->branch_name}.",
         );
 
         return true;

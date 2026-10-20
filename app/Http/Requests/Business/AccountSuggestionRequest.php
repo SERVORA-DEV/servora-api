@@ -21,7 +21,13 @@ class AccountSuggestionRequest extends FormRequest
             // AccountService::createAccount uses). Business ownership is
             // enforced in the service, not here, exactly as AccountRequest
             // documents at its own staff_uuid rule.
-            'staff_uuid' => ['required', 'uuid', 'exists:staff,uuid'],
+            // The name and first branch typed so far (or, before logins were
+            // given branches, the employee the login is for).
+            'staff_uuid' => [\App\Models\AccountBranch::ready() ? 'nullable' : 'required', 'uuid', 'exists:staff,uuid'],
+            'first_name' => ['nullable', 'string', 'max:100'],
+            'last_name' => ['nullable', 'string', 'max:100'],
+            'branch_uuid' => ['nullable', 'uuid'],
+            'level' => ['nullable', Rule::in(\App\Models\AccountBranch::LEVELS)],
 
             // role_branch -> "manager.mandug" (login role + the branch's
             // owner-typed code); name -> "juan.delacruz" (the staff member's

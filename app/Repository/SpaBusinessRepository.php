@@ -54,13 +54,16 @@ class SpaBusinessRepository
     // that used to call findByOwnerId($user->id) directly should call this
     // instead so manager requests resolve the same business the owner sees,
     // rather than always coming back null.
+    //
+    // A staff login's business is the one its branches belong to
+    // (App\Support\AccountScope).
     public function findForUser(User $user): ?SpaBusiness
     {
         if ($user->role === 'business_owner') {
             return $this->findByOwnerId($user->id);
         }
 
-        return $user->staff?->branch?->business;
+        return \App\Support\AccountScope::business($user);
     }
 
     // Single source of truth for "which branches can this user see" — every
@@ -69,15 +72,24 @@ class SpaBusinessRepository
     // branch of their business, manager/front_officer gets only their own
     // staff record's branch. Empty collection if the user has no
     // business/branch resolved at all (mirrors findForUser's null case).
+    //
+    // A staff login gets the branches the owner gave it — on Management-only
+    // routes, only those it has Management at (App\Support\AccountScope).
+    //
+    // The owner working the front desk (Operation mode on the web) works one
+    // branch: when the request names one of theirs (X-Branch), only that one.
     public function branchesForUser(User $user): Collection
     {
         if ($user->role === 'business_owner') {
             $business = $this->findByOwnerId($user->id);
-            return $business ? SpaBranch::where('spa_business_id', $business->id)->get() : collect();
+            $all = $business ? SpaBranch::where('spa_business_id', $business->id)->get() : collect();
+            $picked = request()?->header('X-Branch');
+            $only = $picked ? $all->where('uuid', $picked)->values() : collect();
+
+            return $only->isNotEmpty() ? $only : $all;
         }
 
-        $branch = $user->staff?->branch;
-        return $branch ? collect([$branch]) : collect();
+        return \App\Support\AccountScope::branches($user);
     }
 
     // Just the ids — all most callers need, to scope their own queries.
@@ -99,11 +111,22 @@ class SpaBusinessRepository
             return [];
         }
 
-        return AppCache::remember(
+        $ids = AppCache::remember(
             "biz:{$business->id}:branch_ids:v" . AppCache::businessVersion($business->id),
             300,
             fn () => SpaBranch::where('spa_business_id', $business->id)->pluck('id')->all(),
         );
+
+        // Working one branch (see branchesForUser).
+        $picked = request()?->header('X-Branch');
+        if ($picked) {
+            $id = SpaBranch::where('spa_business_id', $business->id)->where('uuid', $picked)->value('id');
+            if ($id && in_array($id, $ids, true)) {
+                return [$id];
+            }
+        }
+
+        return $ids;
     }
 
     // Public lookup — no owner scoping, since this backs the unauthenticated

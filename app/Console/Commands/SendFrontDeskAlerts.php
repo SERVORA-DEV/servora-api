@@ -14,8 +14,9 @@ use Illuminate\Console\Command;
 // The front desk's running to-do list, delivered to the bell of each
 // branch's front officers and manager (not the owner — this is floor
 // operations, and it would bury the owner's feed):
-//   - "Upcoming booking": a scheduled booking starts within the owner's
-//     staff reminder lead time (Settings > Notifications).
+//   - "Upcoming booking": a scheduled booking starts within the next
+//     UPCOMING_BOOKING_HOURS hours (the same for every spa; it needs the
+//     in-app channel on in Settings > Notifications).
 //   - "Not checked in yet": someone with a shift today is past their start
 //     time plus the late threshold (Settings > Staff Policies) and hasn't
 //     checked in or been marked on leave.
@@ -31,6 +32,8 @@ class SendFrontDeskAlerts extends Command
     protected $description = 'Notify front desk and managers about upcoming bookings and attendance issues.';
 
     private const STILL_IN_AFTER_MINUTES = 30;
+
+    private const UPCOMING_BOOKING_HOURS = 2;
 
     public function handle(StaffNotifier $notifier, AttendanceStatusCalculator $calculator): int
     {
@@ -53,12 +56,12 @@ class SendFrontDeskAlerts extends Command
                 foreach ($appointments as $appointment) {
                     $settings = $appointment->branch?->business?->settings?->section('notifications')
                         ?? SpaBusinessSetting::DEFAULTS['notifications'];
-                    if (! $appointment->branch || ! $settings['send_staff_reminder'] || ! $settings['in_app_channel']) {
+                    if (! $appointment->branch || ! $settings['in_app_channel']) {
                         continue;
                     }
 
                     $startsAt = Carbon::parse($appointment->appointment_date->toDateString() . ' ' . $appointment->appointment_time);
-                    if ($startsAt->gt(now()->addHours((int) $settings['staff_reminder_timing']))) {
+                    if ($startsAt->gt(now()->addHours(self::UPCOMING_BOOKING_HOURS))) {
                         continue;
                     }
                     if ($this->alreadySent('Upcoming booking', $appointment->uuid, now()->startOfDay())) {

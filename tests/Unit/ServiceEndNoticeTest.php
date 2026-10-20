@@ -47,7 +47,7 @@ class ServiceEndNoticeTest extends TestCase
         $message = ServiceEndNotice::message('Hilot', 'Nicole De La Gente', Carbon::parse('2026-10-09 21:05:00'), ['Liza Fernandez'], 'Massage Room 1');
 
         $this->assertSame(
-            "Nicole De La Gente's Hilot in Massage Room 1 with Liza Fernandez reached its time at 9:05 PM. Mark it complete once it is done so the room is free.",
+            "Nicole De La Gente's Hilot in Massage Room 1 with Liza Fernandez reached its time at 9:05 PM. Mark it complete once it is done so the facility is free.",
             $message,
         );
     }

@@ -90,8 +90,7 @@ class PolicyGate
             return;
         }
 
-        $staff = $user->staff;
-        $by = trim(($staff?->first_name ?? $user->first_name ?? '') . ' ' . ($staff?->last_name ?? $user->last_name ?? '')) ?: 'Someone';
+        $by = $user->displayName();
         $entries = array_map(fn (array $k) => $k + ['by' => $by, 'at' => now()->toIso8601String()], $kept);
 
         if (self::ready()) {

@@ -12,11 +12,24 @@ class ClientRepository
     // standalone client lookup.
     public function search(int $spaBusinessId, ?string $query, int $perPage = 15, ?array $branchIds = null)
     {
+        // The client's visits for the list: finished ones (how many, the last
+        // one, what they came to) and the next one booked. A manager's count
+        // only their own branch's.
+        $done = fn ($q) => $q->where('status', 'completed')
+            ->when($branchIds !== null, fn ($a) => $a->whereIn('spa_branch_id', $branchIds));
+        $booked = fn ($q) => $q->whereIn('status', ['scheduled', 'checked_in', 'in_service'])
+            ->where('appointment_date', '>=', now()->toDateString())
+            ->when($branchIds !== null, fn ($a) => $a->whereIn('spa_branch_id', $branchIds));
+
         return Client::with(['user', 'preferredTherapist', 'activeMembership.program'])
             ->withCount(['vouchers as vouchers_available_count' => fn ($q) => $q->where('status', 'available')
                 ->where(fn ($e) => $e->whereNull('expires_at')->orWhere('expires_at', '>', now())),
-                // Missed bookings — the no-show policy counts these.
-                'appointments as no_show_count' => fn ($q) => $q->where('status', 'no_show')])
+                // Missed bookings since they last came in — the no-show policy counts these.
+                'appointments as no_show_count' => fn ($q) => $q->missedSinceLastVisit(),
+                'appointments as visits_count' => $done])
+            ->withMax(['appointments as last_visit_date' => $done], 'appointment_date')
+            ->withSum(['appointments as visits_total' => $done], 'total_amount')
+            ->withMin(['appointments as next_visit_date' => $booked], 'appointment_date')
             ->where('spa_business_id', $spaBusinessId)
             ->where('is_active', true)
             ->when($branchIds !== null, fn ($q) => $this->scopeToBranches($q, $branchIds))
@@ -59,7 +72,7 @@ class ClientRepository
             ->withCount(['vouchers as vouchers_available_count' => fn ($q) => $q->where('status', 'available')
                 ->where(fn ($e) => $e->whereNull('expires_at')->orWhere('expires_at', '>', now())),
                 // Missed bookings — the no-show policy counts these.
-                'appointments as no_show_count' => fn ($q) => $q->where('status', 'no_show')])
+                'appointments as no_show_count' => fn ($q) => $q->missedSinceLastVisit()])
             ->where('uuid', $uuid)
             ->where('spa_business_id', $spaBusinessId)
             ->when($branchIds !== null, fn ($q) => $this->scopeToBranches($q, $branchIds))

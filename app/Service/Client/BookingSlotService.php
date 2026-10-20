@@ -69,14 +69,15 @@ class BookingSlotService
         for ($start = $day['open']->copy(); $start->lt($day['close']) && $start->isSameDay($day['open']); $start->addMinutes(self::STEP_MINUTES)) {
             $end = $start->copy()->addMinutes($duration);
 
-            if ($end->gt($day['close']) || $this->closureProblem($day, $start, $end)) {
-                continue;
-            }
-            if (BookingPolicy::startTimeProblem($policy, $start)) {
-                continue; // too soon / in the past — not offered at all
-            }
-
-            $problem = $this->capacityProblem($ctx, $date, $start, $end, $therapist);
+            // Times that can't be booked are still listed, as not available,
+            // so the day reads as a whole: past or too soon, too late for the
+            // services to finish by closing, or a closure in the way.
+            $problem = match (true) {
+                (bool) BookingPolicy::startTimeProblem($policy, $start) => 'too_soon',
+                $end->gt($day['close']) => 'past_closing',
+                (bool) $this->closureProblem($day, $start, $end) => 'closed',
+                default => $this->capacityProblem($ctx, $date, $start, $end, $therapist),
+            };
             $result['slots'][] = [
                 'time' => $start->format('H:i'),
                 'available' => $problem === null,

@@ -23,6 +23,9 @@ class PackageServiceItem extends Model
         'duration_minutes',
         'service_variant_id',
         'quantity',
+        // What this service is worth in the package, per one (null: the menu's
+        // price for its nearest length — see unitPrice()).
+        'price',
         'sort_order',
     ];
 
@@ -53,6 +56,19 @@ class PackageServiceItem extends Model
         $minutes = $this->duration_minutes ?? $this->serviceVariant?->duration_minutes;
 
         return $minutes !== null ? (int) $minutes : null;
+    }
+
+    /**
+     * What one of this service is worth in the package: the price the owner
+     * gave it, else the menu's price for the length nearest its minutes.
+     */
+    public function unitPrice(): float
+    {
+        if (Package::hasLinePrice() && $this->price !== null) {
+            return (float) $this->price;
+        }
+
+        return (float) ($this->guideVariant()?->price ?? 0);
     }
 
     /**

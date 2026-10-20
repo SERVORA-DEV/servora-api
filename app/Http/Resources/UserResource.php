@@ -58,18 +58,44 @@ class UserResource extends JsonResource
         // (employee) record, not the User's own name — see User::staff()
         // and SpaBusinessRepository::branchesForUser for why Staff is the
         // source of truth for name/branch on these roles.
-        if (in_array($this->role, ['manager', 'front_officer'], true) && $this->resource->staff) {
-            $staff = $this->resource->staff;
-            $data['staff_name'] = trim("{$staff->first_name} {$staff->last_name}") ?: null;
-            $data['branch_name'] = $staff->branch?->branch_name;
+        //
+        // A staff login works at the branches the owner gave it, each at a
+        // level (App\Support\AccountScope); the first is where the screens
+        // start, and the web switches between them.
+        $scope = in_array($this->role, ['manager', 'front_officer'], true)
+            ? \App\Support\AccountScope::allBranches($this->resource)
+            : collect();
+        if ($scope->isNotEmpty()) {
+            $levels = \App\Support\AccountScope::levels($this->resource);
+            $data['staff_name'] = $this->resource->displayName();
+            $data['branches'] = $scope->map(fn ($b) => [
+                'uuid' => $b->uuid,
+                'name' => $b->branch_name,
+                'level' => $levels[$b->id] ?? 'operation',
+                'letterhead' => $b->business ? [
+                    'business_name' => $b->business->business_name,
+                    'legal_name' => $b->business->legal_name,
+                    'registration_number' => $b->business->registration_number,
+                    'business_website' => $b->business->website_url,
+                    'business_logo_url' => \App\Services\ImageUploadService::url($b->business->business_logo),
+                    'business_email' => $b->business->business_email,
+                    'branch_name' => $b->branch_name,
+                    'branch_address' => $b->formatted_address,
+                    'branch_phone' => $b->phone_number ?: $b->business->business_phone,
+                ] : null,
+            ])->values();
+            $data['branch_name'] = $scope->first()->branch_name;
 
             // Letterhead for receipts and printed reports — the owner's
             // settings endpoint that normally supplies this is owner-only.
-            $branch = $staff->branch;
+            $branch = $scope->first();
             $business = $branch?->business;
             $data['business_uuid'] = $business?->uuid;
             $data['letterhead'] = $business ? [
                 'business_name' => $business->business_name,
+                'legal_name' => $business->legal_name,
+                'registration_number' => $business->registration_number,
+                'business_website' => $business->website_url,
                 'business_logo_url' => \App\Services\ImageUploadService::url($business->business_logo),
                 'business_email' => $business->business_email,
                 'branch_name' => $branch->branch_name,

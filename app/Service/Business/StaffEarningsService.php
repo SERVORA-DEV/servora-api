@@ -21,6 +21,8 @@ class StaffEarningsService
         private SpaBusinessRepository $spaBusinessRepository,
         private StaffRepository $staffRepository,
         private CommissionCalculator $commissionCalculator,
+        private AttendancePenaltyReader $penalties,
+        private StaffEarningsReport $report,
     ) {
     }
 
@@ -44,12 +46,21 @@ class StaffEarningsService
         }
 
         $ledger = $this->commissionCalculator->ledger($business, $staff->id, $start, $end);
+        // Late and absent days that cost them (Staff Policies → Penalties),
+        // and what is left — never below zero (AttendancePenalty::settle).
+        $penalties = $this->penalties->forStaff($business, [$staff->spa_branch_id], [$staff->id], $start, $end)[$staff->id] ?? [];
+        $settled = \App\Support\AttendancePenalty::settle($ledger['total'], array_sum(array_column($penalties, 'amount')));
 
         return ['data' => [
             'from' => $start->format('Y-m-d'),
             'to' => $end->format('Y-m-d'),
             'commission' => $this->commissionCalculator->describe($business, $staff),
+            'penalty_rules' => $this->report->rules($business),
             'total' => $ledger['total'],
+            'penalties' => $penalties,
+            'penalty_total' => $settled['penalties'],
+            'capped' => $settled['capped'],
+            'net' => $settled['net'],
             'services_done' => $ledger['services_done'],
             'lines' => $ledger['lines'],
         ]];

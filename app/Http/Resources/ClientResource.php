@@ -57,6 +57,12 @@ class ClientResource extends JsonResource
             'vouchers_available' => $this->when(isset($this->vouchers_available_count), fn () => (int) $this->vouchers_available_count),
             // Bookings this client missed (the no-show policy counts them).
             'no_show_count' => $this->when(isset($this->no_show_count), fn () => (int) $this->no_show_count),
+            // The list's visit figures (ClientRepository::search): finished
+            // visits, the last one and what they came to, and the next booked.
+            'visits_count' => $this->when(isset($this->visits_count), fn () => (int) $this->visits_count),
+            'last_visit_date' => $this->when(array_key_exists('last_visit_date', $this->resource->getAttributes()), fn () => $this->last_visit_date ? substr((string) $this->last_visit_date, 0, 10) : null),
+            'visits_total' => $this->when(array_key_exists('visits_total', $this->resource->getAttributes()), fn () => (float) ($this->visits_total ?? 0)),
+            'next_visit_date' => $this->when(array_key_exists('next_visit_date', $this->resource->getAttributes()), fn () => $this->next_visit_date ? substr((string) $this->next_visit_date, 0, 10) : null),
 
             // The client's preferred therapist: the one picked for them by
             // hand (Client::preferredTherapist), or else the one their

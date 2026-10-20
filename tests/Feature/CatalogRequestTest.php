@@ -127,4 +127,85 @@ class CatalogRequestTest extends TestCase
         $this->assertSame('withdrawn', CatalogRequest::firstOrFail()->status);
         $this->getJson('/api/business/catalog-requests')->assertOk()->assertJsonCount(0, 'data');
     }
+
+    // The Requests page asks for everything: answered and withdrawn too, and
+    // old ones, for the owner and the manager alike.
+    public function test_scope_all_returns_the_whole_history_for_both_roles(): void
+    {
+        $added = $this->ask()->json('data.uuid');
+        $declined = $this->ask(['kind' => 'package', 'name' => 'Couples Retreat'])->json('data.uuid');
+        $withdrawn = $this->ask(['name' => 'Hot Wax'])->json('data.uuid');
+        $this->deleteJson("/api/business/catalog-requests/{$withdrawn}")->assertOk();
+        $waiting = $this->ask(['name' => 'Scalp Ritual'])->json('data.uuid');
+
+        Sanctum::actingAs($this->owner);
+        $this->postJson("/api/business/catalog-requests/{$added}/added")->assertOk();
+        $this->postJson("/api/business/catalog-requests/{$declined}/decline", ['reason' => 'Not this year.'])->assertOk();
+        // An old answer is still in the history.
+        CatalogRequest::where('uuid', $added)->update(['decided_at' => now()->subDays(90)]);
+
+        // The owner's usual list is still only what waits.
+        $this->getJson('/api/business/catalog-requests')->assertOk()->assertJsonCount(1, 'data');
+
+        $all = $this->getJson('/api/business/catalog-requests?scope=all')->assertOk()->assertJsonCount(4, 'data');
+        $byUuid = collect($all->json('data'))->keyBy('uuid');
+        $this->assertSame('added', $byUuid[$added]['status']);
+        $this->assertSame('declined', $byUuid[$declined]['status']);
+        $this->assertSame('withdrawn', $byUuid[$withdrawn]['status']);
+        $this->assertSame('pending', $byUuid[$waiting]['status']);
+        $this->assertNull($byUuid[$waiting]['closed_at']);
+        $this->assertNotNull($byUuid[$withdrawn]['closed_at'], 'a withdrawn request has a date it was closed');
+
+        Sanctum::actingAs($this->manager);
+        $this->getJson('/api/business/catalog-requests?scope=all')->assertOk()->assertJsonCount(4, 'data');
+    }
+
+    public function test_scope_all_never_shows_another_branchs_requests_to_a_manager(): void
+    {
+        $this->ask();
+
+        $other = SpaBranch::factory()->create(['spa_business_id' => $this->business->id]);
+        CatalogRequest::create([
+            'spa_business_id' => $this->business->id, 'spa_branch_id' => $other->id, 'requested_by_user_id' => $this->owner->id,
+            'kind' => 'service', 'name' => 'Elsewhere', 'status' => CatalogRequest::PENDING,
+        ]);
+
+        Sanctum::actingAs($this->manager);
+        $this->getJson('/api/business/catalog-requests?scope=all')->assertOk()->assertJsonCount(1, 'data');
+        Sanctum::actingAs($this->owner);
+        $this->getJson('/api/business/catalog-requests?scope=all')->assertOk()->assertJsonCount(2, 'data');
+    }
+
+    // The request carries the form the owner would fill in.
+    public function test_a_request_keeps_the_form_the_manager_filled_in(): void
+    {
+        $payload = [
+            'serviceType' => 'time', 'facilityRequired' => true, 'homeServiceAvailable' => false, 'code' => 'BAM',
+            'description' => 'Warm bamboo rolled along the back.',
+            'variants' => [['durationMinutes' => 45, 'price' => 700], ['durationMinutes' => 90, 'price' => 1300]],
+            'ignored' => 'not kept',
+        ];
+        $response = $this->ask(['payload' => $payload, 'category' => 'Massage', 'details' => 'Clients ask weekly.'])->assertCreated();
+        $response->assertJsonPath('data.payload.variants.1.price', 1300)->assertJsonPath('data.payload.facilityRequired', true);
+        $this->assertArrayNotHasKey('ignored', $response->json('data.payload'));
+
+        Sanctum::actingAs($this->owner);
+        $this->getJson('/api/business/catalog-requests')->assertOk()->assertJsonPath('data.0.payload.code', 'BAM');
+    }
+
+    public function test_a_manager_can_ask_for_an_addon_and_the_owner_is_told(): void
+    {
+        $this->ask([
+            'kind' => 'addon', 'name' => 'Hot Stones',
+            'payload' => ['price' => 250, 'durationMinutes' => 15, 'categories' => ['Massage'], 'allServices' => true, 'serviceIds' => []],
+        ])->assertCreated()->assertJsonPath('data.kind', 'addon');
+
+        $this->assertDatabaseHas('notifications', ['user_id' => $this->owner->id, 'title' => 'New Add-on Request']);
+    }
+
+    public function test_a_badly_formed_form_is_refused(): void
+    {
+        $this->ask(['payload' => ['variants' => [['durationMinutes' => 0, 'price' => -5]]]])->assertStatus(422);
+        $this->ask(['kind' => 'package', 'name' => 'Duo', 'payload' => ['services' => [['serviceId' => 'nope', 'durationMinutes' => 60, 'quantity' => 1]]]])->assertStatus(422);
+    }
 }

@@ -405,6 +405,52 @@ class CustomerProgramService
         return ['data' => $this->summaryFor($client, $branchIds ? $branchIds[0] : null)];
     }
 
+    // Just a client's usable vouchers, for the front desk's booking page (it
+    // tags the services a free-service voucher covers) — without the
+    // catalogue, progress and memberships that summaryFor works out.
+    public function clientVouchers(User $user, string $clientUuid)
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+        if (! $business) {
+            return $this->noBusiness();
+        }
+        $client = $this->client($user, $business, $clientUuid);
+        if (! $this->rewards->enabledFor($client->spa_business_id)) {
+            return ['data' => []];
+        }
+        $wallet = ClientVoucher::with('program')->where('client_id', $client->id)->where('status', 'available')
+            ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+            ->orderBy('expires_at')->get();
+
+        return ['data' => $this->walletEntries($wallet)];
+    }
+
+    // Each voucher as it was issued: its own copy of the name and deal
+    // (ClientVoucher::dealProgram / App\Support\History). `deal_type` and
+    // `usable` say, in data, what it does and which services it is for.
+    private function walletEntries($wallet): Collection
+    {
+        // `held`: already on a booking the client made in the app, so it can't
+        // go on another until that is billed or cancelled.
+        $held = ClientVoucher::heldIds($wallet->pluck('id'));
+
+        return $wallet->filter(fn ($v) => $v->dealProgram())->map(fn ($v) => [
+            'uuid' => $v->uuid,
+            'program_uuid' => $v->dealProgram()->uuid,
+            'name' => $v->dealProgram()->name,
+            'deal' => $this->dealText($v->dealProgram()),
+            'deal_type' => $v->dealProgram()->value('dealType', '₱ off'),
+            // The number in "10% off" / "₱200 off" (0 for a free service).
+            'deal_value' => (float) $v->dealProgram()->value('value', 0),
+            'usable_on' => $v->dealProgram()->value('usableOn', 'All services'),
+            'usable' => VoucherTarget::of($v->dealProgram()->values, 'usable'),
+            'source' => $v->source,
+            'held' => in_array($v->id, $held, true),
+            'issued_at' => $v->issued_at?->toIso8601String(),
+            'expires_at' => $v->expires_at?->toIso8601String(),
+        ])->values();
+    }
+
     public function redeemForClient(User $user, string $clientUuid, string $programUuid)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
@@ -496,16 +542,7 @@ class CustomerProgramService
             ] : null,
             // Each voucher as it was issued: its own copy of the name and
             // deal (ClientVoucher::dealProgram / App\Support\History).
-            'wallet' => $wallet->filter(fn ($v) => $v->dealProgram())->map(fn ($v) => [
-                'uuid' => $v->uuid,
-                'program_uuid' => $v->dealProgram()->uuid,
-                'name' => $v->dealProgram()->name,
-                'deal' => $this->dealText($v->dealProgram()),
-                'usable_on' => $v->dealProgram()->value('usableOn', 'All services'),
-                'source' => $v->source,
-                'issued_at' => $v->issued_at?->toIso8601String(),
-                'expires_at' => $v->expires_at?->toIso8601String(),
-            ])->values(),
+            'wallet' => $this->walletEntries($wallet),
             'vouchers' => $catalogue->where('type', 'voucher')->map(fn ($p) => [
                 'program_uuid' => $p->uuid,
                 'name' => $p->name,

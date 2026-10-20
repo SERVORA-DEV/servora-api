@@ -33,6 +33,12 @@ class SpaBusinessSetting extends Model
             'commission_release_cycle' => 'monthly',
             'commission_includes_extension' => true,
             'commission_includes_tips' => false,
+            // A service done on a home visit earns this instead of the staff
+            // member's plan rate (App\Support\CommissionShare); the home
+            // service fee still goes to the therapist. Off unless the owner asks.
+            'home_commission_enabled' => false,
+            'home_commission_type' => 'percentage',
+            'home_commission_rate' => 0,
 
             'attendance_tracking' => true,
             'require_check_in' => true,
@@ -45,6 +51,19 @@ class SpaBusinessSetting extends Model
             // (AttendanceStatusCalculator). Off: hours stop at the shift end.
             'allow_overtime' => false,
 
+            // What lateness and absences take off a staff member's earnings
+            // for the pay period (App\Support\AttendancePenalty): a fixed
+            // amount per late day and per absent day, never below zero. Each
+            // change applies from that day on (StaffPenaltyRate). Off unless
+            // the owner asks.
+            'late_penalty_enabled' => false,
+            // 'day': the amount for each late day; 'hour': the amount per
+            // hour late, for the minutes they were late.
+            'late_penalty_mode' => 'day',
+            'late_penalty_amount' => 0,
+            'absent_penalty_enabled' => false,
+            'absent_penalty_amount' => 0,
+
             // Who the front desk's therapist rotation puts next: 'check_in' (first
             // timed in, back of the line after each service) or 'lowest_earnings'
             // (whoever has earned the least commission this pay period goes first).
@@ -52,12 +71,6 @@ class SpaBusinessSetting extends Model
         ],
 
         'booking_defaults' => [
-            'online_booking_enabled' => true,
-            'walk_in_enabled' => true,
-            // Reservations taken at the front desk (the phone, the counter).
-            // Off: the desk can't add one at that branch — walk-ins and app
-            // bookings are their own switches (App\Support\FrontDeskPolicy).
-            'reservation_enabled' => true,
             // Home service (HomeServiceRules): off until the owner turns it
             // on; a flat fee in pesos that goes to the therapist; how far
             // from the branch, in km, a client's address may be; and the
@@ -66,21 +79,26 @@ class SpaBusinessSetting extends Model
             'home_service_fee' => 0,
             'home_service_radius_km' => 10,
             'home_service_min_minutes' => 0,
-            'allow_therapist_selection' => true,
-            'auto_assign_therapist' => true,
             'allow_reschedule' => true,
+            // How many times a client may move one booking in the app
+            // (0 = none); the front desk isn't held to it.
+            'max_reschedules_per_booking' => 2,
             'allow_cancellation' => true,
 
-            'booking_lead_time_minutes' => 30,
             'max_advance_booking_days' => 30,
             'max_services_per_booking' => 3,
+            // Bookings one client may have on the same day (client app).
+            'max_bookings_per_client_per_day' => 1,
             // The most service time one booking may hold, in minutes
             // (0 = no limit). The client app is refused past it; the front
             // desk is only warned — see BookingPolicy::serviceTimeProblem.
             'max_service_minutes_per_booking' => 0,
 
             'cancellation_window_hours' => 24,
-            'cancellation_policy_tier' => 'flexible',
+            // What a missed booking does (Business Defaults → Missed bookings):
+            // nothing, a warning, or — after no_show_suspend_after missed since
+            // the client's last visit — booking in the app paused for them. The
+            // owner chooses; nobody is flagged unless the business asks for it.
             'no_show_policy' => 'warn',
             'no_show_suspend_after' => 3,
 
@@ -89,7 +107,6 @@ class SpaBusinessSetting extends Model
             'auto_assign_queue' => true,
             'max_queue_size' => 20,
             'queue_number_format' => 'numeric',
-            'estimated_wait_display' => true,
             'walk_ins_first_priority' => false,
 
             'allow_service_extension' => true,
@@ -97,13 +114,6 @@ class SpaBusinessSetting extends Model
             'max_extension_mins' => 60,
             'extension_requires_approval' => false,
 
-            // Refund % per cancellation tier. The three tiers themselves are
-            // fixed; only their refund share is the owner's to set.
-            'cancellation_tiers' => [
-                'flexible' => 100,
-                'moderate' => 50,
-                'strict' => 0,
-            ],
         ],
 
         'notifications' => [
@@ -147,8 +157,6 @@ class SpaBusinessSetting extends Model
 
             'send_client_reminder' => true,
             'reminder_timing' => 24,
-            'send_staff_reminder' => true,
-            'staff_reminder_timing' => 2,
             'send_payment_reminder' => true,
             'send_birthday_greeting' => true,
 
@@ -199,7 +207,7 @@ class SpaBusinessSetting extends Model
     }
 
     // The effective values for one section: stored keys layered over the
-    // defaults (one level deep for nested maps like cancellation_tiers), and
+    // defaults (one level deep for nested maps), and
     // limited to known keys so a retired setting never leaks back out.
     public function section(string $name): array
     {

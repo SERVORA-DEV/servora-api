@@ -67,7 +67,18 @@ class PlanFitTest extends TestCase
         $problems = $this->problems([1], [10, 13]);
 
         $this->assertCount(1, $problems);
-        $this->assertStringContainsString('Ben works at a branch that is going on hold', $problems[0]);
+        $this->assertStringContainsString('Ben works only at a branch that is going on hold', $problems[0]);
+    }
+
+    public function test_a_login_with_several_branches_is_kept_while_one_of_them_is(): void
+    {
+        $accounts = [['id' => 20, 'branch_ids' => [1, 2], 'name' => 'Mia'], ['id' => 21, 'branch_ids' => [2, 3], 'name' => 'Leo']];
+        $branches = [['id' => 1, 'name' => 'Main', 'upcoming' => 0], ['id' => 2, 'name' => 'Acacia', 'upcoming' => 0], ['id' => 3, 'name' => 'Lanang', 'upcoming' => 0]];
+
+        $this->assertSame([], PlanFit::problems(1, 2, $branches, [$accounts[0]], [1], [20]));
+        $problems = PlanFit::problems(1, 2, $branches, $accounts, [1], [20, 21]);
+        $this->assertCount(1, $problems);
+        $this->assertStringContainsString('Leo works only at branches that are going on hold', $problems[0]);
     }
 
     public function test_appointments_at_a_branch_going_on_hold_are_in_the_way(): void

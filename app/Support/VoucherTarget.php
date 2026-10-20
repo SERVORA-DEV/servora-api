@@ -67,6 +67,43 @@ final class VoucherTarget
     }
 
     /**
+     * Whether a voucher can be used on a booking's services, so a client can't
+     * book with one that would later come to nothing at the bill (the same
+     * rules as BillingService::programDiscount): a voucher for a category or
+     * for chosen services needs one of the services (a package's included) to
+     * be covered; an older free-service voucher for all services names its
+     * service and needs one with that name; any other voucher for all
+     * services fits whatever is booked.
+     *
+     * @param  array<int, array{uuid: ?string, category: ?string, name: ?string}>  $services  everything booked, a package's services too
+     */
+    public static function fits(string $deal, array $target, string $usableOn, array $services): bool
+    {
+        if (! self::isAll($target)) {
+            foreach ($services as $service) {
+                if (self::matches($target, $service['uuid'] ?? null, $service['category'] ?? null)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if ($deal === 'Free service') {
+            $name = mb_strtolower(trim($usableOn));
+            foreach ($services as $service) {
+                if ($name !== '' && str_contains(mb_strtolower((string) ($service['name'] ?? '')), $name)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
      * The line a voucher comes off: the dearest matching one. Lines with no
      * price are skipped (nothing to take off).
      *

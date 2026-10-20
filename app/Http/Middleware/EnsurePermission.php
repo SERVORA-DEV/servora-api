@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use App\Support\AdminPermissions;
 use App\Support\AppCache;
+use App\Support\PermissionGrants;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -52,7 +53,7 @@ class EnsurePermission
         if (in_array($user->role, self::ACCOUNT_ROLES, true)) {
             $permission = $user->permission;
 
-            if ($permission && $permission->getAttribute($key) !== true) {
+            if ($permission && $permission->getAttribute($key) !== true && ! PermissionGrants::stillPending($user->role, $key)) {
                 abort(403, 'You do not have permission to perform this action.');
             }
         }

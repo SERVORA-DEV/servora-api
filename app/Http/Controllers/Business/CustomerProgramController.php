@@ -80,6 +80,11 @@ class CustomerProgramController extends Controller
         return $this->programs->clientRewards($request->user(), $uuid);
     }
 
+    public function clientVouchers(Request $request, string $uuid)
+    {
+        return $this->programs->clientVouchers($request->user(), $uuid);
+    }
+
     public function redeem(Request $request, string $uuid)
     {
         $data = $request->validate(['program_uuid' => ['required', 'uuid']]);

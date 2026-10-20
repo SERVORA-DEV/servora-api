@@ -70,41 +70,6 @@ class BillingResource extends JsonResource
             // billing (loaded without these relations) stays lean.
             'appointment' => new AppointmentResource($this->whenLoaded('appointment')),
             'payments' => PaymentResource::collection($this->whenLoaded('payments')),
-            'policy_refund' => $this->policyRefund(),
-        ];
-    }
-
-    // What the branch's cancellation policy says to give back on a cancelled
-    // booking (Business Defaults → Refund by cancellation policy, or the
-    // branch's own tier). A suggestion the refund form starts from — staff
-    // can still refund more or less, up to what was paid.
-    private function policyRefund(): ?array
-    {
-        $appointment = $this->relationLoaded('appointment') ? $this->appointment : $this->appointmentContext;
-        if (! $this->relationLoaded('payments') || ! $appointment) {
-            return null;
-        }
-
-        if ($appointment?->status !== Appointment::STATUS_CANCELLED || ! $appointment->branch) {
-            return null;
-        }
-
-        $taken = $this->payments->whereIn('payment_status', ['Paid', 'Refunded']);
-        $paid = round((float) $taken->sum(fn ($p) => (float) $p->amount), 2);
-        $refunded = round((float) $taken->sum(fn ($p) => (float) $p->refunded_amount), 2);
-        if ($paid <= 0) {
-            return null;
-        }
-
-        $policy = BookingPolicy::for($appointment->branch);
-        $percent = $policy['refund_percent'];
-
-        return [
-            'tier' => $policy['cancellation_policy_tier'],
-            'percent' => $percent,
-            'paid' => $paid,
-            // Less anything already handed back, never below zero.
-            'amount' => max(0, min(round($paid - $refunded, 2), round($paid * $percent / 100 - $refunded, 2))),
         ];
     }
 }

@@ -218,8 +218,7 @@ class BranchClosureService
     // Everyone who runs the branch, and the owner — except whoever did it.
     private function announce(User $actor, SpaBranch $branch, string $title, string $what): void
     {
-        $name = trim(($actor->staff?->first_name ?? '') . ' ' . ($actor->staff?->last_name ?? ''))
-            ?: (trim(($actor->first_name ?? '') . ' ' . ($actor->last_name ?? '')) ?: 'Someone');
+        $name = $actor->displayName();
 
         $this->staffNotifier->branch($branch, $title, "{$name} {$what}", exceptUserId: $actor->id, reference: $branch->uuid);
     }

@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Models\Addon;
 use App\Models\CatalogRequest;
 use App\Models\Package;
 use App\Models\Service;
@@ -26,10 +27,17 @@ class CatalogRequestService
     ) {
     }
 
+    // The most the Requests page asks for in one go.
+    private const ALL_LIMIT = 200;
+
     // The owner sees every request still waiting, across the business. A
     // manager sees their own branch's: the waiting ones, and the answered
     // ones for a while so the answer can be read.
-    public function list(User $user)
+    //
+    // $scope 'all' (the Requests page): every request, whatever its status
+    // and however old, newest first — the whole history for both roles, still
+    // limited to the owner's business or the manager's branch.
+    public function list(User $user, ?string $scope = null)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
         if (! $business) {
@@ -38,6 +46,15 @@ class CatalogRequestService
 
         $query = CatalogRequest::with(['branch', 'requester.staff'])
             ->where('spa_business_id', $business->id);
+
+        if ($scope === 'all') {
+            if ($user->role !== 'business_owner') {
+                $query->whereIn('spa_branch_id', $this->spaBusinessRepository->branchIdsForUser($user));
+            }
+            $requests = $query->latest()->limit(self::ALL_LIMIT)->get();
+
+            return response()->json(['data' => $requests->map(fn ($request) => $this->present($request, $user))->values()]);
+        }
 
         if ($user->role === 'business_owner') {
             $query->where('status', CatalogRequest::PENDING);
@@ -64,7 +81,8 @@ class CatalogRequestService
         }
 
         $business = $this->spaBusinessRepository->findForUser($user);
-        $branch = $user->staff?->branch;
+        // The branch they are working in (App\Support\AccountScope::workingBranch).
+        $branch = \App\Support\AccountScope::workingBranch($user);
         if (! $business || ! $branch) {
             return response()->json(['message' => 'No branch found for this account.'], 422);
         }
@@ -73,7 +91,11 @@ class CatalogRequestService
         $name = trim(preg_replace('/\s+/', ' ', $payload['name']));
         $lower = mb_strtolower($name);
 
-        $catalog = $kind === 'package' ? Package::query() : Service::query();
+        $catalog = match ($kind) {
+            'package' => Package::query(),
+            'addon' => Addon::query(),
+            default => Service::query(),
+        };
         if ($catalog->where('spa_business_id', $business->id)->whereRaw('LOWER(name) = ?', [$lower])->exists()) {
             return response()->json(['message' => "\"{$name}\" is already in the catalog. Switch it on for your branch instead."], 422);
         }
@@ -94,11 +116,11 @@ class CatalogRequestService
             'requested_by_user_id' => $user->id,
             'kind' => $kind,
             'name' => $name,
-            // A package has no category.
+            // Only a service has a category here (an add-on has several, in its form).
             'category' => $kind === 'service' ? (trim($payload['category'] ?? '') ?: null) : null,
             'details' => trim($payload['details'] ?? '') ?: null,
             'status' => CatalogRequest::PENDING,
-        ]);
+        ] + (CatalogRequest::hasPayload() ? ['payload' => ($payload['payload'] ?? null) ?: null] : []));
 
         if ($business->owner) {
             $this->notificationService->catalogRequested($business->owner, $kind, $name, $this->userName($user), $branch->branch_name);
@@ -196,20 +218,24 @@ class CatalogRequestService
             'name' => $request->name,
             'category' => $request->category,
             'details' => $request->details,
+            // The form the manager filled in; null for a request made without one.
+            'payload' => CatalogRequest::hasPayload() ? $request->payload : null,
             'status' => $request->status,
             'branch_name' => $request->branch?->branch_name,
             'requested_by' => $request->requester ? $this->userName($request->requester) : null,
             'requested_by_me' => $request->requested_by_user_id === $viewer->id,
             'requested_at' => $request->created_at?->toIso8601String(),
             'decided_at' => $request->decided_at?->toIso8601String(),
+            // When it stopped waiting: the answer, or the withdrawal.
+            'closed_at' => $request->status === CatalogRequest::PENDING
+                ? null
+                : ($request->decided_at ?? $request->updated_at)?->toIso8601String(),
             'decision_note' => $request->decision_note,
         ];
     }
 
     private function userName(User $user): string
     {
-        $staffName = trim(($user->staff?->first_name ?? '') . ' ' . ($user->staff?->last_name ?? ''));
-
-        return $staffName ?: (trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? '')) ?: 'A manager');
+        return $user->displayName();
     }
 }

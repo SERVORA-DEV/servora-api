@@ -72,11 +72,8 @@ class SpaBranchService
         // at once. Open-now is recomputed on every request below.
         $key = sprintf('nearby:%.3f:%.3f:%s:%d:m%d', $lat, $lng, $radiusKm, $limit, AppCache::version('marketplace'));
         $cached = AppCache::remember($key, 120, function () use ($lat, $lng, $radiusKm, $limit) {
-            // The query already keeps only bookable branches (MarketplaceReadiness);
-            // online booking lives in settings JSON, so that part is checked here.
-            $branches = $this->spaBranchRepository->nearby($lat, $lng, $radiusKm, $limit)
-                ->filter(fn ($b) => MarketplaceReadiness::acceptsOnlineBooking($b))
-                ->values();
+            // The query already keeps only bookable branches (MarketplaceReadiness).
+            $branches = $this->spaBranchRepository->nearby($lat, $lng, $radiusKm, $limit);
             app(ReviewRepository::class)->attachRatings($branches);
             if (BranchClosures::ready() && $branches->isNotEmpty()) {
                 $branches->load(['closures' => BranchClosures::upcomingScope()]);
@@ -128,9 +125,10 @@ class SpaBranchService
 
             $services = $this->spaBranchRepository->publicServicesForBranch($branch->id);
             $packages = $this->spaBranchRepository->publicPackagesForBranch($branch->id);
-            // Branch Settings → Marketplace → Show therapist profiles: off keeps
-            // the roster private, and bookings are auto-assigned.
-            $therapists = $branch->displaySettings()['show_therapist_profiles']
+            // Branch Settings → Marketplace → Show therapist profiles, or the
+            // booking rule Client Can Choose Staff, off: the roster stays
+            // private and the app offers no picker.
+            $therapists = BookingPolicy::clientMayChooseTherapist($branch)
                 ? $this->spaBranchRepository->publicTherapistsForBranch($branch->id)
                 : collect();
 
@@ -172,7 +170,7 @@ class SpaBranchService
         $time = $query['time'];
         $duration = (int) ($query['duration_minutes'] ?? 60);
 
-        $therapists = $branch->displaySettings()['show_therapist_profiles']
+        $therapists = BookingPolicy::clientMayChooseTherapist($branch)
             ? $this->spaBranchRepository->publicTherapistsForBranch($branch->id)
             : collect();
 
@@ -206,14 +204,10 @@ class SpaBranchService
         // Not ready for bookings (no therapist, no hours…): offer no times,
         // with the same message the booking endpoint would give.
         if (! MarketplaceReadiness::isBookable($branch)) {
-            $policy = BookingPolicy::for($branch);
-
             return ['data' => [
                 'date' => $query['date'],
                 'duration_minutes' => (int) $query['duration_minutes'],
-                'closed_reason' => $policy['online_booking_enabled']
-                    ? MarketplaceReadiness::NOT_BOOKABLE
-                    : BookingPolicy::startTimeProblem($policy, BookingPolicy::now()),
+                'closed_reason' => MarketplaceReadiness::NOT_BOOKABLE,
                 'slots' => [],
             ]];
         }
@@ -550,7 +544,6 @@ class SpaBranchService
             'permit_business_name' => $payload['permit_business_name'],
             'permit_branch_location' => $payload['permit_branch_location'],
             'permit_issue_date' => $payload['permit_issue_date'],
-            'permit_expiration_date' => $payload['permit_expiration_date'],
             'permit_confirmed' => true,
         ]);
 

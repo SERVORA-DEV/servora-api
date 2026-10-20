@@ -285,6 +285,7 @@ class PackageService
                 'variant' => $variant ?? (($at = PackagePlan::closest($lengths->map(fn ($v) => ['minutes' => $v->duration_minutes])->all(), $minutes)) === null ? null : $lengths[$at]),
                 'minutes' => $minutes,
                 'quantity' => max(1, (int) ($item['quantity'] ?? 1)),
+                'price' => isset($item['price']) && $item['price'] !== '' ? round((float) $item['price'], 2) : null,
                 'addons' => $addons,
             ];
         }
@@ -323,7 +324,7 @@ class PackageService
                 'duration_minutes' => $row['minutes'],
                 'quantity' => $row['quantity'],
                 'sort_order' => $index + 1,
-            ]);
+            ] + (Package::hasLinePrice() ? ['price' => $row['price'] ?? null] : []));
             foreach ($row['addons'] as $addon) {
                 PackageAddon::create(['package_id' => $package->id, 'addon_id' => $addon->id, 'service_id' => $row['service']->id]);
             }

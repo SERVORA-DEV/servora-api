@@ -81,7 +81,8 @@ class ProgramRequestService
         }
 
         $business = $this->spaBusinessRepository->findForUser($user);
-        $branch = $user->staff?->branch;
+        // The branch they are working in (App\Support\AccountScope::workingBranch).
+        $branch = \App\Support\AccountScope::workingBranch($user);
         if (! $business || ! $branch) {
             return $this->refuse('No branch found for this account.');
         }
@@ -298,9 +299,7 @@ class ProgramRequestService
 
     private function userName(User $user): string
     {
-        $staffName = trim(($user->staff?->first_name ?? '') . ' ' . ($user->staff?->last_name ?? ''));
-
-        return $staffName ?: (trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? '')) ?: 'A manager');
+        return $user->displayName();
     }
 
     private function refuse(string $message, int $status = 422): JsonResponse

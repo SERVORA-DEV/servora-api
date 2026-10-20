@@ -283,7 +283,6 @@ class DemoBusinessSeeder extends Seeder
                     'permit_business_name' => 'Lotus Haven Wellness Inc.',
                     'permit_branch_location' => $b['formatted_address'],
                     'permit_issue_date' => now()->startOfYear()->toDateString(),
-                    'permit_expiration_date' => now()->endOfYear()->toDateString(),
                     'permit_confirmed' => true,
                     'promo_text' => $b['promo_text'],
                     'listing_visible' => true,
@@ -508,8 +507,6 @@ class DemoBusinessSeeder extends Seeder
         ]), 'staff policy');
 
         $this->ok($settings->updateSection($this->owner, 'booking_defaults', [
-            'online_booking_enabled' => true,
-            'walk_in_enabled' => true,
             'queue_enabled' => true,
         ]), 'booking defaults');
     }

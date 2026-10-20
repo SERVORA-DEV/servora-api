@@ -78,12 +78,23 @@ class CommissionCalculator
 
         // Each at their own rate: a custom one where they have it.
         $custom = Staff::hasCustomCommission();
-        $ownRates = $custom
-            ? Staff::whereIn('id', $done->pluck('staff_id')->filter()->all())
+        $ownRates = collect();
+        if (Staff::hasCommissionPlans()) {
+            // The rate of the plan they are on.
+            $ownRates = Staff::whereIn('staff.id', $done->pluck('staff_id')->filter()->all())
+                ->where('staff.role', \App\Support\StaffSpecialty::ROLE)
+                ->join('commission_plans as p', 'p.id', '=', 'staff.commission_plan_id')
+                ->pluck('p.rate', 'staff.id');
+        } elseif ($custom) {
+            $ownRates = Staff::whereIn('id', $done->pluck('staff_id')->filter()->all())
                 ->where('role', \App\Support\StaffSpecialty::ROLE)
                 ->whereNotNull('commission_rate')
-                ->pluck('commission_rate', 'id')
-            : collect();
+                ->pluck('commission_rate', 'id');
+        }
+
+        // A service done on a home visit earns the home service commission
+        // when the owner turned it on (CommissionShare::rate).
+        $home = (bool) $line->appointment?->isHomeService();
 
         $kept = 0;
         foreach ($done->whereNotNull('staff_id') as $assignment) {
@@ -98,11 +109,12 @@ class CommissionCalculator
                 $line->source_appointment_package_id !== null,
                 $done->count(),
                 $own,
+                $home,
             ), 2);
 
             $assignment->update(['commission_amount' => $amount] + ($custom && $policy ? [
-                'commission_rate' => CommissionShare::rate($policy, $own),
-                'commission_type' => $policy['commission_type'] ?? 'percentage',
+                'commission_rate' => CommissionShare::rate($policy, $own, $home),
+                'commission_type' => CommissionShare::type($policy, $home),
             ] : []));
             $kept++;
         }
@@ -264,11 +276,13 @@ class CommissionCalculator
                 $base = (float) $line->subtotal;
                 // The kind it was worked out as: what was kept with the
                 // amount, else today's.
-                $type = $line->kept_type ?? ($policy['commission_type'] ?? 'percentage');
+                $type = $line->kept_type ?? CommissionShare::type($policy, (bool) ($line->is_home ?? false));
                 $lines[] = [
                     'at' => Carbon::parse($line->completed_at)->toIso8601String(),
                     'date' => Carbon::parse($line->completed_at)->format('Y-m-d'),
                     'kind' => $line->source_appointment_package_id !== null ? 'package' : 'service',
+                    // Worked out at the home service commission rather than the plan's.
+                    'home' => CommissionShare::homeApplies($policy, (bool) ($line->is_home ?? false)),
                     'service' => $line->service_name,
                     'client' => $name($line),
                     'appointment_uuid' => $line->appointment_uuid,
@@ -322,6 +336,48 @@ class CommissionCalculator
     }
 
     /**
+     * What each of these staff earned between two dates, in totals — the
+     * Earnings page. The same rules as ledger(), so a row there adds up to
+     * the employee's own Earnings tab.
+     *
+     * @param  int[]  $staffIds
+     * @return array<int, array{commission: float, home_fees: float, services_done: int}>
+     */
+    public function summary(?SpaBusiness $business, array $staffIds, Carbon $from, Carbon $to): array
+    {
+        $result = array_fill_keys($staffIds, ['commission' => 0.0, 'home_fees' => 0.0, 'services_done' => 0]);
+        if (! $staffIds) {
+            return $result;
+        }
+        $policy = $this->policy($business);
+        $start = $from->copy()->startOfDay();
+        $end = $to->copy()->endOfDay();
+
+        $serviceLines = $this->lines($staffIds, $start, $end);
+        foreach ($serviceLines as $line) {
+            $id = (int) $line->staff_id;
+            $result[$id]['services_done']++;
+            if (! $policy || ! $this->paid($line)) {
+                continue;
+            }
+            $amount = $this->amountFor($line, $policy);
+            $result[$id]['commission'] += $amount;
+        }
+
+        foreach ($this->homeFeeLines($staffIds, $start, $end) as $line) {
+            if ($this->paid($line)) {
+                $result[(int) $line->staff_id]['home_fees'] += $this->homeFeeShare($line);
+            }
+        }
+
+        return array_map(fn ($r) => [
+            'commission' => round($r['commission'], 2),
+            'home_fees' => round($r['home_fees'], 2),
+            'services_done' => $r['services_done'],
+        ], $result);
+    }
+
+    /**
      * The commission rule in force, for showing next to the figures: the
      * standard rate, and — for one staff member — the rate that applies to
      * them and whether it is a custom one.
@@ -337,6 +393,11 @@ class CommissionCalculator
             'rate' => $policy ? CommissionShare::rate($policy, $own) : null,
             'standard_rate' => $policy ? CommissionShare::rate($policy) : null,
             'custom' => $own !== null,
+            // The plan they are on (null: Standard), and the home service
+            // commission when the owner turned it on.
+            'plan' => $policy ? $staff?->commissionPlanName() : null,
+            'home_rate' => $policy && ! empty($policy['home_commission_enabled']) ? CommissionShare::rate($policy, null, true) : null,
+            'home_type' => $policy && ! empty($policy['home_commission_enabled']) ? CommissionShare::type($policy, true) : null,
             'applies_to' => $policy['commission_applies_to'] ?? null,
             'period_label' => $this->periodLabel($policy),
         ];
@@ -386,20 +447,22 @@ class CommissionCalculator
     }
 
     // $detailed adds the service's name and whose visit it was (ledger()).
-    private function lines(array $staffIds, Carbon $from, Carbon $to, bool $detailed = false)
+    // $assignmentIds: just these assignments, whenever they were completed.
+    private function lines(array $staffIds, ?Carbon $from, ?Carbon $to, bool $detailed = false, ?array $assignmentIds = null)
     {
         return DB::table('therapist_assignments as ta')
             ->join('appointment_services as s', 's.id', '=', 'ta.appointment_service_id')
-            ->whereIn('ta.staff_id', $staffIds)
+            ->when($assignmentIds !== null, fn ($q) => $q->whereIn('ta.id', $assignmentIds), fn ($q) => $q->whereIn('ta.staff_id', $staffIds))
             ->where('ta.assignment_status', 'Completed')
-            ->whereBetween('ta.completed_at', [$from, $to])
+            ->when($from && $to, fn ($q) => $q->whereBetween('ta.completed_at', [$from, $to]))
+            ->join('appointments as a', 'a.id', '=', 's.appointment_id')
             ->when($detailed, fn ($q) => $q
-                ->join('appointments as a', 'a.id', '=', 's.appointment_id')
                 ->leftJoin('clients as c', 'c.id', '=', 'a.client_id')
                 ->leftJoin('service_variants as v', 'v.id', '=', 's.service_variant_id')
                 ->leftJoin('services as sv', 'sv.id', '=', 'v.service_id')
                 ->addSelect(['a.uuid as appointment_uuid', 'a.appointment_number', 'c.first_name as client_first_name', 'c.last_name as client_last_name', DB::raw((\App\Support\History::ready() ? 'coalesce(s.service_name, sv.name)' : 'sv.name') . ' as service_name')]))
             ->addSelect([
+                'ta.id as assignment_id',
                 'ta.staff_id',
                 'ta.completed_at',
                 's.subtotal',
@@ -407,15 +470,19 @@ class CommissionCalculator
                 's.quantity',
                 's.source_appointment_package_id',
                 DB::raw(sprintf(self::BILL_STATUS, 's.appointment_id')),
+                // Done on a home visit (it earns the home service commission, when that is on).
+                DB::raw("(a.service_location = 'Home Service') as is_home"),
                 // What was kept when it was completed (null: nothing kept).
                 DB::raw((History::ready() ? 'ta.commission_amount' : 'null') . ' as commission_amount'),
                 // The rate kept with it, and the person's own rate today (for
                 // a service with nothing kept).
                 DB::raw((Staff::hasCustomCommission() ? 'ta.commission_rate' : 'null') . ' as kept_rate'),
                 DB::raw((Staff::hasCustomCommission() ? 'ta.commission_type' : 'null') . ' as kept_type'),
-                DB::raw((Staff::hasCustomCommission()
-                    ? "(select st.commission_rate from staff st where st.id = ta.staff_id and st.role = 'therapist')"
-                    : 'null') . ' as own_rate'),
+                DB::raw((Staff::hasCommissionPlans()
+                    ? "(select p.rate from staff st join commission_plans p on p.id = st.commission_plan_id where st.id = ta.staff_id and st.role = 'therapist')"
+                    : (Staff::hasCustomCommission()
+                        ? "(select st.commission_rate from staff st where st.id = ta.staff_id and st.role = 'therapist')"
+                        : 'null')) . ' as own_rate'),
                 // How many therapists completed this same service line.
                 DB::raw("(select count(*) from therapist_assignments t2 where t2.appointment_service_id = ta.appointment_service_id and t2.assignment_status = 'Completed') as split"),
             ])
@@ -439,6 +506,7 @@ class CommissionCalculator
             $line->source_appointment_package_id !== null,
             (int) $line->split,
             ($line->own_rate ?? null) !== null ? (float) $line->own_rate : null,
+            (bool) ($line->is_home ?? false),
         );
     }
 }

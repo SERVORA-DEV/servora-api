@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 
 // A manager's request for a service or package the catalog doesn't have,
 // waiting for the owner — see CatalogRequestService.
@@ -26,6 +28,8 @@ class CatalogRequest extends Model
         'name',
         'category',
         'details',
+        // The form the manager filled in (see the migration that adds it).
+        'payload',
         'status',
         'decided_by_user_id',
         'decided_at',
@@ -36,7 +40,22 @@ class CatalogRequest extends Model
     {
         return [
             'decided_at' => 'datetime',
+            'payload' => 'array',
         ];
+    }
+
+    // Whether the payload column exists yet (the migration has been run).
+    // Until then a request is only a name and a note, as before.
+    public static function hasPayload(): bool
+    {
+        $known = Cache::get('schema:catalog_request_payload');
+        if (is_bool($known)) {
+            return $known;
+        }
+        $ready = Schema::hasColumn('catalog_requests', 'payload');
+        $ready ? Cache::forever('schema:catalog_request_payload', true) : Cache::put('schema:catalog_request_payload', false, 60);
+
+        return $ready;
     }
 
     public function uniqueIds()

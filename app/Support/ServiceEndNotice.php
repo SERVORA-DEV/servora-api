@@ -46,7 +46,7 @@ class ServiceEndNotice
         $who = $therapists ? ' with ' . self::join($therapists) : '';
 
         return "{$client}'s {$service}{$where}{$who} reached its time at " . $dueAt->format('g:i A')
-            . '. Mark it complete once it is done' . ($room ? ' so the room is free.' : '.');
+            . '. Mark it complete once it is done' . ($room ? ' so the facility is free.' : '.');
     }
 
     private static function join(array $names): string

@@ -40,6 +40,9 @@ class AppointmentServiceItem extends Model
         'service_name',
         'duration_minutes',
         'service_type',
+        // Whether a facility had to be chosen before it could start, as it
+        // was when booked (null: booked before this existed).
+        'facility_required',
         'service_category',
         'quantity',
         'sort_order',
@@ -64,6 +67,7 @@ class AppointmentServiceItem extends Model
             'discount_amount' => 'decimal:2',
             'subtotal' => 'decimal:2',
             'extra_charge' => 'decimal:2',
+            'facility_required' => 'boolean',
         ];
     }
 
@@ -109,6 +113,9 @@ class AppointmentServiceItem extends Model
         $this->service_name = $service?->name;
         $this->duration_minutes = $variant->duration_minutes;
         $this->service_type = ServiceKind::of($service?->service_type);
+        if (Service::hasFacilityRequirement()) {
+            $this->facility_required = ServiceKind::needsFacility($this->service_type, (bool) $service?->facility_required);
+        }
         $this->service_category = $service?->category;
     }
 
@@ -132,6 +139,19 @@ class AppointmentServiceItem extends Model
     public function kind(): string
     {
         return ServiceKind::of(History::own($this->service_type, fn () => $this->serviceVariant?->service?->service_type));
+    }
+
+    /** A facility has to be chosen before it can start (App\Support\ServiceKind::needsFacility). */
+    public function needsFacility(): bool
+    {
+        if (! Service::hasFacilityRequirement()) {
+            return false;
+        }
+
+        return ServiceKind::needsFacility($this->kind(), (bool) History::own(
+            $this->facility_required,
+            fn () => $this->serviceVariant?->service?->facility_required,
+        ));
     }
 
     public function category(): ?string

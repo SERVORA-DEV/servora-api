@@ -41,8 +41,8 @@ class BookingBoardService
 
     public function board(User $user, string $date, int $duration)
     {
-        // Same auto-resolved single branch as the other front desk lookups.
-        $branchId = $this->spaBusinessRepository->branchIdsForUser($user)[0] ?? null;
+        // The branch the front desk is working in (the web sends it).
+        $branchId = \App\Support\AccountScope::workingBranchId($this->spaBusinessRepository->branchIdsForUser($user));
         if (! $branchId) {
             return response()->json(['message' => 'No branch found for this account.'], 422);
         }

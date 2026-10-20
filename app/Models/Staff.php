@@ -50,6 +50,9 @@ class Staff extends Model
         // Their own commission rate — the same kind as the standard one in
         // Staff Policies. Null: the standard (App\Support\CommissionShare).
         'commission_rate',
+        // The commission plan the owner gave them (App\Models\CommissionPlan);
+        // null: the standard rate.
+        'commission_plan_id',
 
         'employment_type',
         'status',
@@ -99,11 +102,38 @@ class Staff extends Model
         return $ready;
     }
 
-    /** Their own commission rate, or null when they earn the standard one. */
+    /** Whether staff can be given a commission plan yet (the migration has been run). */
+    public static function hasCommissionPlans(): bool
+    {
+        return CommissionPlan::ready();
+    }
+
+    public function commissionPlan()
+    {
+        return $this->belongsTo(CommissionPlan::class, 'commission_plan_id');
+    }
+
+    /**
+     * The rate of their commission plan, or null when they earn the standard
+     * one. (Before plans existed it was a typed custom rate on the person.)
+     */
     public function ownCommissionRate(): ?float
     {
-        return self::hasCustomCommission() && $this->role === StaffSpecialty::ROLE && $this->commission_rate !== null
-            ? (float) $this->commission_rate
+        if ($this->role !== StaffSpecialty::ROLE) {
+            return null;
+        }
+        if (self::hasCommissionPlans()) {
+            return $this->commission_plan_id !== null && $this->commissionPlan ? (float) $this->commissionPlan->rate : null;
+        }
+
+        return self::hasCustomCommission() && $this->commission_rate !== null ? (float) $this->commission_rate : null;
+    }
+
+    /** The name of their commission plan, or null for the standard rate. */
+    public function commissionPlanName(): ?string
+    {
+        return $this->role === StaffSpecialty::ROLE && self::hasCommissionPlans() && $this->commission_plan_id !== null
+            ? $this->commissionPlan?->name
             : null;
     }
 

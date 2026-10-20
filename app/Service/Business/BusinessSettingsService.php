@@ -147,6 +147,12 @@ class BusinessSettingsService
         $settings->{$section} = $this->castLike(SpaBusinessSetting::DEFAULTS[$section], array_replace_recursive($current, $fields));
         $settings->save();
 
+        // A change to the penalties applies from today on; earlier days keep
+        // the amount that was in force on them.
+        if ($section === 'staff_policy') {
+            \App\Models\StaffPenaltyRate::record($business->id, $settings->section('staff_policy'), now()->toDateString());
+        }
+
         return $this->respond($business->setRelation('settings', $settings));
     }
 

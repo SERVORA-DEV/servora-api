@@ -36,7 +36,6 @@ class SpaBranch extends Model
         'permit_business_name',
         'permit_branch_location',
         'permit_issue_date',
-        'permit_expiration_date',
         'permit_confirmed',
 
         'description',
@@ -64,12 +63,12 @@ class SpaBranch extends Model
 
     // Client-app display options for this branch's listing, used for any
     // key the owner hasn't saved (Branch Settings → Marketplace).
+    //
+    // Prices, time slots and promo codes are always on (a branch that offers
+    // customer programs lets clients use them) and facility availability is
+    // not offered, so none of those is a setting any more.
     public const DISPLAY_DEFAULTS = [
-        'show_prices' => true,
         'show_therapist_profiles' => true,
-        'show_available_slots' => true,
-        'show_room_availability' => false,
-        'allow_promo_codes' => true,
         'show_reviews' => true,
         'show_rating_badge' => true,
         'show_review_photos' => true,
@@ -87,7 +86,6 @@ class SpaBranch extends Model
             'plan_hold_at' => 'datetime',
 
             'permit_issue_date' => 'date',
-            'permit_expiration_date' => 'date',
             'permit_confirmed' => 'boolean',
 
             'listing_visible' => 'boolean',
@@ -126,11 +124,13 @@ class SpaBranch extends Model
     // Any account (Manager or Front Officer) assigned to a staff member at
     // this branch — reached transitively via Staff.user_id now rather than
     // a branch-owned pivot row (see Staff::user, User::staff).
+    //
+    // Since logins are given branches of their own: through account_branches.
     public function assignedAccount()
     {
         return $this->hasOneThrough(
             User::class,
-            Staff::class,
+            AccountBranch::ready() ? AccountBranch::class : Staff::class,
             'spa_branch_id',
             'id',
             'id',
@@ -144,6 +144,11 @@ class SpaBranch extends Model
     // through to the manager-role staff member's account only.
     public function manager()
     {
+        if (AccountBranch::ready()) {
+            return $this->hasOneThrough(User::class, AccountBranch::class, 'spa_branch_id', 'id', 'id', 'user_id')
+                ->where('account_branches.level', AccountBranch::MANAGEMENT);
+        }
+
         return $this->hasOneThrough(
             User::class,
             Staff::class,

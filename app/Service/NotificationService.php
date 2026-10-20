@@ -160,6 +160,34 @@ class NotificationService
         );
     }
 
+    // ── Moving a staff member to another branch (StaffTransferService) ──
+    // The reference is the staff member, so a click opens their page.
+
+    public function staffTransferRequested(User $owner, string $staffName, string $managerName, ?string $fromBranch, string $toBranch, string $staffUuid): void
+    {
+        $this->notificationRepository->create(
+            $owner->id,
+            'Staff Transfer Request',
+            "{$managerName} asked to move {$staffName}" . ($fromBranch ? " from {$fromBranch}" : '') . " to {$toBranch}. Open their page in Employees to confirm or decline it.",
+            'System',
+            $staffUuid
+        );
+    }
+
+    public function staffTransferDecided(User $manager, string $staffName, string $toBranch, bool $approved, ?string $reason, string $staffUuid): void
+    {
+        $this->notificationRepository->create(
+            $manager->id,
+            $approved ? 'Staff Transfer Approved' : 'Staff Transfer Declined',
+            $approved
+                ? "{$staffName} was moved to {$toBranch}."
+                : "Your request to move {$staffName} to {$toBranch} was declined." . ($reason ? " Reason: {$reason}" : ''),
+            'System',
+            // Once moved they are no longer this manager's to open.
+            $approved ? null : $staffUuid
+        );
+    }
+
     // ── A manager asking for a new service or package (CatalogRequestService) ──
     // The titles are what the web app looks for to send a click on one of
     // these to Services & Packages (see staffNotificationDestination).
@@ -170,15 +198,15 @@ class NotificationService
 
         $this->notificationRepository->create(
             $owner->id,
-            $kind === 'package' ? 'New Package Request' : 'New Service Request',
-            "{$from} asked for a new {$kind}: \"{$name}\". Open Services & Packages to add it or decline.",
+            'New ' . ($kind === 'package' ? 'Package' : ($kind === 'addon' ? 'Add-on' : 'Service')) . ' Request',
+            "{$from} asked for a new " . ($kind === 'addon' ? 'add-on' : $kind) . ": \"{$name}\". Open Requests to read it and add it or decline.",
             'System'
         );
     }
 
     public function catalogRequestDecided(User $manager, string $kind, string $name, bool $added, ?string $reason, ?string $branchName): void
     {
-        $label = $kind === 'package' ? 'Package' : 'Service';
+        $label = $kind === 'package' ? 'Package' : ($kind === 'addon' ? 'Add-on' : 'Service');
         $where = $branchName ?: 'your branch';
 
         $this->notificationRepository->create(

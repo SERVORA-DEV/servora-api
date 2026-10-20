@@ -28,25 +28,20 @@ class BookingDefaultsSettingsRequest extends FormRequest
     public static function ruleSet(): array
     {
         return [
-            'online_booking_enabled' => 'sometimes|boolean',
-            'walk_in_enabled' => 'sometimes|boolean',
-            'reservation_enabled' => 'sometimes|boolean',
             'home_service_enabled' => 'sometimes|boolean',
             'home_service_fee' => 'sometimes|required|integer|min:0|max:100000',
             'home_service_radius_km' => 'sometimes|required|integer|min:1|max:200',
             'home_service_min_minutes' => 'sometimes|required|integer|min:0|max:1440',
-            'allow_therapist_selection' => 'sometimes|boolean',
-            'auto_assign_therapist' => 'sometimes|boolean',
             'allow_reschedule' => 'sometimes|boolean',
+            'max_reschedules_per_booking' => 'sometimes|required|integer|min:0|max:10',
             'allow_cancellation' => 'sometimes|boolean',
 
-            'booking_lead_time_minutes' => 'sometimes|required|integer|min:0|max:10080',
             'max_advance_booking_days' => 'sometimes|required|integer|min:1|max:365',
             'max_services_per_booking' => 'sometimes|required|integer|min:1|max:20',
+            'max_bookings_per_client_per_day' => 'sometimes|required|integer|min:1|max:10',
             'max_service_minutes_per_booking' => 'sometimes|required|integer|min:0|max:1440',
 
             'cancellation_window_hours' => 'sometimes|required|integer|min:0|max:720',
-            'cancellation_policy_tier' => 'sometimes|required|in:flexible,moderate,strict',
             'no_show_policy' => 'sometimes|required|in:none,warn,suspend',
             'no_show_suspend_after' => 'sometimes|required|integer|min:1|max:20',
 
@@ -55,7 +50,6 @@ class BookingDefaultsSettingsRequest extends FormRequest
             'auto_assign_queue' => 'sometimes|boolean',
             'max_queue_size' => 'sometimes|required|integer|min:1|max:500',
             'queue_number_format' => 'sometimes|required|in:numeric,alpha-numeric',
-            'estimated_wait_display' => 'sometimes|boolean',
             'walk_ins_first_priority' => 'sometimes|boolean',
 
             'allow_service_extension' => 'sometimes|boolean',
@@ -63,10 +57,6 @@ class BookingDefaultsSettingsRequest extends FormRequest
             'max_extension_mins' => 'sometimes|required|integer|min:0|max:480',
             'extension_requires_approval' => 'sometimes|boolean',
 
-            'cancellation_tiers' => 'sometimes|array',
-            'cancellation_tiers.flexible' => 'sometimes|required|integer|min:0|max:100',
-            'cancellation_tiers.moderate' => 'sometimes|required|integer|min:0|max:100',
-            'cancellation_tiers.strict' => 'sometimes|required|integer|min:0|max:100',
         ];
     }
 }

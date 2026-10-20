@@ -24,6 +24,9 @@ class Service extends Model
         'category',
         // 'time' | 'procedure' | 'facility' — App\Support\ServiceKind.
         'service_type',
+        // A facility has to be chosen before the front desk may start it
+        // (App\Support\ServiceKind::needsFacility).
+        'facility_required',
         'description',
         'image_path',
         'is_active',
@@ -38,6 +41,7 @@ class Service extends Model
         return [
             'is_active' => 'boolean',
             'home_service_available' => 'boolean',
+            'facility_required' => 'boolean',
             'is_template' => 'boolean',
         ];
     }
@@ -63,6 +67,22 @@ class Service extends Model
         }
         $ready = Schema::hasColumn('services', 'service_type') && Schema::hasColumn('appointment_services', 'extra_charge');
         $ready ? Cache::forever('schema:service_types', true) : Cache::put('schema:service_types', false, 60);
+
+        return $ready;
+    }
+
+    /**
+     * Whether the facility-requirement columns exist yet (the migration has
+     * been run). Until then nothing needs a facility and nothing writes them.
+     */
+    public static function hasFacilityRequirement(): bool
+    {
+        $known = Cache::get('schema:facility_required');
+        if (is_bool($known)) {
+            return $known;
+        }
+        $ready = Schema::hasColumn('services', 'facility_required') && Schema::hasColumn('appointment_services', 'facility_required');
+        $ready ? Cache::forever('schema:facility_required', true) : Cache::put('schema:facility_required', false, 60);
 
         return $ready;
     }

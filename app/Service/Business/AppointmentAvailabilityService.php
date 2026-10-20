@@ -317,7 +317,7 @@ class AppointmentAvailabilityService
             ->exists();
 
         return $occupied
-            ? ['ok' => false, 'reason' => 'This room is currently occupied by another service.']
+            ? ['ok' => false, 'reason' => 'This facility is currently occupied by another service.']
             : ['ok' => true, 'reason' => null];
     }
 
@@ -352,7 +352,7 @@ class AppointmentAvailabilityService
                 continue;
             }
             if ($this->overlapsAppointment($assignment, $date, $start, $end)) {
-                return ['ok' => false, 'reason' => 'This room is already booked during the requested time.'];
+                return ['ok' => false, 'reason' => 'This facility is already booked during the requested time.'];
             }
         }
 

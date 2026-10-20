@@ -59,7 +59,7 @@ class DashboardService
         // owner and a branch manager never share an entry. The page asks
         // again every 20 seconds: kept for less than that, so each of its
         // checks gets a fresh answer.
-        $scopeKey = $user->role === 'business_owner' ? 'all' : (string) ($user->staff?->spa_branch_id ?? 'none');
+        $scopeKey = $user->role === 'business_owner' ? 'all' : (implode('-', $this->spaBusinessRepository->branchIdsForUser($user)) ?: 'none');
         $key = sprintf('business:dashboard:%s:%d:%s:%s', $user->role, $business->id, $scopeKey, $scope);
 
         $branches = null;

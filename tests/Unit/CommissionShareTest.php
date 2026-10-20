@@ -141,4 +141,44 @@ class CommissionShareTest extends TestCase
         $this->assertSame('20%', CommissionShare::describe($this->policy(), 20.0));
         $this->assertSame('Standard (₱150 per service)', CommissionShare::describe($this->policy(['commission_type' => 'fixed', 'default_commission_rate' => 150]), null));
     }
+
+    public function test_a_home_service_earns_the_home_commission_instead_of_the_plan(): void
+    {
+        $home = ['home_commission_enabled' => true, 'home_commission_type' => 'percentage', 'home_commission_rate' => 25];
+
+        // A 20% plan: at home it is the home rate, whatever the plan.
+        $this->assertSame(250.0, CommissionShare::amount($this->policy($home), 1000.0, 1000.0, false, 1, 20.0, true));
+        $this->assertSame(250.0, CommissionShare::amount($this->policy($home), 1000.0, 1000.0, false, 1, null, true));
+        // In the spa nothing changes.
+        $this->assertSame(200.0, CommissionShare::amount($this->policy($home), 1000.0, 1000.0, false, 1, 20.0, false));
+        // Switched off, a home visit earns the plan's rate like any other.
+        $this->assertSame(200.0, CommissionShare::amount($this->policy(['home_commission_enabled' => false, 'home_commission_rate' => 25]), 1000.0, 1000.0, false, 1, 20.0, true));
+    }
+
+    public function test_the_home_commission_can_be_pesos_while_the_rest_is_a_percentage(): void
+    {
+        $policy = $this->policy(['home_commission_enabled' => true, 'home_commission_type' => 'fixed', 'home_commission_rate' => 300]);
+
+        $this->assertSame(300.0, CommissionShare::amount($policy, 1000.0, 1000.0, false, 1, 20.0, true));
+        $this->assertSame(150.0, CommissionShare::amount($policy, 1000.0, 1000.0, false, 2, 20.0, true));
+        $this->assertSame('fixed', CommissionShare::type($policy, true));
+        $this->assertSame('percentage', CommissionShare::type($policy, false));
+        $this->assertSame(300.0, CommissionShare::rate($policy, 20.0, true));
+        $this->assertSame(20.0, CommissionShare::rate($policy, 20.0, false));
+    }
+
+    public function test_the_home_commission_still_respects_what_the_policy_applies_to(): void
+    {
+        $policy = $this->policy(['commission_applies_to' => 'service', 'home_commission_enabled' => true, 'home_commission_rate' => 25]);
+
+        $this->assertSame(0.0, CommissionShare::amount($policy, 1000.0, 1000.0, true, 1, null, true));
+        $this->assertSame(0.0, CommissionShare::amount(null, 1000.0, 1000.0, false, 1, null, true));
+    }
+
+    public function test_how_a_plan_reads(): void
+    {
+        $this->assertSame('Starter (10%)', CommissionShare::describePlan($this->policy(), 'Starter', 10.0));
+        $this->assertSame('Standard (40%)', CommissionShare::describePlan($this->policy(), null, null));
+        $this->assertSame('Starter (₱50 per service)', CommissionShare::describePlan($this->policy(['commission_type' => 'fixed']), 'Starter', 50.0));
+    }
 }

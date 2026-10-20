@@ -34,6 +34,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'subscribed.business' => \App\Http\Middleware\EnsureBusinessSubscribed::class,
             'permission' => \App\Http\Middleware\EnsurePermission::class,
             'plan.feature' => \App\Http\Middleware\EnsurePlanFeature::class,
+            'activity' => \App\Http\Middleware\RecordBusinessActivity::class,
         ]);
     })
     // Requires a real OS cron / Windows Task Scheduler entry running
@@ -44,7 +45,6 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('subscriptions:notify-almost-due')->daily();
         $schedule->command('subscriptions:auto-renew')->hourly()->withoutOverlapping();
         $schedule->command('appointments:send-reminders')->everyFiveMinutes();
-        $schedule->command('staff:send-shift-reminders')->everyFiveMinutes();
         $schedule->command('staff:send-front-desk-alerts')->everyFiveMinutes();
         // A service in progress that has run its time (ServiceEndNotifier).
         $schedule->command('appointments:notify-service-ends')->everyMinute()->withoutOverlapping();

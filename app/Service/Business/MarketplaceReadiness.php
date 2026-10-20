@@ -21,8 +21,8 @@ use Illuminate\Database\Eloquent\Builder;
 // Active, listed and pinned — see SpaBranchRepository).
 //
 // scope() is the SQL form used by browse lists; check() is the same rule,
-// item by item, for the owner's checklist and the spa page. Online booking
-// lives in settings JSON, so lists filter it with acceptsOnlineBooking().
+// item by item, for the owner's checklist and the spa page. A listed branch
+// that passes it takes bookings from the app.
 class MarketplaceReadiness
 {
     public const NOT_BOOKABLE = "This spa isn't taking bookings right now.";
@@ -113,13 +113,7 @@ class MarketplaceReadiness
     // client with an existing booking can still open it.)
     public static function isBookable(SpaBranch $branch): bool
     {
-        return self::scope(SpaBranch::whereKey($branch->id))->exists()
-            && self::acceptsOnlineBooking($branch);
-    }
-
-    public static function acceptsOnlineBooking(SpaBranch $branch): bool
-    {
-        return BookingPolicy::for($branch)['online_booking_enabled'];
+        return self::scope(SpaBranch::whereKey($branch->id))->exists();
     }
 
     // `items` is everything that has to be done to be listed (the Required
@@ -145,8 +139,6 @@ class MarketplaceReadiness
             ['key' => 'hours', 'label' => 'Opening hours set',
                 'done' => self::openDays($branch->schedules())->exists()],
             ['key' => 'therapists', 'label' => 'At least one active staff member', 'done' => $hasStaff],
-            ['key' => 'online_booking', 'label' => 'Online booking turned on',
-                'done' => self::acceptsOnlineBooking($branch)],
         ];
 
         // The Required listing items the policy adds. The two fixed ones are

@@ -57,7 +57,6 @@ class BusinessSettingsTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.payments.accept_cash', true)
             ->assertJsonPath('data.staff_policy.default_commission_rate', 15)
-            ->assertJsonPath('data.booking_defaults.cancellation_tiers.moderate', 50)
             ->assertJsonPath('data.notifications.reminder_timing', 24)
             ->assertJsonPath('data.legal.editable', false);
     }
@@ -121,15 +120,12 @@ class BusinessSettingsTest extends TestCase
     public function test_sections_save_partially_and_store_typed_values(): void
     {
         $this->patchJson('/api/business/settings/booking-defaults', [
-            'online_booking_enabled' => false,
+            'allow_cancellation' => false,
             'max_service_minutes_per_booking' => '120',
-            'cancellation_tiers' => ['moderate' => '25'],
         ])->assertOk()
-            ->assertJsonPath('data.booking_defaults.online_booking_enabled', false)
+            ->assertJsonPath('data.booking_defaults.allow_cancellation', false)
             ->assertJsonPath('data.booking_defaults.max_service_minutes_per_booking', 120)
-            ->assertJsonPath('data.booking_defaults.cancellation_tiers.moderate', 25)
-            ->assertJsonPath('data.booking_defaults.cancellation_tiers.flexible', 100)
-            ->assertJsonPath('data.booking_defaults.walk_in_enabled', true);
+            ->assertJsonPath('data.booking_defaults.allow_reschedule', true);
 
         $this->patchJson('/api/business/settings/staff-policy', ['commission_type' => 'fixed', 'default_commission_rate' => 250])
             ->assertOk()->assertJsonPath('data.staff_policy.default_commission_rate', 250);

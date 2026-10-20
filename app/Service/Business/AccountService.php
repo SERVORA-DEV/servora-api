@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Models\AccountBranch;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
 use App\Models\Staff;
@@ -10,8 +11,21 @@ use App\Repository\Business\AccountRepository;
 use App\Repository\Business\StaffRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Http\Resources\AccountResource;
+use App\Support\AccountScope;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
+// Staff logins (Settings → Staff Accounts), the owner's alone.
+//
+// A login stands on its own: a name, a username and an email, and the
+// branches it works at — each at a level, 'management' (what a Manager may
+// do) or 'operation' (what the Front Desk may do). Its role follows from the
+// levels (a Manager login when it has Management anywhere —
+// AccountBranch::roleFor), and so do its starting permissions.
+//
+// Before the account_branches migration has been run a login is still made
+// from an employee record (staff_uuid), as it always was.
 class AccountService
 {
     private AccountRepository $accountRepository;
@@ -44,13 +58,6 @@ class AccountService
         return AccountResource::collection($collection);
     }
 
-    /**
-     * Creates a standalone Manager/Front Officer login tied to a specific
-     * staff member — credentials come from this payload, but role and
-     * branch are both derived from that staff member (see
-     * Staff::ACCOUNT_ROLE_MAP), never trusted from the client. Email/
-     * username uniqueness is enforced by AccountRequest.
-     */
     public function createAccount(User $user, array $payload)
     {
         $business = $this->spaBusinessRepository->findByOwnerId($user->id);
@@ -59,80 +66,63 @@ class AccountService
             return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
-        // staff_uuid must belong to this owner's own business — resolved
-        // server-side (404s otherwise) rather than trusted from the
-        // payload, same guard StaffService::createStaff uses for branch.
-        $staff = $this->staffRepository->findByUuidForBusiness($payload['staff_uuid'], $business->id);
-
-        if ($staff->user_id !== null) {
-            return response()->json(['message' => 'This staff member already has an account.'], 422);
+        if (! AccountBranch::ready()) {
+            return $this->createForStaff($user, $business, $payload);
         }
 
-        if (! array_key_exists($staff->role, Staff::ACCOUNT_ROLE_MAP)) {
-            return response()->json(['message' => 'Only Manager or Front Desk staff can be granted a login.'], 422);
+        $branches = $this->branchesFrom($business, $payload['branches'] ?? []);
+        if ($branches instanceof JsonResponse) {
+            return $branches;
         }
 
-        // The plan's staff-login limit (logins on hold don't count), and no
-        // new logins at a branch the plan has put on hold.
-        if ($staff->branch?->plan_hold_at) {
-            return response()->json(['message' => "{$staff->branch->branch_name} is on hold, so no logins can be added there.", 'code' => 'PLAN_HOLD'], 422);
+        // No new login only at branches the plan has put on hold, and the
+        // plan's staff-login limit (logins on hold don't count).
+        if ($branches->every(fn ($b) => $b['branch']->plan_hold_at)) {
+            return response()->json(['message' => 'Every branch picked is on hold, so no login can be added there.', 'code' => 'PLAN_HOLD'], 422);
         }
-        $plan = $this->planFit->currentPlan($business);
-        if (! $this->planFit->hasRoomForAccount($business, $plan)) {
-            return response()->json([
-                'message' => "Your {$plan->name} plan allows " . ((int) $plan->max_user_accounts === 1 ? '1 staff login' : "{$plan->max_user_accounts} staff logins") . '. Upgrade to add another.',
-                'code' => 'PLAN_LIMIT',
-            ], 422);
+        if ($limit = $this->planLimitProblem($business)) {
+            return $limit;
         }
 
-        $role = Staff::ACCOUNT_ROLE_MAP[$staff->role];
+        $role = AccountBranch::roleFor($branches->pluck('level')->all());
 
-        $account = $this->accountRepository->createUser([
-            'role' => $role,
-            'username' => $payload['username'],
-            'email' => $payload['email'],
-            'password' => $payload['password'],
-            'account_status' => 'Active',
-        ]);
+        $account = DB::transaction(function () use ($payload, $role, $branches, $business) {
+            $account = $this->accountRepository->createUser([
+                'role' => $role,
+                'first_name' => trim((string) ($payload['first_name'] ?? '')),
+                'last_name' => trim((string) ($payload['last_name'] ?? '')),
+                'username' => $payload['username'],
+                'email' => $payload['email'],
+                'password' => $payload['password'],
+                'account_status' => 'Active',
+            ]);
+            $this->accountRepository->syncBranches($account, $branches->map(fn ($b) => ['spa_branch_id' => $b['branch']->id, 'level' => $b['level']])->all());
 
-        $this->accountRepository->assignStaff($account, $staff);
+            // An account starts with the owner's defaults for its role
+            // (Business Settings → Staff Policies); the owner can change single
+            // permissions afterwards.
+            $defaults = $this->businessSettingsService->settingsFor($business)->rolePermissions($role);
+            $this->accountRepository->createPermission(array_merge($defaults, ['user_id' => $account->id]));
 
-        // No permission picker on this form — an account starts with the
-        // owner's defaults for its role (Business Settings → Staff Policies,
-        // every key in the role's bundle, on unless turned off there).
-        // Individual flags can be adjusted afterward via updateAccount().
-        $defaults = $this->businessSettingsService->settingsFor($business)->rolePermissions($role);
-        $this->accountRepository->createPermission(array_merge(
-            $defaults,
-            ['user_id' => $account->id]
-        ));
+            return $account;
+        });
 
         // Owner-granted, not self-registered — there's no signup email to
-        // confirm, so verify immediately (same as
-        // AdminUsersService::createAdminUsers).
+        // confirm, so verify immediately (same as AdminUsersService::createAdminUsers).
         $account->markEmailAsVerified();
 
-        return new AccountResource($account->fresh(['permission', 'staff.branch']));
+        return new AccountResource($this->accountRepository->fresh($account));
     }
 
     /**
-     * Suggests a free username/email pair for a login about to be granted to
-     * the staff member in $payload, in one of two owner-chosen shapes:
+     * Suggests a free username/email pair, in one of two owner-chosen shapes:
      *
-     *   role_branch -> manager.mandug      (login role + the branch's code)
-     *   name        -> juan.delacruz       (the staff member's own name)
+     *   role_branch -> manager.mandug      (the level's role + the first branch's code)
+     *   name        -> juan.delacruz       (the account's own name)
      *
-     * Generated server-side rather than in the browser because users.username
-     * and users.email are unique across every user in the system - clients and
-     * other businesses included - so the owner's own account list can't tell
-     * whether a candidate is free. Opens with the same guards createAccount()
-     * uses, so this can never preview an account that couldn't actually be
-     * created.
-     *
-     * The password is deliberately NOT generated here: it has to reach the
-     * owner in plaintext (see AccountCreatedModal on the web app), and the
-     * browser already holds the only copy, so generating it there keeps it out
-     * of this response entirely.
+     * Generated server-side because users.username and users.email are unique
+     * across every user in the system, which the owner's own list can't see.
+     * The password is generated in the browser, never here.
      */
     public function suggestCredentials(User $user, array $payload)
     {
@@ -142,31 +132,36 @@ class AccountService
             return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
-        $staff = $this->staffRepository->findByUuidForBusiness($payload['staff_uuid'], $business->id);
-
-        if (! array_key_exists($staff->role, Staff::ACCOUNT_ROLE_MAP)) {
-            return response()->json(['message' => 'Only Manager or Front Desk staff can be granted a login.'], 422);
+        if (! empty($payload['staff_uuid'])) {
+            // Before logins were given branches: made from an employee.
+            $staff = $this->staffRepository->findByUuidForBusiness($payload['staff_uuid'], $business->id);
+            $first = $staff->first_name;
+            $last = $staff->last_name;
+            $branch = $staff->branch;
+            $role = Staff::ACCOUNT_ROLE_MAP[$staff->role] ?? 'front_officer';
+        } else {
+            $branch = ! empty($payload['branch_uuid'])
+                ? SpaBranch::where('spa_business_id', $business->id)->where('uuid', $payload['branch_uuid'])->first()
+                : null;
+            $first = $payload['first_name'] ?? '';
+            $last = $payload['last_name'] ?? '';
+            $role = ($payload['level'] ?? AccountBranch::OPERATION) === AccountBranch::MANAGEMENT ? 'manager' : 'front_officer';
         }
 
         $base = $payload['format'] === 'name'
-            ? $this->nameBase($staff)
-            : $this->roleBranchBase($staff);
+            ? $this->join($first, $last)
+            : $this->join(str_replace('_', '', $role), $branch?->code ?: $branch?->branch_name);
 
-        // Everything the chosen format reads from could be blank or
-        // punctuation-only (a branch with neither a code nor a usable name, a
-        // staff member whose names don't survive slugging). Say so rather than
-        // handing back a bare "@domain.com".
         if ($base === '') {
             return response()->json([
-                'message' => 'Not enough information to generate a username for this staff member - try the other format, or enter one manually.',
+                'message' => $payload['format'] === 'name'
+                    ? 'Type the name first, or use the other format.'
+                    : 'Pick a branch first, or use the other format.',
             ], 422);
         }
 
         return response()->json([
-            'data' => $this->accountRepository->nextAvailableIdentity(
-                $base,
-                $this->emailDomain($business, $staff->branch, $user)
-            ),
+            'data' => $this->accountRepository->nextAvailableIdentity($base, $this->emailDomain($business, $branch, $user)),
         ]);
     }
 
@@ -183,11 +178,10 @@ class AccountService
     }
 
     /**
-     * Password reset, suspend/reactivate, and permission toggles — role and
-     * staff assignment are both locked at creation (see AccountRequest,
-     * which prohibits both on update) since changing either would
-     * invalidate the account's permission bundle / detach it from the
-     * employee it represents.
+     * Name, branches and levels, password, suspend/reactivate, and single
+     * permissions. A change of branches signs the login out everywhere (like
+     * a password change), and a change of role brings in the defaults for
+     * the permissions it gains.
      */
     public function updateAccount(User $user, string $uuid, array $payload)
     {
@@ -208,6 +202,37 @@ class AccountService
             ], 422);
         }
 
+        if (AccountBranch::ready() && array_key_exists('branches', $payload)) {
+            $branches = $this->branchesFrom($business, $payload['branches'] ?? []);
+            if ($branches instanceof JsonResponse) {
+                return $branches;
+            }
+            $rows = $branches->map(fn ($b) => ['spa_branch_id' => $b['branch']->id, 'level' => $b['level']])->all();
+            $before = $account->accountBranches()->orderBy('spa_branch_id')->get(['spa_branch_id', 'level'])->map(fn ($r) => "{$r->spa_branch_id}:{$r->level}")->all();
+            $after = collect($rows)->sortBy('spa_branch_id')->map(fn ($r) => "{$r['spa_branch_id']}:{$r['level']}")->values()->all();
+
+            if ($before !== $after) {
+                DB::transaction(function () use ($account, $rows, $business) {
+                    $this->accountRepository->syncBranches($account, $rows);
+                    $role = AccountBranch::roleFor(array_column($rows, 'level'));
+                    if ($role !== $account->role) {
+                        // The permissions the new role brings start at the owner's defaults.
+                        $gained = array_diff(config('permission.' . $role, []), config('permission.' . $account->role, []));
+                        $defaults = array_intersect_key($this->businessSettingsService->settingsFor($business)->rolePermissions($role), array_flip($gained));
+                        $account->update(['role' => $role]);
+                        if ($defaults && $account->permission) {
+                            $account->permission()->update($defaults);
+                        }
+                        \App\Support\AppCache::forget("user:{$account->id}:perm");
+                    }
+                    // Where it may work changed: sign it out everywhere.
+                    $account->tokens()->delete();
+                });
+                AccountScope::forget($account);
+            }
+        }
+        unset($payload['branches']);
+
         $account = $this->accountRepository->updateAccount($account, $payload);
         return new AccountResource($account);
     }
@@ -226,11 +251,11 @@ class AccountService
             return response()->json(['message' => $why, 'code' => 'PLAN_LIMIT'], 422);
         }
 
-        return new AccountResource($account->fresh(['permission', 'staff.branch']));
+        return new AccountResource($this->accountRepository->fresh($account));
     }
 
-    // "Deleting an account" is a full revoke now — there's no separate
-    // staff record left behind to preserve.
+    // "Deleting an account" is a full revoke — the employees it may have
+    // been made from stay on the staff list.
     public function deleteAccount(User $user, string $uuid)
     {
         $business = $this->spaBusinessRepository->findByOwnerId($user->id);
@@ -244,27 +269,89 @@ class AccountService
         return true;
     }
 
-    // "manager.mandug" - the login role this staff member's job role maps to
-    // (front_officer collapses to "frontofficer"), joined to the branch's
-    // owner-typed code. spa_branches.code is optional, so fall back to the
-    // branch name: a branch with no code still has to generate something.
-    private function roleBranchBase(Staff $staff): string
-    {
-        $role = str_replace('_', '', Staff::ACCOUNT_ROLE_MAP[$staff->role]);
-        $branch = $staff->branch?->code ?: $staff->branch?->branch_name;
+    // ── internals ───────────────────────────────────────────────────────
 
-        return $this->join($role, $branch);
+    /**
+     * The branches sent, checked: at least one, all this business's own, no
+     * branch twice, each at a known level.
+     *
+     * @return \Illuminate\Support\Collection<int, array{branch: SpaBranch, level: string}>|JsonResponse
+     */
+    private function branchesFrom(SpaBusiness $business, array $sent)
+    {
+        $rows = collect($sent)->map(fn ($r) => ['uuid' => (string) ($r['branch_uuid'] ?? ''), 'level' => (string) ($r['level'] ?? '')]);
+        if ($rows->isEmpty()) {
+            return $this->refuse('Give the login at least one branch.', 'branches');
+        }
+        if ($rows->pluck('uuid')->duplicates()->isNotEmpty()) {
+            return $this->refuse('A branch is listed twice.', 'branches');
+        }
+        if ($rows->contains(fn ($r) => ! in_array($r['level'], AccountBranch::LEVELS, true))) {
+            return $this->refuse('Pick Management or Operation for each branch.', 'branches');
+        }
+
+        $found = SpaBranch::where('spa_business_id', $business->id)->whereIn('uuid', $rows->pluck('uuid'))->get()->keyBy('uuid');
+        if ($found->count() !== $rows->count()) {
+            return $this->refuse('One of the branches was not found.', 'branches');
+        }
+
+        return $rows->map(fn ($r) => ['branch' => $found[$r['uuid']], 'level' => $r['level']])->values();
     }
 
-    // "juan.delacruz" - spaces inside a part are dropped rather than
-    // separated, so "Dela Cruz" reads as the one surname it is.
-    private function nameBase(Staff $staff): string
+    private function planLimitProblem(SpaBusiness $business): ?JsonResponse
     {
-        return $this->join($staff->first_name, $staff->last_name);
+        $plan = $this->planFit->currentPlan($business);
+        if ($this->planFit->hasRoomForAccount($business, $plan)) {
+            return null;
+        }
+
+        return response()->json([
+            'message' => "Your {$plan->name} plan allows " . ((int) $plan->max_user_accounts === 1 ? '1 staff login' : "{$plan->max_user_accounts} staff logins") . '. Upgrade to add another.',
+            'code' => 'PLAN_LIMIT',
+        ], 422);
+    }
+
+    // Before the account_branches migration: a login made from an employee,
+    // its role and branch read from them (as it always was).
+    private function createForStaff(User $user, SpaBusiness $business, array $payload)
+    {
+        if (empty($payload['staff_uuid'])) {
+            return $this->refuse('Pick the staff member this login is for.', 'staff_uuid');
+        }
+        $staff = $this->staffRepository->findByUuidForBusiness($payload['staff_uuid'], $business->id);
+
+        if ($staff->user_id !== null) {
+            return response()->json(['message' => 'This staff member already has an account.'], 422);
+        }
+        if (! array_key_exists($staff->role, Staff::ACCOUNT_ROLE_MAP)) {
+            return response()->json(['message' => 'Only Manager or Front Desk staff can be granted a login.'], 422);
+        }
+        if ($staff->branch?->plan_hold_at) {
+            return response()->json(['message' => "{$staff->branch->branch_name} is on hold, so no logins can be added there.", 'code' => 'PLAN_HOLD'], 422);
+        }
+        if ($limit = $this->planLimitProblem($business)) {
+            return $limit;
+        }
+
+        $role = Staff::ACCOUNT_ROLE_MAP[$staff->role];
+        $account = $this->accountRepository->createUser([
+            'role' => $role,
+            'username' => $payload['username'],
+            'email' => $payload['email'],
+            'password' => $payload['password'],
+            'account_status' => 'Active',
+        ]);
+        $this->accountRepository->assignStaff($account, $staff);
+        $defaults = $this->businessSettingsService->settingsFor($business)->rolePermissions($role);
+        $this->accountRepository->createPermission(array_merge($defaults, ['user_id' => $account->id]));
+        $account->markEmailAsVerified();
+
+        return new AccountResource($this->accountRepository->fresh($account));
     }
 
     // Dot-joins two slugged parts, skipping either if it slugs away to
     // nothing so the result never starts, ends, or doubles up on a dot.
+    // ("Dela Cruz" slugs to one part, "delacruz".)
     private function join(?string $left, ?string $right): string
     {
         $parts = array_filter([$this->slug($left), $this->slug($right)], fn ($part) => $part !== '');
@@ -280,14 +367,9 @@ class AccountService
         return (string) preg_replace('/[^a-z0-9]/', '', strtolower(Str::ascii((string) $value)));
     }
 
-    // Generated emails borrow a domain the business already uses.
-    // spa_businesses.business_email is nullable, so fall back to the branch's
-    // own contact email, then to the owner's login email (users.email is NOT
-    // NULL, so this always resolves). That last fallback can be a personal
-    // mailbox domain, which wouldn't be a real inbox for the new account -
-    // acceptable because the suggestion lands in an editable field and the
-    // owner sees it before submitting, and because nothing is mailed to it
-    // (createAccount calls markEmailAsVerified immediately).
+    // Generated emails borrow a domain the business already uses: the
+    // business's email, the branch's, then the owner's login email. The
+    // suggestion lands in an editable field, and nothing is mailed to it.
     private function emailDomain(SpaBusiness $business, ?SpaBranch $branch, User $owner): string
     {
         foreach ([$business->business_email, $branch?->email, $owner->email] as $candidate) {
@@ -297,5 +379,10 @@ class AccountService
         }
 
         return 'example.com';
+    }
+
+    private function refuse(string $message, string $field): JsonResponse
+    {
+        return response()->json(['message' => $message, 'errors' => [$field => [$message]]], 422);
     }
 }

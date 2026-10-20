@@ -48,6 +48,9 @@ class ServiceRequest extends FormRequest
             'category' => ['nullable', Rule::in(config('service_categories'))],
             // Time-based, procedure-based or facility-based (ServiceKind).
             'service_type' => ['sometimes', Rule::in(ServiceKind::ALL)],
+            // A facility has to be chosen before the front desk may start it
+            // (always true for a facility-based service — ServiceService).
+            'facility_required' => ['sometimes', 'boolean'],
 
             // Provenance for a service started from an admin template.
             // Constrained to actual template rows so it can't be pointed at
@@ -141,6 +144,6 @@ class ServiceRequest extends FormRequest
             return \App\Models\SpaBusiness::where('owner_id', $user->id)->value('id');
         }
 
-        return $user->staff?->branch?->business?->id;
+        return \App\Support\AccountScope::business($user)?->id;
     }
 }

@@ -56,6 +56,6 @@ class ManagerNotificationPrefsController extends Controller
     /** @return string[] */
     private function locked(User $user): array
     {
-        return ManagerNotificationPrefs::lockedFor($user->staff?->branch?->spa_business_id);
+        return ManagerNotificationPrefs::lockedFor(\App\Support\AccountScope::business($user)?->id);
     }
 }

@@ -56,9 +56,9 @@ class ServiceStartRules
                 continue;
             }
 
-            $where = ! empty($other['room_name']) ? " in {$other['room_name']}" : ' in another room';
+            $where = ! empty($other['room_name']) ? " in {$other['room_name']}" : ' in another facility';
 
-            return "This client is still having {$other['name']}{$where}. Complete it first, or put this service in the same room to do both together.";
+            return "This client is still having {$other['name']}{$where}. Complete it first, or put this service in the same facility to do both together.";
         }
 
         return null;

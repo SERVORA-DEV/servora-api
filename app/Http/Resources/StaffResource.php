@@ -35,6 +35,14 @@ class StaffResource extends JsonResource
             'commission_rate' => in_array($request->user()?->role, ['business_owner', 'manager'], true)
                 ? $this->resource->ownCommissionRate()
                 : null,
+            // The plan they are on; null: the standard rate.
+            'commission_plan' => in_array($request->user()?->role, ['business_owner', 'manager'], true) && $this->resource->commissionPlanName() !== null
+                ? [
+                    'uuid' => $this->resource->commissionPlan->uuid,
+                    'name' => $this->resource->commissionPlan->name,
+                    'rate' => (float) $this->resource->commissionPlan->rate,
+                ]
+                : null,
             'employment_type' => $this->employment_type,
             'status' => $this->status,
             'emergency_contact_name' => $this->emergency_contact_name,

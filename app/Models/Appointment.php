@@ -95,6 +95,8 @@ class Appointment extends Model
         'cancelled_at',
         'cancellation_reason',
         'remarks',
+        // The voucher the client booked with (Appointment::holdsVouchers).
+        'client_voucher_id',
         // Booking rules someone went ahead despite, each with its reason
         // (App\Service\Business\PolicyGate).
         'policy_overrides',
@@ -171,6 +173,38 @@ class Appointment extends Model
     }
 
     /**
+     * Whether appointments.client_reschedule_count exists yet (the migration
+     * has been run). Until then reschedules aren't counted or limited.
+     */
+    public static function countsReschedules(): bool
+    {
+        $known = Cache::get('schema:client_reschedule_count');
+        if (is_bool($known)) {
+            return $known;
+        }
+        $ready = Schema::hasColumn('appointments', 'client_reschedule_count');
+        $ready ? Cache::forever('schema:client_reschedule_count', true) : Cache::put('schema:client_reschedule_count', false, 60);
+
+        return $ready;
+    }
+
+    /**
+     * Whether appointments.client_voucher_id exists yet (the migration has
+     * been run). Until then a voucher sent with a booking is ignored.
+     */
+    public static function holdsVouchers(): bool
+    {
+        $known = Cache::get('schema:client_voucher_id');
+        if (is_bool($known)) {
+            return $known;
+        }
+        $ready = Schema::hasColumn('appointments', 'client_voucher_id');
+        $ready ? Cache::forever('schema:client_voucher_id', true) : Cache::put('schema:client_voucher_id', false, 60);
+
+        return $ready;
+    }
+
+    /**
      * Whether appointments.requested_staff_id exists yet (the migration has
      * been run). Until then nothing reads or writes it.
      */
@@ -191,6 +225,24 @@ class Appointment extends Model
     public function branch()
     {
         return $this->belongsTo(SpaBranch::class, 'spa_branch_id');
+    }
+
+    /**
+     * The bookings a client missed since they last came in: no-shows dated
+     * after their most recent finished visit. Attending a visit starts the
+     * count again, so a client who misses one and then comes is not on the
+     * way to being paused for good.
+     */
+    public function scopeMissedSinceLastVisit($query)
+    {
+        return $query->where('appointments.status', self::STATUS_NO_SHOW)
+            ->whereRaw("appointments.appointment_date > COALESCE((select max(visit.appointment_date) from appointments visit where visit.client_id = appointments.client_id and visit.status = ?), '1900-01-01')", [self::STATUS_COMPLETED]);
+    }
+
+    // The voucher the client booked with (Appointment::holdsVouchers).
+    public function voucher()
+    {
+        return $this->belongsTo(ClientVoucher::class, 'client_voucher_id');
     }
 
     public function client()

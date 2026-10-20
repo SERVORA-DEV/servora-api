@@ -75,12 +75,27 @@ class PlanFitService
     /** Staff logins (manager / front desk) that are not on hold. */
     public function accounts(SpaBusiness $business): Collection
     {
-        return User::whereIn('role', self::ACCOUNT_ROLES)
-            ->whereHas('staff.branch', fn ($q) => $q->where('spa_business_id', $business->id))
+        return $this->ofBusiness(User::whereIn('role', self::ACCOUNT_ROLES), $business)
             ->when($this->ready(), fn ($q) => $q->whereNull('plan_hold_at'))
-            ->with('staff')
             ->orderBy('id')
             ->get();
+    }
+
+    // Staff logins of a business: through the branches they were given
+    // (App\Support\AccountScope), or their employee before that existed.
+    private function ofBusiness($query, SpaBusiness $business)
+    {
+        return \App\Models\AccountBranch::ready()
+            ? $query->whereHas('accountBranches.branch', fn ($q) => $q->where('spa_business_id', $business->id))->with('accountBranches.branch')
+            : $query->whereHas('staff.branch', fn ($q) => $q->where('spa_business_id', $business->id))->with('staff');
+    }
+
+    /** @return int[] the branches a login works at */
+    private function branchIdsOf(User $u): array
+    {
+        return \App\Models\AccountBranch::ready()
+            ? $u->accountBranches->pluck('spa_branch_id')->all()
+            : array_values(array_filter([$u->staff?->spa_branch_id]));
     }
 
     public function hasRoomForBranch(SpaBusiness $business, ?SubscriptionPlan $plan): bool
@@ -253,9 +268,14 @@ class PlanFitService
         if (! $this->ready() || ! $account->plan_hold_at) {
             return 'That login is not on hold.';
         }
-        $account->loadMissing('staff.branch');
-        if ($account->staff?->branch?->plan_hold_at) {
-            return "{$account->staff->branch->branch_name} is on hold. Bring the branch back first.";
+        // Held only while every branch it works at is: bring one back first.
+        $branches = \App\Models\AccountBranch::ready()
+            ? $account->accountBranches()->with('branch')->get()->pluck('branch')->filter()
+            : collect([$account->staff?->branch])->filter();
+        if ($branches->isNotEmpty() && $branches->every(fn ($b) => $b->plan_hold_at)) {
+            return $branches->count() === 1
+                ? "{$branches->first()->branch_name} is on hold. Bring the branch back first."
+                : 'Every branch this login works at is on hold. Bring one of them back first.';
         }
         $plan = $this->currentPlan($business);
         if (! $this->hasRoomForAccount($business, $plan)) {
@@ -297,8 +317,11 @@ class PlanFitService
                 'id' => $b->id, 'uuid' => $b->uuid, 'name' => $b->branch_name, 'upcoming' => (int) ($upcoming[$b->id] ?? 0),
             ]),
             $this->accounts($business)->map(fn (User $u) => [
-                'id' => $u->id, 'uuid' => $u->uuid, 'branch_id' => $u->staff?->spa_branch_id,
-                'name' => trim(($u->staff?->first_name ?? '') . ' ' . ($u->staff?->last_name ?? '')) ?: $u->username,
+                'id' => $u->id, 'uuid' => $u->uuid,
+                // A login with several branches is kept when any of them is.
+                'branch_ids' => $ids = $this->branchIdsOf($u),
+                'branch_id' => $ids[0] ?? null,
+                'name' => $u->displayName(),
                 'role' => $u->role,
             ]),
         ];
@@ -319,8 +342,7 @@ class PlanFitService
 
     private function heldAccounts(SpaBusiness $business): Collection
     {
-        return User::whereIn('role', self::ACCOUNT_ROLES)
-            ->whereHas('staff.branch', fn ($q) => $q->where('spa_business_id', $business->id))
+        return $this->ofBusiness(User::whereIn('role', self::ACCOUNT_ROLES), $business)
             ->whereNotNull('plan_hold_at')
             ->get();
     }

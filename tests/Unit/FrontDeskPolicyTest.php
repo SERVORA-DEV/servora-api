@@ -40,14 +40,6 @@ class FrontDeskPolicyTest extends TestCase
         $this->assertSame([], FrontDeskPolicy::reservation($this->policy(), $this->now()->addHours(3), $this->now(), 2, 120));
     }
 
-    public function test_reservations_switched_off_is_a_refusal_nobody_can_override(): void
-    {
-        $problems = FrontDeskPolicy::reservation($this->policy(['reservation_enabled' => false]), $this->now()->addDay(), $this->now());
-
-        $this->assertSame(['reservations_off'], $this->rules($problems));
-        $this->assertFalse($problems[0]['overridable']);
-    }
-
     public function test_too_short_a_notice_says_how_short(): void
     {
         $problems = FrontDeskPolicy::reservation($this->policy(), $this->now()->addMinutes(10), $this->now());
@@ -210,11 +202,11 @@ class FrontDeskPolicyTest extends TestCase
 
     public function test_a_switch_in_settings_cannot_be_overridden_by_anyone(): void
     {
-        $problems = FrontDeskPolicy::reservation($this->policy(['reservation_enabled' => false]), $this->now()->addDay(), $this->now());
+        $problems = [['rule' => 'switched_off', 'message' => 'That is switched off for this branch.', 'overridable' => false]];
         $decision = PolicyOverride::decide($problems, 'The owner said so', true);
 
         $this->assertFalse($decision['ok']);
         $this->assertFalse($decision['can_override']);
-        $this->assertStringStartsWith('Reservations are switched off', $decision['message']);
+        $this->assertStringStartsWith('That is switched off', $decision['message']);
     }
 }

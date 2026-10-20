@@ -23,11 +23,7 @@ class BranchMarketplaceRequest extends FormRequest
             'highlights.*' => 'string|max:40',
 
             'display' => 'sometimes|array',
-            'display.show_prices' => 'sometimes|boolean',
             'display.show_therapist_profiles' => 'sometimes|boolean',
-            'display.show_available_slots' => 'sometimes|boolean',
-            'display.show_room_availability' => 'sometimes|boolean',
-            'display.allow_promo_codes' => 'sometimes|boolean',
             'display.show_reviews' => 'sometimes|boolean',
             'display.show_rating_badge' => 'sometimes|boolean',
             'display.show_review_photos' => 'sometimes|boolean',

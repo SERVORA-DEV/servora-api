@@ -3,17 +3,24 @@
 namespace App\Http\Requests\Business\BranchSettings;
 
 use App\Http\Requests\Business\Settings\BookingDefaultsSettingsRequest;
+use App\Support\ReminderPolicy;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class BranchBookingPolicyRequest extends FormRequest
 {
     // The rules a branch may set for itself instead of following Business
     // Defaults — mirrors POLICY_RULES on the web (useSettingsHub.ts).
     public const KEYS = [
-        'online_booking_enabled', 'walk_in_enabled', 'reservation_enabled', 'home_service_enabled', 'home_service_fee', 'home_service_radius_km', 'home_service_min_minutes', 'allow_reschedule',
-        'booking_lead_time_minutes', 'max_advance_booking_days', 'max_services_per_booking',
+        'home_service_enabled', 'home_service_fee', 'home_service_radius_km', 'home_service_min_minutes', 'allow_reschedule', 'max_reschedules_per_booking',
+        'max_advance_booking_days', 'max_services_per_booking', 'max_bookings_per_client_per_day',
+        // What a missed booking does at this branch, and how many pause booking.
+        'no_show_policy', 'no_show_suspend_after',
         'max_service_minutes_per_booking',
-        'allow_cancellation', 'cancellation_policy_tier', 'cancellation_window_hours',
+        'allow_cancellation', 'cancellation_window_hours',
+        // The branch's own client reminders (App\Support\ReminderPolicy); the
+        // defaults and limits are Business Settings → Notifications'.
+        'send_client_reminder', 'reminder_timing', 'send_payment_reminder',
     ];
 
     public function authorize(): bool
@@ -33,7 +40,10 @@ class BranchBookingPolicyRequest extends FormRequest
 
         $rules = ['overrides' => 'present|array'];
         foreach (self::KEYS as $key) {
-            $rules["overrides.{$key}"] = $shared[$key];
+            $rules["overrides.{$key}"] = $shared[$key] ?? match ($key) {
+                'send_client_reminder', 'send_payment_reminder' => 'sometimes|boolean',
+                'reminder_timing' => ['sometimes', 'required', 'integer', Rule::in(ReminderPolicy::HOURS)],
+            };
         }
 
         return $rules;

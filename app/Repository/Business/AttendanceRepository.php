@@ -4,6 +4,7 @@ namespace App\Repository\Business;
 
 use App\Models\Attendance;
 use App\Models\Staff;
+use App\Models\StaffTransferRequest;
 
 class AttendanceRepository
 {
@@ -16,7 +17,7 @@ class AttendanceRepository
     {
         return Staff::with([
             'branch',
-            'attendance' => fn ($query) => $query->where('attendance_date', $date),
+            'attendance' => fn ($query) => $this->atBranches($query->where('attendance_date', $date), $spaBranchIds),
         ])
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->where('status', 'active')
@@ -30,8 +31,7 @@ class AttendanceRepository
     // logic in SQL, same approach useOwnerAppointmentsPage.ts uses.
     public function rangeForBranches(array $spaBranchIds, string $dateFrom, string $dateTo)
     {
-        return Attendance::with('staff.branch')
-            ->whereHas('staff', fn ($query) => $query->whereIn('spa_branch_id', $spaBranchIds))
+        return $this->recordedAt(Attendance::with(['staff.branch', 'branch']), $spaBranchIds)
             ->whereBetween('attendance_date', [$dateFrom, $dateTo])
             ->orderByDesc('attendance_date')
             ->get();
@@ -43,9 +43,8 @@ class AttendanceRepository
     // StaffRepository::findByUuidForBranches uses for staff.
     public function findByUuidForBranches(string $uuid, array $spaBranchIds)
     {
-        return Attendance::with('staff.branch')
+        return $this->recordedAt(Attendance::with(['staff.branch', 'branch']), $spaBranchIds)
             ->where('uuid', $uuid)
-            ->whereHas('staff', fn ($query) => $query->whereIn('spa_branch_id', $spaBranchIds))
             ->firstOrFail();
     }
 
@@ -55,9 +54,8 @@ class AttendanceRepository
     // plus who created/last touched this record.
     public function findByUuidForBranchesWithDetail(string $uuid, array $spaBranchIds)
     {
-        return Attendance::with(['staff.branch', 'staff.schedules', 'creator.staff', 'updater.staff'])
+        return $this->recordedAt(Attendance::with(['staff.branch', 'branch', 'staff.schedules', 'creator.staff', 'updater.staff']), $spaBranchIds)
             ->where('uuid', $uuid)
-            ->whereHas('staff', fn ($query) => $query->whereIn('spa_branch_id', $spaBranchIds))
             ->firstOrFail();
     }
 
@@ -72,12 +70,37 @@ class AttendanceRepository
         return Staff::with([
             'branch',
             'schedules',
-            'attendance' => fn ($query) => $query->whereBetween('attendance_date', [$dateFrom, $dateTo]),
+            'attendance' => fn ($query) => $this->atBranches($query->whereBetween('attendance_date', [$dateFrom, $dateTo]), $spaBranchIds),
         ])
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->where('status', 'active')
             ->orderBy('first_name')
             ->get();
+    }
+
+    // Records at these branches: by the branch each was recorded at, so a
+    // staff member who moved keeps their old days at the old branch. A record
+    // from before the branch was kept follows the person (App\Support\History).
+    private function recordedAt($query, array $spaBranchIds)
+    {
+        if (! StaffTransferRequest::ready()) {
+            return $query->whereHas('staff', fn ($q) => $q->whereIn('spa_branch_id', $spaBranchIds));
+        }
+
+        return $query->where(fn ($q) => $q
+            ->whereIn('attendances.spa_branch_id', $spaBranchIds)
+            ->orWhere(fn ($q) => $q->whereNull('attendances.spa_branch_id')
+                ->whereHas('staff', fn ($s) => $s->whereIn('spa_branch_id', $spaBranchIds))));
+    }
+
+    // A person's own rows, kept to the ones recorded at these branches.
+    private function atBranches($query, array $spaBranchIds)
+    {
+        if (! StaffTransferRequest::ready()) {
+            return $query;
+        }
+
+        return $query->where(fn ($q) => $q->whereNull('spa_branch_id')->orWhereIn('spa_branch_id', $spaBranchIds));
     }
 
     // One row per (staff, date) — attendances_staff_date_unique — so marking

@@ -221,7 +221,8 @@ class BranchSettingsService
             return $this->noBusiness();
         }
 
-        $defaults = SpaBusinessSetting::DEFAULTS['booking_defaults'];
+        // The reminder rules' types come from the notification settings.
+        $defaults = SpaBusinessSetting::DEFAULTS['booking_defaults'] + \Illuminate\Support\Arr::only(SpaBusinessSetting::DEFAULTS['notifications'], \App\Support\ReminderPolicy::KEYS);
         $clean = [];
         foreach (BranchBookingPolicyRequest::KEYS as $key) {
             if (! array_key_exists($key, $overrides)) {

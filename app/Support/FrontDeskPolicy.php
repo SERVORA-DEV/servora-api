@@ -29,10 +29,6 @@ class FrontDeskPolicy
      */
     public static function reservation(array $policy, CarbonInterface $startsAt, CarbonInterface $now, int $services = 0, int $minutes = 0, ?array $client = null): array
     {
-        if (! ($policy['reservation_enabled'] ?? true)) {
-            return [self::rule('reservations_off', 'Reservations are switched off for this branch. Turn them on in Settings → Booking & Policies, or add a walk-in instead.', false)];
-        }
-
         $problems = self::window($policy, $startsAt, $now);
 
         $max = (int) ($policy['max_services_per_booking'] ?? 0);

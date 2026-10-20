@@ -127,12 +127,6 @@ class MarketplaceReadinessTest extends TestCase
         $this->assertListed(false);
     }
 
-    public function test_online_booking_off_hides_it(): void
-    {
-        $this->setPolicy(['online_booking_enabled' => false, 'max_advance_booking_days' => 0]);
-        $this->assertListed(false);
-    }
-
     public function test_favorites_only_list_ready_branches(): void
     {
         $client = User::factory()->create(['role' => 'client']);

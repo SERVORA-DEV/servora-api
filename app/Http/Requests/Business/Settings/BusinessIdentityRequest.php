@@ -3,6 +3,8 @@
 namespace App\Http\Requests\Business\Settings;
 
 use App\Repository\SpaBusinessRepository;
+use App\Rules\SocialLink;
+use App\Support\SocialLinks;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -41,9 +43,11 @@ class BusinessIdentityRequest extends FormRequest
             // Same E.164 format verification onboarding stores.
             'business_phone' => ['nullable', 'string', 'regex:/^\+[1-9]\d{6,14}$/'],
             'head_office_address' => 'nullable|string|max:255',
-            'facebook_url' => 'nullable|string|max:255',
-            'instagram_handle' => 'nullable|string|max:100',
-            'website_url' => 'nullable|string|max:255',
+            // Company-wide links; a branch shows these for any it hasn't set
+            // itself (App\Support\SocialLinks).
+            'facebook_url' => ['nullable', 'string', 'max:255', new SocialLink(SocialLinks::FACEBOOK)],
+            'instagram_handle' => ['nullable', 'string', 'max:100', new SocialLink(SocialLinks::INSTAGRAM)],
+            'website_url' => ['nullable', 'string', 'max:255', new SocialLink(SocialLinks::WEBSITE)],
 
             'logo' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:'.(int) config('uploads.max_size_kb', 5120),
             'remove_logo' => 'sometimes|boolean',

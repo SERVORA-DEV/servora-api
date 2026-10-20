@@ -3,7 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Appointment;
-use App\Models\SpaBusinessSetting;
+use App\Support\ReminderPolicy;
 use App\Service\Business\ClientNotifier;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
@@ -40,14 +40,17 @@ class SendAppointmentReminders extends Command
 
     private function remind(Appointment $appointment, ClientNotifier $notifier): bool
     {
-        $business = $appointment->branch?->business;
-        $settings = $business?->settings?->section('notifications') ?? SpaBusinessSetting::DEFAULTS['notifications'];
-        if (! $settings['send_client_reminder'] || ! $settings['in_app_channel']) {
+        // The branch's own reminder rules, else the business's (ReminderPolicy).
+        if (! $appointment->branch) {
+            return false;
+        }
+        $policy = ReminderPolicy::for($appointment->branch);
+        if (! ReminderPolicy::remindsClients($policy)) {
             return false;
         }
 
         $startsAt = Carbon::parse($appointment->appointment_date->toDateString().' '.$appointment->appointment_time);
-        $leadHours = (int) $settings['reminder_timing'];
+        $leadHours = $policy['reminder_timing'];
 
         if ($startsAt->isPast() || $startsAt->gt(now()->addHours($leadHours))) {
             return false;

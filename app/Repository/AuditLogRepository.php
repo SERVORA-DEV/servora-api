@@ -3,6 +3,8 @@
 namespace App\Repository;
 
 use App\Models\AuditLog;
+use App\Models\User;
+use App\Support\ActivityRecorder;
 use Illuminate\Http\Request;
 use Laravel\Sanctum\PersonalAccessToken;
 
@@ -17,7 +19,7 @@ class AuditLogRepository
         ?array $newValues = null,
         ?Request $request = null
     ): AuditLog {
-        return AuditLog::create([
+        $row = AuditLog::create([
             'user_id' => $userId,
             'table_name' => $tableName,
             'record_id' => $recordId,
@@ -27,6 +29,13 @@ class AuditLogRepository
             'ip_address' => $request?->ip(),
             'user_agent' => $request?->userAgent(),
         ]);
+
+        // Written during a business request: RecordBusinessActivity gives it
+        // the business and branch, and tells its details in the Audit Log's
+        // row for the action.
+        app(ActivityRecorder::class)->noteExplicit($row);
+
+        return $row;
     }
 
     // Login / Logout / Login Failed rows for Settings → Login History. Takes
@@ -48,7 +57,57 @@ class AuditLogRepository
             'new_values' => $details,
             'ip_address' => $ipAddress,
             'user_agent' => $userAgent,
-        ]);
+        ] + $this->signInScope($userId, $action, $details));
+    }
+
+    // The owner's and their logins' sign-ins also show in the business's
+    // Audit Log, under Sign-ins, with their own copy of who it was.
+    private function signInScope(int $userId, string $action, array $details): array
+    {
+        try {
+            if (! AuditLog::businessReady()) {
+                return [];
+            }
+            $user = User::find($userId);
+            if (! $user || ! in_array($user->role, ['business_owner', 'manager', 'front_officer'], true)) {
+                return [];
+            }
+            $business = app(SpaBusinessRepository::class)->findForUser($user);
+            if (! $business) {
+                return [];
+            }
+        } catch (\Throwable $e) {
+            report($e);
+
+            return [];
+        }
+
+        $summary = match ($action) {
+            'Login' => 'Signed in',
+            'Logout' => match ($details['reason'] ?? null) {
+                'revoked' => 'Was signed out from another device',
+                'password_changed' => 'Was signed out: password changed',
+                'password_reset' => 'Was signed out: password reset',
+                default => 'Signed out',
+            },
+            'Login Failed' => ($details['reason'] ?? null) === 'invalid_two_factor_code'
+                ? 'Failed to sign in: wrong two-factor code'
+                : 'Failed to sign in: wrong password',
+            default => $action,
+        };
+
+        return [
+            'spa_business_id' => $business->id,
+            'event' => 'sign_in.' . str_replace(' ', '_', strtolower($action)),
+            'area' => 'sign_in',
+            'summary' => $summary,
+            'actor_name' => mb_substr($user->displayName(), 0, 160),
+            'actor_role' => $user->role,
+            // A login's highest level anywhere (a sign-in is at no one branch).
+            'actor_level' => $user->role === 'business_owner'
+                ? 'owner'
+                : (in_array(\App\Models\AccountBranch::MANAGEMENT, \App\Support\AccountScope::levels($user), true) ? 'management' : 'operation'),
+        ];
     }
 
     // A session (Sanctum token) ending for a reason other than its own

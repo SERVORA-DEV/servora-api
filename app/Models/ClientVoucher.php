@@ -91,6 +91,30 @@ class ClientVoucher extends Model
         return $held;
     }
 
+    /**
+     * Which of these vouchers are held by a booking that hasn't used them yet:
+     * a client booked with it in the app and the visit is still ahead (or done
+     * and not billed). $exceptAppointmentId is the booking asking, whose own
+     * hold doesn't count against it.
+     *
+     * @param  iterable<int>  $ids
+     * @return int[]
+     */
+    public static function heldIds(iterable $ids, ?int $exceptAppointmentId = null): array
+    {
+        $ids = collect($ids)->all();
+        if (! $ids || ! Appointment::holdsVouchers()) {
+            return [];
+        }
+
+        return Appointment::whereIn('client_voucher_id', $ids)
+            ->when($exceptAppointmentId, fn ($q) => $q->where('id', '!=', $exceptAppointmentId))
+            ->where(fn ($q) => $q
+                ->whereIn('status', [Appointment::STATUS_SCHEDULED, Appointment::STATUS_CHECKED_IN, Appointment::STATUS_IN_SERVICE])
+                ->orWhere(fn ($done) => $done->where('status', Appointment::STATUS_COMPLETED)->whereDoesntHave('billing')))
+            ->pluck('client_voucher_id')->unique()->values()->all();
+    }
+
     public function isUsable(): bool
     {
         return $this->status === 'available' && (! $this->expires_at || $this->expires_at->isFuture());

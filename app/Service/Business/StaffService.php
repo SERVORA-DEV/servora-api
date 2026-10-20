@@ -2,8 +2,10 @@
 
 namespace App\Service\Business;
 
+use App\Models\CommissionPlan;
 use App\Models\Service;
 use App\Models\Staff;
+use App\Models\StaffTransferRequest;
 use App\Models\User;
 use App\Repository\Business\StaffRepository;
 use App\Repository\Business\StaffServiceRepository as StaffQualificationRepository;
@@ -11,6 +13,7 @@ use App\Repository\Business\SpaBranchRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Http\Resources\StaffResource;
 use App\Models\SpaBusiness;
+use App\Support\AppCache;
 use App\Support\CommissionShare;
 use App\Support\StaffSpecialty;
 
@@ -28,6 +31,7 @@ class StaffService
         StaffQualificationRepository $staffQualificationRepository,
         private ManagerChangeNotifier $managerChanges,
         private CommissionCalculator $commissionCalculator,
+        private StaffTransferService $transfers,
     ) {
         $this->staffRepository = $staffRepository;
         $this->spaBranchRepository = $spaBranchRepository;
@@ -84,20 +88,89 @@ class StaffService
             'type' => $rule['type'],
             'standard_rate' => $rule['standard_rate'],
             'custom_allowed' => Staff::hasCustomCommission(),
+            // Whether commission plans exist yet (the migration has been run).
+            'plans_allowed' => Staff::hasCommissionPlans(),
         ]];
     }
 
-    private function answer(Staff $staff, SpaBusiness $business): StaffResource
+    private function answer(Staff $staff, SpaBusiness $business, array $extra = []): StaffResource
     {
-        return (new StaffResource($staff))->additional($this->standardCommission($business));
+        return (new StaffResource($staff))->additional($this->standardCommission($business) + $extra);
     }
 
-    // Someone's own commission rate on its way to the database: left out
-    // until the column exists; none for a manager or the front desk; for
-    // staff, the number sent, which must fit the kind the standard is (a 422
-    // in place of the payload when it doesn't). Blank means the standard.
-    private function withCommission(array $payload, ?Staff $existing, SpaBusiness $business)
+    // Whether this account may give staff a commission plan: the owner
+    // always; a manager when `commission_update` is in their role's bundle and
+    // not switched off on their own account (EnsurePermission's rule — the
+    // role is the ceiling, the account's own flag can only narrow it).
+    private function mayChangeCommission(User $user): bool
     {
+        if ($user->role === 'business_owner') {
+            return true;
+        }
+        if (! in_array('commission_update', config('permission.' . $user->role, []), true)) {
+            return false;
+        }
+
+        return AppCache::permission($user->id)?->commission_update !== false;
+    }
+
+    // Someone's commission plan on its way to the database. `commission_plan_uuid`
+    // is the plan (blank: the standard rate); it must be one of this business's
+    // own plans, and only an account that may change commissions can send it
+    // (403 in place of the payload). Not someone who performs services: no plan.
+    private function withPlan(array $payload, ?Staff $existing, SpaBusiness $business, User $user)
+    {
+        $sent = array_key_exists('commission_plan_uuid', $payload);
+        $uuid = $payload['commission_plan_uuid'] ?? null;
+        unset($payload['commission_plan_uuid']);
+
+        $role = $payload['role'] ?? $existing?->role;
+        if ($role !== StaffSpecialty::ROLE) {
+            if ($existing && $existing->commission_plan_id !== null) {
+                $payload['commission_plan_id'] = null;
+            }
+
+            return $payload;
+        }
+        if (! $sent) {
+            return $payload;
+        }
+
+        $planId = null;
+        if ($uuid) {
+            $plan = CommissionPlan::where('spa_business_id', $business->id)->where('uuid', $uuid)->first();
+            if (! $plan) {
+                return response()->json(['message' => 'That commission plan was not found.', 'errors' => ['commission_plan_uuid' => ['That commission plan was not found.']]], 422);
+            }
+            $planId = $plan->id;
+        }
+
+        // Sending what they already have changes nothing, so nothing to forbid.
+        if ($planId === ($existing?->commission_plan_id)) {
+            return $payload;
+        }
+        if (! $this->mayChangeCommission($user)) {
+            return response()->json(['message' => "You don't have permission to change commissions."], 403);
+        }
+        $payload['commission_plan_id'] = $planId;
+
+        return $payload;
+    }
+
+    // Someone's commission on its way to the database. With plans, that is
+    // withPlan. Before the plans migration: the old own rate — left out until
+    // the column exists; none for a manager or the front desk; for staff, the
+    // number sent, which must fit the kind the standard is (a 422 in place of
+    // the payload when it doesn't). Blank means the standard.
+    private function withCommission(array $payload, ?Staff $existing, SpaBusiness $business, User $user)
+    {
+        if (Staff::hasCommissionPlans()) {
+            unset($payload['commission_rate']);
+
+            return $this->withPlan($payload, $existing, $business, $user);
+        }
+        unset($payload['commission_plan_uuid']);
+
         if (! Staff::hasCustomCommission()) {
             unset($payload['commission_rate']);
 
@@ -127,20 +200,24 @@ class StaffService
         return $payload;
     }
 
-    // "Standard (15%)" / "20%" — someone's commission as a sentence reads it.
-    private function commissionWords(SpaBusiness $business, ?float $ownRate): string
+    // "Starter (10%)" / "Standard (15%)" — someone's commission as a sentence reads it.
+    private function commissionWords(SpaBusiness $business, ?float $ownRate, ?string $planName = null): string
     {
         $policy = $this->commissionCalculator->policy($business) ?? $business->settings?->section('staff_policy') ?? \App\Models\SpaBusinessSetting::DEFAULTS['staff_policy'];
 
-        return CommissionShare::describe($policy, $ownRate);
+        return Staff::hasCommissionPlans()
+            ? CommissionShare::describePlan($policy, $planName, $ownRate)
+            : CommissionShare::describe($policy, $ownRate);
     }
 
     // What someone is paid is the owner's to know about, and nobody else's:
     // a manager's change to it always reaches the owner, on its own.
-    private function commissionChanged(User $user, Staff $staff, SpaBusiness $business, ?float $before): void
+    private function commissionChanged(User $user, Staff $staff, SpaBusiness $business, ?float $before, ?string $planBefore = null): void
     {
+        $staff->unsetRelation('commissionPlan');
         $after = $staff->ownCommissionRate();
-        if ($before === $after) {
+        $planAfter = $staff->commissionPlanName();
+        if ($before === $after && $planBefore === $planAfter) {
             return;
         }
 
@@ -149,8 +226,8 @@ class StaffService
             fn () => sprintf(
                 "changed %s's commission from %s to %s at %s.",
                 trim("{$staff->first_name} {$staff->last_name}") ?: 'an employee',
-                $this->commissionWords($business, $before),
-                $this->commissionWords($business, $after),
+                $this->commissionWords($business, $before, $planBefore),
+                $this->commissionWords($business, $after, $planAfter),
                 $staff->branch->branch_name,
             ),
             reference: $staff->uuid,
@@ -182,7 +259,7 @@ class StaffService
         if (! is_array($payload)) {
             return $payload;
         }
-        $payload = $this->withCommission($payload, null, $business);
+        $payload = $this->withCommission($payload, null, $business, $user);
         if (! is_array($payload)) {
             return $payload;
         }
@@ -227,7 +304,9 @@ class StaffService
         }
 
         $model = $this->staffRepository->findByUuidForBranches($uuid, $this->branchIds($user));
-        return $this->answer($model, $business);
+
+        // A move to another branch waiting for the owner, for the employee's page.
+        return $this->answer($model, $business, ['transfer' => ['request' => $this->transfers->pendingFor($user, $model)]]);
     }
 
     public function updateStaff(User $user, string $uuid, array $payload)
@@ -245,9 +324,10 @@ class StaffService
         // scope that check.
         $existing = $this->staffRepository->findByUuidForBranches($uuid, $branchIds);
 
-        // A manager's own staff row is what ties their login to the branch —
-        // changing its role or status would lock them out of it.
-        if ($existing->user_id === $user->id) {
+        // Before logins were given branches of their own, a manager's own
+        // staff row was what tied their login to the branch — changing its
+        // role or status would have locked them out of it.
+        if (! \App\Models\AccountBranch::ready() && $existing->user_id === $user->id) {
             $changesRole = isset($payload['role']) && $payload['role'] !== $existing->role;
             $changesStatus = isset($payload['status']) && $payload['status'] !== $existing->status;
             if ($changesRole || $changesStatus) {
@@ -255,28 +335,50 @@ class StaffService
             }
         }
 
-        if (! empty($payload['spa_branch_uuid'])) {
-            $branch = $this->spaBranchRepository->findByUuidForBranches($payload['spa_branch_uuid'], $branchIds);
-            $payload['spa_branch_id'] = $branch->id;
-        }
+        // A different branch is a move (StaffTransferService): the owner's
+        // applies at once, a manager's becomes a request, and someone with
+        // bookings still open can't be moved. It is settled before anything
+        // is saved, so a refused move saves nothing. Before that migration
+        // has been run, the branch changes outright, as it did.
+        $move = null;
+        $toUuid = $payload['spa_branch_uuid'] ?? null;
         unset($payload['spa_branch_uuid']);
+        if ($toUuid && StaffTransferRequest::ready()) {
+            $move = $this->transfers->check($user, $existing, $toUuid);
+            if ($move instanceof \Illuminate\Http\JsonResponse) {
+                return $move;
+            }
+        } elseif ($toUuid) {
+            $payload['spa_branch_id'] = $this->spaBranchRepository->findByUuidForBranches($toUuid, $branchIds)->id;
+        }
 
         $payload = $this->withSpecialties($payload, $existing);
         if (! is_array($payload)) {
             return $payload;
         }
-        $payload = $this->withCommission($payload, $existing, $business);
+        $payload = $this->withCommission($payload, $existing, $business, $user);
         if (! is_array($payload)) {
             return $payload;
         }
         $rateBefore = $existing->ownCommissionRate();
+        $planBefore = $existing->commissionPlanName();
 
         $model = $this->staffRepository->update($uuid, $payload);
 
         $this->staffChanged($user, $model, 'Employee Changed', "changed {name}'s details at {branch}.");
-        $this->commissionChanged($user, $model, $business, $rateBefore);
+        $this->commissionChanged($user, $model, $business, $rateBefore, $planBefore);
 
-        return $this->answer($model, $business);
+        $transfer = ['pending' => false, 'message' => null, 'request' => null];
+        if ($move) {
+            $transfer = $this->transfers->submit($user, $model->load('branch'), $move);
+            $model->refresh()->load('branch');
+        } elseif (StaffTransferRequest::ready()) {
+            $transfer['request'] = $this->transfers->pendingFor($user, $model);
+        }
+
+        $response = $this->answer($model, $business, ['transfer' => $transfer]);
+
+        return $transfer['pending'] ? $response->response()->setStatusCode(202) : $response;
     }
 
     // What the person does (App\Support\StaffSpecialty) on its way to the
@@ -368,7 +470,7 @@ class StaffService
         // member of) one of this user's own accessible branches — delete($uuid)
         // alone wouldn't scope that check.
         $existing = $this->staffRepository->findByUuidForBranches($uuid, $this->branchIds($user));
-        if ($existing->user_id === $user->id) {
+        if (! \App\Models\AccountBranch::ready() && $existing->user_id === $user->id) {
             return response()->json(['message' => "You can't remove your own staff record. Ask the spa owner."], 422);
         }
 

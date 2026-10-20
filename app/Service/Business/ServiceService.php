@@ -110,9 +110,13 @@ class ServiceService
 
     // The service's type (ServiceKind) on its way to the database: left out
     // until the column exists, and a facility-based service — nobody performs
-    // it — can't be a home service.
+    // it — can't be a home service, and always needs a facility.
     private function withKind(array $payload, ?Service $existing): array
     {
+        if (! Service::hasFacilityRequirement()) {
+            unset($payload['facility_required']);
+        }
+
         if (! Service::hasTypes()) {
             unset($payload['service_type']);
 
@@ -122,6 +126,9 @@ class ServiceService
         $kind = $payload['service_type'] ?? $existing?->service_type;
         if (! ServiceKind::needsTherapist($kind)) {
             $payload['home_service_available'] = false;
+        }
+        if (Service::hasFacilityRequirement() && $kind === ServiceKind::FACILITY) {
+            $payload['facility_required'] = true;
         }
 
         return $payload;

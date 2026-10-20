@@ -48,6 +48,14 @@ return [
     'business_owner' => [
         'dashboard_view',
 
+        // The owner also works the front desk (Operation mode on the web):
+        // the keys its routes check.
+        'attendance_checkin',
+        'client_create',
+        'client_update',
+        'client_therapist_manage',
+        'policy_override',
+
         'branch_view',
         'branch_create',
         'branch_update',
@@ -117,6 +125,9 @@ return [
 
         'notification_view',
         'notification_send',
+
+        // Business → Audit Log.
+        'audit_log_view',
     ],
 
     // Branch-level roles created via business account management (see
@@ -131,6 +142,9 @@ return [
         'dashboard_view',
 
         'branch_view',
+        // The branch's hours, closures, listing, photos, booking rules and
+        // what it offers at what price (the owner edits the profile itself).
+        'branch_update',
 
         'staff_view',
         'staff_create',
@@ -138,6 +152,8 @@ return [
         'staff_delete',
 
         'attendance_view',
+        // Timing staff in and out at the front desk (Operation mode).
+        'attendance_checkin',
         'attendance_create',
         'attendance_update',
         'attendance_delete',
@@ -149,7 +165,9 @@ return [
         'package_view',
 
         'facility_view',
+        'facility_create',
         'facility_update',
+        'facility_delete',
 
         'client_view',
         'client_create',
@@ -192,6 +210,9 @@ return [
         'report_view',
         'report_export',
 
+        // Business → Audit Log: what was done at the branches they run.
+        'audit_log_view',
+
         'notification_view',
     ],
 
@@ -213,6 +234,11 @@ return [
         'appointment_view',
         'appointment_create',
         'appointment_checkin',
+        // Reschedule, add services, assign staff and facilities; start and
+        // finish services; cancel and no-show. Each is its own switch.
+        'appointment_update',
+        'appointment_complete',
+        'appointment_cancel',
 
         'billing_view',
         'billing_create',
@@ -231,6 +257,16 @@ return [
         'reward_update',
 
         'notification_view',
+    ],
+
+    // Keys that became enforced (or joined a role's bundle) with the
+    // 2026_10_29 migration, which switches them on for the accounts that
+    // already existed. Until that migration has run, EnsurePermission treats
+    // them as on for those accounts, so nobody is locked out of what they
+    // could do the day before (App\Support\PermissionGrants).
+    'newly_enforced' => [
+        'manager' => ['attendance_checkin', 'facility_create', 'facility_delete', 'branch_update', 'audit_log_view'],
+        'front_officer' => ['appointment_update', 'appointment_complete', 'appointment_cancel'],
     ],
 
     // Keys in a role's bundle that a new account does NOT start with — the

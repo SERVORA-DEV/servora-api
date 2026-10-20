@@ -33,6 +33,10 @@ class ClientAppointmentRequest extends FormRequest
             // The staff gender they would rather have (App\Support\StaffGender).
             'preferred_staff_gender' => ['nullable', Rule::in(StaffGender::PREFERENCES)],
             'remarks' => 'nullable|string|max:500',
+            // The client saw they already have a booking at this time and books anyway.
+            'acknowledge_overlap' => 'sometimes|boolean',
+            // One voucher from their wallet for this booking (held until it is billed).
+            'voucher_uuid' => 'nullable|uuid',
 
             // Home service (HomeServiceRules checks the place and the area).
             'service_location' => 'sometimes|in:In Spa,Home Service',

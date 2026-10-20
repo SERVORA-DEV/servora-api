@@ -60,8 +60,11 @@ class ManagerChangeNotifier
         'Branch Offerings Changed', 'Catalog Changed',
         'Opening Hours Changed', 'Branch Status Changed', 'Booking Rules Changed',
         'Listing Changed', 'Listing Photos Changed', 'Branch Program Changed',
+        'Facility Added', 'Facility Changed', 'Facility Removed',
+        // Written before facilities were called that.
         'Room Added', 'Room Changed', 'Room Removed',
         'Employee Added', 'Employee Changed', 'Employee Services Changed', 'Employee Schedule Changed', 'Employee Removed',
+        'Employee Moved',
     ];
 
     // Changes by one person this close together read as one save.
@@ -258,6 +261,22 @@ class ManagerChangeNotifier
         // their own switch says.
         $locked = $managerKey && in_array($managerKey, ManagerNotificationPrefs::lockedFor($businessId), true);
 
+        // Logins given these branches: Management ones by their own switches,
+        // Operation ones when the owner has the front desk told.
+        if (\App\Models\AccountBranch::ready()) {
+            $managers = $managerKey
+                ? \App\Models\User::whereIn('id', \App\Support\AccountScope::userIdsAt($branchIds, ['manager']))->get()
+                    ->filter(fn (\App\Models\User $u) => $locked || ManagerNotificationPrefs::wants($u, $managerKey))
+                    ->pluck('id')->all()
+                : [];
+            $frontDesk = in_array('frontdesk', $roles, true)
+                ? \App\Models\AccountBranch::whereIn('spa_branch_id', $branchIds)->where('level', \App\Models\AccountBranch::OPERATION)
+                    ->whereHas('user', fn ($q) => $q->where('account_status', 'Active'))->pluck('user_id')->all()
+                : [];
+
+            return array_values(array_unique(array_merge($managers, $frontDesk)));
+        }
+
         return Staff::with('user')
             ->whereIn('spa_branch_id', $branchIds)
             ->where('status', 'active')
@@ -276,9 +295,9 @@ class ManagerChangeNotifier
         // The manager's own business is usually loaded on their account
         // already (it is how every service finds "their" business) — reuse
         // it rather than asking the database for it again.
-        $own = $manager->staff?->branch;
-        if ($own && $own->spa_business_id === $branch->spa_business_id && ! $branch->relationLoaded('business')) {
-            $branch->setRelation('business', $own->business);
+        $own = \App\Support\AccountScope::business($manager);
+        if ($own && $own->id === $branch->spa_business_id && ! $branch->relationLoaded('business')) {
+            $branch->setRelation('business', $own);
         }
         $branch->loadMissing('business');
 
@@ -338,11 +357,11 @@ class ManagerChangeNotifier
 
     private function nameOf(User $user): string
     {
-        // Only a staff account has a staff record to take the name from.
-        $staffName = $user->role === 'business_owner'
-            ? ''
-            : trim(($user->staff?->first_name ?? '') . ' ' . ($user->staff?->last_name ?? ''));
+        $name = trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? ''));
+        if ($user->role === 'business_owner') {
+            return $name ?: 'The owner';
+        }
 
-        return $staffName ?: (trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? '')) ?: ($user->role === 'business_owner' ? 'The owner' : 'A manager'));
+        return $user->displayName();
     }
 }
