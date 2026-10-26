@@ -3,18 +3,24 @@
 namespace App\Repository;
 
 use App\Models\Notification;
+use App\Service\PushSender;
 
 class NotificationRepository
 {
+    // Every new notification is also popped up on its user's browsers and
+    // phones while Servora isn't open there (PushSender, after the response).
     public function create(int $userId, string $title, string $message, string $type = 'System', ?string $referenceUuid = null): Notification
     {
-        return Notification::create([
+        $notification = Notification::create([
             'user_id' => $userId,
             'title' => $title,
             'message' => $message,
             'type' => $type,
             'reference_uuid' => $referenceUuid,
         ]);
+        app(PushSender::class)->queue($notification);
+
+        return $notification;
     }
 
     // $type is optional and matched case-insensitively — the frontend

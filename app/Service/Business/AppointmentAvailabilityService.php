@@ -9,6 +9,8 @@ use App\Models\StaffSchedule;
 use App\Models\TherapistAssignment;
 use App\Repository\Business\StaffServiceRepository;
 use App\Support\BranchClosures;
+use App\Support\ReservationHold;
+use App\Support\StaleVisit;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -180,6 +182,10 @@ class AppointmentAvailabilityService
     // inside one, and nothing runs into one. $durationMinutes is how long
     // the visit is, when the caller knows; a closure is only asked for it
     // when there is a closure near that time to compare against.
+    //
+    // A visit also has to be over by closing time: nothing is booked (or
+    // walked in) that would still be running when the branch closes. That is
+    // checked when the length is known.
     public function branchIsOpen(int $branchId, string $date, string $startTime, int|\Closure|null $durationMinutes = null): array
     {
         $start = Carbon::parse("{$date} {$startTime}");
@@ -226,6 +232,20 @@ class AppointmentAvailabilityService
 
         if (! $inWindow) {
             return ['ok' => false, 'reason' => 'The requested time is outside the branch\'s operating hours.'];
+        }
+
+        // When this opening's hours end: the same day, or the next for a branch open
+        // past midnight (from the evening before, for a time after midnight).
+        $endsAt = $close->gt($open) ? $close : ($time->gte($open) ? $close->copy()->addDay() : $close);
+        $minutes = $durationMinutes instanceof \Closure ? $durationMinutes() : $durationMinutes;
+        if ($minutes && $time->copy()->addMinutes((int) $minutes)->gt($endsAt)) {
+            $latest = $endsAt->copy()->subMinutes((int) $minutes);
+            $opensFrom = $close->gt($open) || $time->gte($open) ? $open : $open->copy()->subDay();
+
+            return ['ok' => false, 'reason' => "This would still be running when the branch closes at {$endsAt->format('g:i A')}. "
+                . ($latest->gte($opensFrom)
+                    ? "For this visit the latest start is {$latest->format('g:i A')}."
+                    : 'Choose fewer services, or another day.')];
         }
 
         return ['ok' => true, 'reason' => null];
@@ -293,6 +313,8 @@ class AppointmentAvailabilityService
     {
         $busy = TherapistAssignment::where('staff_id', $staffId)
             ->where('assignment_status', 'In Progress')
+            // Not one left running from a day that is over (StaleVisit): it would hold the person up for good.
+            ->whereHas('appointmentService.appointment', fn ($q) => $q->where('appointment_date', '>=', StaleVisit::today()))
             ->when($excludeAssignmentId, fn ($q) => $q->where('id', '!=', $excludeAssignmentId))
             ->when($exceptServiceIds, fn ($q) => $q->whereNotIn('appointment_service_id', $exceptServiceIds))
             ->exists();
@@ -302,6 +324,170 @@ class AppointmentAvailabilityService
             : ['ok' => true, 'reason' => null];
     }
 
+    // Held for a reservation (App\Support\ReservationHold): a staff member
+    // assigned to another client's reservation today that hasn't checked in
+    // yet can't start a service now that would still be running at its booked
+    // time — until that reservation is cancelled (or marked a no-show) or its
+    // grace period is over. A walk-in is never "reserved". Returns why, or null.
+    public function reservedElsewhere(int $staffId, int $exceptAppointmentId, Carbon $now, int $lengthMinutes, int $graceMinutes): ?string
+    {
+        $held = TherapistAssignment::with('appointmentService.appointment.client', 'staff')
+            ->where('staff_id', $staffId)
+            ->where('assignment_status', 'Assigned')
+            ->whereHas('appointmentService.appointment', fn ($q) => $q
+                ->where('id', '!=', $exceptAppointmentId)
+                ->where('status', Appointment::STATUS_SCHEDULED)
+                ->where('appointment_type', '!=', 'Walk-in')
+                ->whereDate('appointment_date', $now->toDateString()))
+            ->get();
+
+        foreach ($held as $assignment) {
+            $reservation = $assignment->appointmentService?->appointment;
+            if (! $reservation) {
+                continue;
+            }
+            $bookedStart = Carbon::parse($reservation->appointment_date->format('Y-m-d') . ' ' . $reservation->appointment_time);
+            if (! ReservationHold::blocks($bookedStart, $graceMinutes, $now, $lengthMinutes)) {
+                continue;
+            }
+
+            $who = $assignment->staffName() ?? 'This staff member';
+            $client = trim(($reservation->client?->first_name ?? '') . ' ' . ($reservation->client?->last_name ?? '')) ?: 'a client';
+            $until = ReservationHold::endsAt($bookedStart, $graceMinutes)->format('g:i A');
+
+            return "{$who} is reserved for {$client} at {$bookedStart->format('g:i A')} (held until {$until}).";
+        }
+
+        return null;
+    }
+
+    // Who is first with a staff member: a reservation that is already here
+    // (checked in) and booked with them EARLIER than $mine is served before it —
+    // a client who came early for their own booking waits for that one, or for
+    // their booked time. Walk-ins keep to the queue's order. Returns why, or null.
+    /**
+     * Whether queueing an early reservation from $from (instead of its booked
+     * time) would put it ahead of another client's booking with the same staff:
+     * one booked after $from but before this one, not served yet. Says who,
+     * or null when moving up takes no one's turn.
+     */
+    public function aheadOfBooking(Appointment $mine, \Carbon\CarbonInterface $from): ?string
+    {
+        $myStart = Carbon::parse($mine->appointment_date->format('Y-m-d') . ' ' . $mine->appointment_time);
+        $staffIds = TherapistAssignment::where('assignment_status', 'Assigned')
+            ->whereNotNull('staff_id')
+            ->whereHas('appointmentService', fn ($q) => $q->where('appointment_id', $mine->id)->where('status', 'Pending'))
+            ->pluck('staff_id')->unique()->all();
+        if (! $staffIds) {
+            return null;
+        }
+
+        $other = TherapistAssignment::with('appointmentService.appointment.client', 'staff')
+            ->whereIn('staff_id', $staffIds)
+            ->where('assignment_status', 'Assigned')
+            ->whereHas('appointmentService', fn ($q) => $q->where('status', 'Pending'))
+            ->whereHas('appointmentService.appointment', fn ($q) => $q
+                ->where('id', '!=', $mine->id)
+                ->whereIn('status', [Appointment::STATUS_SCHEDULED, Appointment::STATUS_CHECKED_IN])
+                ->where('appointment_type', '!=', 'Walk-in')
+                ->whereDate('appointment_date', $mine->appointment_date->toDateString()))
+            ->get()
+            ->map(fn (TherapistAssignment $a) => [$a, Carbon::parse($a->appointmentService->appointment->appointment_date->format('Y-m-d') . ' ' . $a->appointmentService->appointment->appointment_time)])
+            ->filter(fn (array $pair) => $pair[1]->gte($from) && $pair[1]->lt($myStart))
+            ->sortBy(fn (array $pair) => $pair[1]->getTimestamp())
+            ->first();
+        if (! $other) {
+            return null;
+        }
+
+        [$assignment, $start] = $other;
+        $client = $assignment->appointmentService->appointment->client;
+        $name = trim(($client?->first_name ?? '') . ' ' . ($client?->last_name ?? '')) ?: 'another client';
+
+        return ($assignment->staffName() ?? 'Their staff') . " has {$name} booked at {$start->format('g:i A')}, so this client keeps their booked place.";
+    }
+
+    public function bookedFirst(int $staffId, Appointment $mine): ?string
+    {
+        if ($mine->appointment_type === 'Walk-in') {
+            return null;
+        }
+        $myStart = Carbon::parse($mine->appointment_date->format('Y-m-d') . ' ' . $mine->appointment_time);
+
+        $earlier = TherapistAssignment::with('appointmentService.appointment.client', 'staff')
+            ->where('staff_id', $staffId)
+            ->where('assignment_status', 'Assigned')
+            ->whereHas('appointmentService', fn ($q) => $q->where('status', 'Pending'))
+            ->whereHas('appointmentService.appointment', fn ($q) => $q
+                ->where('id', '!=', $mine->id)
+                ->where('status', Appointment::STATUS_CHECKED_IN)
+                ->where('appointment_type', '!=', 'Walk-in')
+                ->whereDate('appointment_date', $mine->appointment_date->toDateString()))
+            ->get()
+            ->map(fn (TherapistAssignment $a) => [$a, Carbon::parse($a->appointmentService->appointment->appointment_date->format('Y-m-d') . ' ' . $a->appointmentService->appointment->appointment_time)])
+            ->filter(fn (array $pair) => $pair[1]->lt($myStart))
+            ->sortBy(fn (array $pair) => $pair[1]->getTimestamp())
+            ->first();
+        if (! $earlier) {
+            return null;
+        }
+
+        [$assignment, $start] = $earlier;
+        $client = $assignment->appointmentService->appointment->client;
+        $name = trim(($client?->first_name ?? '') . ' ' . ($client?->last_name ?? '')) ?: 'a client';
+        $who = $assignment->staffName() ?? 'This staff member';
+
+        return "{$who} has {$name} first — booked at {$start->format('g:i A')} and already here. This client waits for them, or for their own booked time.";
+    }
+
+    // Someone ahead in the line is waiting for the same staff member (or
+    // facility): a client further back can't take them first. "Ahead" is the
+    // queue's own order (Queue::lineTime), walk-ins first when the branch
+    // prioritises them. Returns why, or null when nobody ahead needs them.
+    public function aheadInLine(?int $staffId, ?int $facilityId, Appointment $mine, bool $walkInsFirst = false): ?string
+    {
+        $mine->loadMissing('queue');
+        if (! $mine->queue || (! $staffId && ! $facilityId)) {
+            return null;
+        }
+        $myAt = $mine->queue->lineTime();
+        $iAmWalkIn = $mine->appointment_type === 'Walk-in';
+
+        $rows = TherapistAssignment::with('appointmentService.appointment.queue', 'appointmentService.appointment.client', 'staff', 'facility')
+            ->where('assignment_status', 'Assigned')
+            ->where(fn ($q) => $q
+                ->when($staffId, fn ($w) => $w->orWhere('staff_id', $staffId))
+                ->when($facilityId, fn ($w) => $w->orWhere('facility_id', $facilityId)))
+            ->whereHas('appointmentService', fn ($q) => $q->where('status', 'Pending'))
+            ->whereHas('appointmentService.appointment', fn ($q) => $q
+                ->where('id', '!=', $mine->id)
+                ->where('spa_branch_id', $mine->spa_branch_id)
+                ->whereDate('appointment_date', $mine->appointment_date->toDateString())
+                ->whereHas('queue', fn ($qq) => $qq->whereIn('queue_status', ['Waiting', 'Called'])))
+            ->get();
+
+        $ahead = $rows->filter(function (TherapistAssignment $a) use ($myAt, $iAmWalkIn, $walkInsFirst) {
+            $other = $a->appointmentService->appointment;
+            $theyWalkIn = $other->appointment_type === 'Walk-in';
+            if ($walkInsFirst && $theyWalkIn !== $iAmWalkIn) {
+                return $theyWalkIn;
+            }
+
+            return $other->queue->lineTime()->lt($myAt);
+        })->sortBy(fn (TherapistAssignment $a) => $a->appointmentService->appointment->queue->lineTime()->getTimestamp())->first();
+        if (! $ahead) {
+            return null;
+        }
+
+        $other = $ahead->appointmentService->appointment;
+        $client = trim(($other->client?->first_name ?? '') . ' ' . ($other->client?->last_name ?? '')) ?: 'a client';
+        $ticket = $other->queue->queue_number ? " (ticket {$other->queue->queue_number})" : '';
+
+        return $staffId && $ahead->staff_id === $staffId
+            ? ($ahead->staffName() ?? 'This staff member') . " is next with {$client}{$ticket}, who is ahead in line."
+            : ($ahead->roomName() ?? 'This facility') . " is next for {$client}{$ticket}, who is ahead in line.";
+    }
+
     // $excludeAppointmentId: the visit a service is being started for — its
     // own service already running in the room isn't "someone else" (whether
     // the two may run together is App\Support\ServiceStartRules' call).
@@ -309,6 +495,7 @@ class AppointmentAvailabilityService
     {
         $occupied = TherapistAssignment::where('facility_id', $facilityId)
             ->where('assignment_status', 'In Progress')
+            ->whereHas('appointmentService.appointment', fn ($q) => $q->where('appointment_date', '>=', StaleVisit::today()))
             ->when($excludeAssignmentId, fn ($q) => $q->where('id', '!=', $excludeAssignmentId))
             ->when($excludeAppointmentId, fn ($q) => $q->whereDoesntHave(
                 'appointmentService',
@@ -416,5 +603,76 @@ class AppointmentAvailabilityService
         return $appointment->services
             ->whereIn('status', ['Pending', 'In Progress'])
             ->sum(fn ($service) => $service->lengthMinutes() ?? 30);
+    }
+
+    /**
+     * When the branch closes for a visit starting at this date and time, or null
+     * when there is no closing to keep to (no hours set, open all day, closed).
+     * Same conventions as branchIsOpen().
+     */
+    public function closingFor(int $branchId, string $date, string $startTime): ?Carbon
+    {
+        $schedule = BranchSchedule::where('spa_branch_id', $branchId)
+            ->where('day_of_week', Carbon::parse($date)->format('l'))
+            ->first();
+        if (! $schedule || $schedule->is_closed || ! $schedule->opening_time || ! $schedule->closing_time) {
+            return null;
+        }
+
+        $open = Carbon::parse("{$date} {$schedule->opening_time}");
+        $close = Carbon::parse("{$date} {$schedule->closing_time}");
+        if ($open->eq($close)) {
+            return null;
+        }
+        $time = Carbon::parse("{$date} {$startTime}");
+
+        return $close->gt($open) ? $close : ($time->gte($open) ? $close->copy()->addDay() : $close);
+    }
+
+    /**
+     * Why a visit, as it stands now, would still be running when the branch
+     * closes — or null when it finishes in time. What is left of it is counted
+     * from now (or its booked time, if that is later): the longest service in
+     * progress, then everything not started, one after another. Asked after
+     * something was added to it (a service, a package, an add-on, a longer
+     * length), so nothing added keeps a visit going past closing.
+     */
+    public function finishesPastClosing(Appointment $appointment): ?string
+    {
+        $past = $this->pastClosing($appointment);
+
+        return $past
+            ? "That would keep this visit going past closing at {$past['closes']->format('g:i A')} (it would end about {$past['ends']->format('g:i A')}). Choose a shorter service, or leave it off."
+            : null;
+    }
+
+    /**
+     * When the visit would end against when the branch closes, if that is
+     * after closing — counted from now, or from the booked time when that
+     * is later. Null when it fits (or the branch has no closing time that day).
+     *
+     * @return array{closes: Carbon, ends: Carbon}|null
+     */
+    public function pastClosing(Appointment $appointment): ?array
+    {
+        $date = $appointment->appointment_date->format('Y-m-d');
+        $closes = $this->closingFor($appointment->spa_branch_id, $date, $appointment->appointment_time);
+        if (! $closes) {
+            return null;
+        }
+
+        $services = $appointment->services()->with('therapistAssignments')->whereIn('status', ['Pending', 'In Progress'])->get();
+        $now = now();
+        $running = $services->where('status', 'In Progress')->map(function ($service) use ($now) {
+            $started = $service->therapistAssignments->pluck('started_at')->filter()->min();
+            $length = $service->lengthMinutes() ?? 30;
+
+            return $started ? max(0, (int) ceil($now->diffInMinutes(Carbon::parse($started)->addMinutes($length), false))) : $length;
+        })->max() ?? 0;
+        $waiting = $services->where('status', 'Pending')->sum(fn ($service) => $service->lengthMinutes() ?? 30);
+
+        $from = Carbon::parse("{$date} {$appointment->appointment_time}");
+        $ends = ($now->gt($from) ? $now->copy() : $from)->addMinutes($running + $waiting);
+        return $ends->lte($closes) ? null : ['closes' => $closes, 'ends' => $ends];
     }
 }

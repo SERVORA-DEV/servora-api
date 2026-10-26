@@ -16,6 +16,7 @@ use App\Repository\SpaBusinessRepository;
 use App\Service\Client\BookingPolicy;
 use App\Support\BookingBoard;
 use App\Support\FrontDeskPolicy;
+use App\Support\History;
 use App\Support\ServiceExtension;
 use App\Support\ServiceKind;
 use Carbon\Carbon;
@@ -72,7 +73,13 @@ class ServiceExtensionService
 
         $currentMinutes = (int) ($service->lengthMinutes() ?? 0);
         $startedAt = $this->startedAt($service);
-        $options = $problem ? [] : ServiceExtension::options($currentMinutes, (float) $service->unit_price, $this->lengthsOffered($service));
+        $lengths = $problem ? [] : $this->lengthsOffered($service);
+        // The menu's longer lengths, then extra time in the owner's steps.
+        $options = $problem ? [] : array_merge(
+            array_map(fn (array $o) => $o + ['kind' => 'length'], ServiceExtension::options($currentMinutes, (float) $service->unit_price, $lengths)),
+            array_map(fn (array $s) => $s + ['kind' => 'time', 'uuid' => null, 'price' => round((float) $service->unit_price + $s['extra_price'], 2)],
+                $this->timeSteps($service, $currentMinutes, $policy, $already, $lengths)),
+        );
 
         $running = $service->therapistAssignments->where('assignment_status', 'In Progress');
         $staff = $running->filter(fn ($a) => $a->staff)->mapWithKeys(fn ($a) => [$a->staff_id => trim("{$a->staff->first_name} {$a->staff->last_name}")])->all();
@@ -100,6 +107,9 @@ class ServiceExtensionService
                     : [];
 
                 return [
+                    // 'length': a longer length on the menu (service_variant_uuid);
+                    // 'time': extra minutes in the owner's steps (extra_minutes).
+                    'kind' => $option['kind'],
                     'service_variant_uuid' => $option['uuid'],
                     'duration_minutes' => $option['minutes'],
                     'price' => $option['price'],
@@ -129,6 +139,10 @@ class ServiceExtensionService
             $service = $this->find($user, $appointmentServiceUuid, lock: true);
             $appointment = Appointment::whereKey($service->appointment_id)->lockForUpdate()->firstOrFail();
 
+            if ($stale = AppointmentService::staleRefusal($appointment)) {
+                return $stale;
+            }
+
             if ($service->isAddon()) {
                 return response()->json(['message' => 'An add-on rides with its main service — extend the main service, or add another add-on.'], 422);
             }
@@ -147,7 +161,13 @@ class ServiceExtensionService
 
             $current = $service->serviceVariant;
             $currentMinutes = (int) ($service->lengthMinutes() ?? 0);
-            $target = ServiceVariant::where('uuid', $payload['service_variant_uuid'])->first();
+
+            // Extra time in the owner's steps, not another length.
+            if (! empty($payload['extra_minutes'])) {
+                return $this->extendByTime($user, $service, $appointment, $fromPackage, $currentMinutes, (int) $payload['extra_minutes']);
+            }
+
+            $target = ServiceVariant::where('uuid', $payload['service_variant_uuid'] ?? '')->first();
             $offered = $target
                 ? BranchService::where('service_variant_id', $target->id)->where('spa_branch_id', $appointment->spa_branch_id)->where('is_available', true)->first()
                 : null;
@@ -193,11 +213,93 @@ class ServiceExtensionService
                 $service->copyFromMenu();
             }
             $service->save();
+            // A longer length mustn't keep the visit going past closing time.
+            if ($late = app(AppointmentAvailabilityService::class)->finishesPastClosing($appointment)) {
+                abort(422, $late);
+            }
             $gate->record($appointment, $overrides, $user);
             $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));
         });
+    }
+
+    // The line keeps its length (the same menu length, its own copy of the
+    // minutes grows) and is charged the extra minutes at its per-minute rate —
+    // on its own price, or for a package service on top of the package.
+    private function extendByTime(User $user, AppointmentServiceItem $service, Appointment $appointment, bool $fromPackage, int $currentMinutes, int $extra)
+    {
+        if (! History::ready()) {
+            return response()->json(['message' => 'Adding time needs the latest update — extend to a longer length instead.'], 422);
+        }
+        $policy = $appointment->branch ? BookingPolicy::for($appointment->branch) : [];
+        $step = (int) ($policy['extension_increment_mins'] ?? 0);
+        if (! ServiceExtension::isStep($extra, $step)) {
+            return response()->json(['message' => "Add time in steps of {$step} minutes."], 422);
+        }
+        $perMinute = $this->perMinute($service, $currentMinutes, $this->lengthsOffered($service));
+        if ($perMinute <= 0) {
+            return response()->json(['message' => 'This service has no price to charge the extra time by.'], 422);
+        }
+
+        // The owner's extension settings: refused unless overridden with a
+        // reason (PolicyGate) — kept on the booking below.
+        $gate = app(PolicyGate::class);
+        $overrides = $policy ? $gate->check($user, FrontDeskPolicy::extension($policy, (int) ($service->extended_minutes ?? 0), $extra)) : [];
+        if (! is_array($overrides)) {
+            return $overrides;
+        }
+
+        $quantity = max(1, (int) $service->quantity);
+        $added = ServiceExtension::timePrice($perMinute, $extra);
+        $onTop = $fromPackage ? round($added * $quantity, 2) : null;
+        $unit = round((float) $service->unit_price + $added, 2);
+
+        $service->fill([
+            'duration_minutes' => $currentMinutes + $extra,
+            'notes' => ServiceExtension::note($currentMinutes, $currentMinutes + $extra, $user->displayName(), $service->notes, $onTop),
+        ] + ($fromPackage
+            ? ['extra_charge' => round((float) ($service->extra_charge ?? 0) + $onTop, 2)]
+            : ['unit_price' => $unit, 'subtotal' => round($unit * $quantity, 2)])
+          + (PolicyGate::ready() ? ['extended_minutes' => (int) ($service->extended_minutes ?? 0) + $extra] : []));
+        $service->save();
+
+        // More time mustn't keep the visit going past closing time.
+        if ($late = app(AppointmentAvailabilityService::class)->finishesPastClosing($appointment)) {
+            abort(422, $late);
+        }
+        $gate->record($appointment, $overrides, $user);
+        $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
+
+        return new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));
+    }
+
+    /** The owner's time steps this service can still take (none while History isn't there to keep the minutes). */
+    private function timeSteps(AppointmentServiceItem $service, int $currentMinutes, ?array $policy, int $already, array $lengths): array
+    {
+        if (! $policy || ! History::ready() || ! $currentMinutes) {
+            return [];
+        }
+
+        return ServiceExtension::steps(
+            $currentMinutes,
+            $this->perMinute($service, $currentMinutes, $lengths),
+            (int) ($policy['extension_increment_mins'] ?? 0),
+            (int) ($policy['max_extension_mins'] ?? 0),
+            $already,
+        );
+    }
+
+    // What one minute of this service costs: the menu price of the length it is
+    // on (at this branch) over its minutes; else its own price over its length.
+    private function perMinute(AppointmentServiceItem $service, int $currentMinutes, array $lengths): float
+    {
+        $menu = collect($lengths)->firstWhere('uuid', $service->serviceVariant?->uuid);
+        if ($menu && $menu['minutes'] > 0 && $menu['price'] > 0) {
+            return $menu['price'] / $menu['minutes'];
+        }
+
+        return $currentMinutes > 0 ? (float) $service->unit_price / $currentMinutes : 0.0;
     }
 
     private function find(User $user, string $uuid, bool $lock = false): AppointmentServiceItem

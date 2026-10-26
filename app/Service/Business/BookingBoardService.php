@@ -5,12 +5,15 @@ namespace App\Service\Business;
 use App\Models\Appointment;
 use App\Models\Attendance;
 use App\Models\BranchSchedule;
+use App\Models\SpaBranch;
 use App\Models\Staff;
 use App\Models\StaffSchedule;
 use App\Models\User;
 use App\Repository\SpaBusinessRepository;
+use App\Service\Client\BookingPolicy;
 use App\Support\BookingBoard;
 use App\Support\BranchClosures;
+use App\Support\HourlyCapacity;
 use Carbon\Carbon;
 
 // The front desk's New Appointment page: one day at their branch, with who
@@ -25,9 +28,11 @@ use Carbon\Carbon;
 // by name but has nobody assigned yet counts as theirs.
 class BookingBoardService
 {
-    // The front desk is offered a start every half hour (the same spacing
-    // the app offers its clients — BookingSlotService::STEP_MINUTES).
+    // The default spacing of starts. The New Appointment page asks for five
+    // minutes (the spacing reservations are placed on, the same as the app's
+    // clients get — BookingSlotService::STEP_MINUTES).
     public const STEP_MINUTES = 30;
+    private const STEPS = [5, 10, 15, 30, 60];
 
     // Used when the owner hasn't entered hours for that weekday.
     private const FALLBACK_OPEN = '09:00';
@@ -39,8 +44,9 @@ class BookingBoardService
     ) {
     }
 
-    public function board(User $user, string $date, int $duration)
+    public function board(User $user, string $date, int $duration, ?int $step = null, ?string $excludeAppointmentUuid = null)
     {
+        $step = in_array($step, self::STEPS, true) ? $step : self::STEP_MINUTES;
         // The branch the front desk is working in (the web sends it).
         $branchId = \App\Support\AccountScope::workingBranchId($this->spaBusinessRepository->branchIdsForUser($user));
         if (! $branchId) {
@@ -50,12 +56,15 @@ class BookingBoardService
         $result = [
             'date' => $date,
             'duration_minutes' => $duration,
-            'step_minutes' => self::STEP_MINUTES,
+            'step_minutes' => $step,
             'closed_reason' => null,
             'open' => null,
             'close' => null,
             'slots' => [],
             'therapists' => [],
+            'hours' => [],
+            // The notice a booking needs (minutes; 0 = none), for saying why near times are closed.
+            'lead_minutes' => 0,
         ];
 
         $therapists = Staff::where('spa_branch_id', $branchId)
@@ -72,18 +81,39 @@ class BookingBoardService
             return ['data' => $result];
         }
 
+        // The booking being moved (a reschedule) is not counted against itself,
+        // in the therapists' busy times or in the hour's count.
+        $excludeId = $excludeAppointmentUuid
+            ? Appointment::where('uuid', $excludeAppointmentUuid)->where('spa_branch_id', $branchId)->value('id')
+            : null;
+
+        // The spa's reservations-per-hour limit and what is already taken.
+        $hourLimit = HourlyCapacity::limitFor(SpaBranch::findOrFail($branchId));
+
+        // Starts sooner than the spa's notice ("book at least N hours ahead") are
+        // closed on the board (someone here now is a walk-in).
+        $lead = (int) (BookingPolicy::for(SpaBranch::findOrFail($branchId))['booking_lead_time_minutes'] ?? 0);
+        $soonBefore = $lead > 0
+            ? (int) Carbon::parse($date, 'Asia/Manila')->startOfDay()->diffInMinutes(BookingPolicy::now()->addMinutes($lead), false)
+            : null;
+
         $board = BookingBoard::build(
             $day,
             $this->therapistRows($therapists, $date),
-            $this->busyWindows($branchId, $date),
+            $this->busyWindows($branchId, $date, $excludeId),
             $duration,
-            self::STEP_MINUTES,
+            $step,
             Carbon::parse($date)->isToday() ? now()->hour * 60 + now()->minute : null,
+            $hourLimit,
+            $hourLimit > 0 ? HourlyCapacity::bookedByHour($branchId, $date, $excludeId) : [],
+            $soonBefore,
         );
 
         $result['open'] = BookingBoard::clock($day['open']);
         $result['close'] = BookingBoard::clock($day['close']);
         $result['slots'] = $board['slots'];
+        $result['hours'] = $board['hours'];
+        $result['lead_minutes'] = $lead;
         $result['therapists'] = array_map(fn (array $row) => ['name' => $names[$row['uuid']] ?? ''] + $row, $board['therapists']);
 
         return ['data' => $result];
@@ -166,13 +196,14 @@ class BookingBoardService
 
     // The day's open bookings as busy windows, each with who is on it: the
     // therapists assigned, or — while nobody is — the one it asked for.
-    private function busyWindows(int $branchId, string $date): array
+    private function busyWindows(int $branchId, string $date, ?int $excludeId = null): array
     {
         $remembers = Appointment::remembersRequests();
 
         return Appointment::where('spa_branch_id', $branchId)
             ->whereDate('appointment_date', $date)
             ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW, Appointment::STATUS_COMPLETED])
+            ->when($excludeId, fn ($q) => $q->where('id', '!=', $excludeId))
             ->with(['services.serviceVariant', 'services.therapistAssignments'])
             ->get()
             ->map(function (Appointment $a) use ($remembers) {

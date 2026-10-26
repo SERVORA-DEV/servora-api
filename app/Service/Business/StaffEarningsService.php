@@ -23,6 +23,7 @@ class StaffEarningsService
         private CommissionCalculator $commissionCalculator,
         private AttendancePenaltyReader $penalties,
         private StaffEarningsReport $report,
+        private StaffRefundChargeReader $refundCharges,
     ) {
     }
 
@@ -34,7 +35,11 @@ class StaffEarningsService
             return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
-        $staff = $this->staffRepository->findByUuidForBranches($staffUuid, $this->spaBusinessRepository->branchIdsForUser($user));
+        // Someone who has left is still owed what they earned: their earnings stay readable.
+        $staff = \App\Models\Staff::withTrashed()->with(['branch', 'user'])
+            ->where('uuid', $staffUuid)
+            ->whereIn('spa_branch_id', $this->spaBusinessRepository->branchIdsForUser($user))
+            ->firstOrFail();
 
         $end = $to ? Carbon::parse($to) : now();
         $start = $from ? Carbon::parse($from) : $end->copy()->startOfMonth();
@@ -47,8 +52,11 @@ class StaffEarningsService
 
         $ledger = $this->commissionCalculator->ledger($business, $staff->id, $start, $end);
         // Late and absent days that cost them (Staff Policies → Penalties),
-        // and what is left — never below zero (AttendancePenalty::settle).
+        // refunds charged to them (kind 'refund', refund policies that charge
+        // staff), and what is left — never below zero (AttendancePenalty::settle).
         $penalties = $this->penalties->forStaff($business, [$staff->spa_branch_id], [$staff->id], $start, $end)[$staff->id] ?? [];
+        $penalties = collect($penalties)->concat($this->refundCharges->forStaff($business->id, [$staff->id], $start, $end)[$staff->id] ?? [])
+            ->sortBy('date')->values()->all();
         $settled = \App\Support\AttendancePenalty::settle($ledger['total'], array_sum(array_column($penalties, 'amount')));
 
         return ['data' => [

@@ -30,6 +30,11 @@ class PublicTherapistAvailabilityRequest extends FormRequest
             // AppointmentAvailabilityService uses elsewhere for an
             // appointment with nothing on it yet.
             'duration_minutes' => 'nullable|integer|min:1|max:1440',
+            // What is being booked, so only the therapists who can perform it are listed
+            // (a package counts as its services).
+            'service_variant_uuids' => 'nullable|array|max:20',
+            'service_variant_uuids.*' => 'uuid',
+            'package_uuid' => 'nullable|uuid',
         ];
     }
 

@@ -145,7 +145,7 @@ class AccountService
                 : null;
             $first = $payload['first_name'] ?? '';
             $last = $payload['last_name'] ?? '';
-            $role = ($payload['level'] ?? AccountBranch::OPERATION) === AccountBranch::MANAGEMENT ? 'manager' : 'front_officer';
+            $role = AccountBranch::runsBranch($payload['level'] ?? AccountBranch::OPERATION) ? 'manager' : 'front_officer';
         }
 
         $base = $payload['format'] === 'name'

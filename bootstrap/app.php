@@ -24,6 +24,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->throttleApi();
         $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
         $middleware->append(\App\Http\Middleware\ServerTime::class);
+        // Plain text only: no emoji in anything that is kept (promo banner excepted).
+        $middleware->append(\App\Http\Middleware\RejectEmoji::class);
         // Links handed to the browser follow the address the site was opened
         // at (localhost, LAN, a forwarded port, the hosted domain).
         $middleware->append(\App\Http\Middleware\FrontendOrigin::class);
@@ -48,6 +50,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('staff:send-front-desk-alerts')->everyFiveMinutes();
         // A service in progress that has run its time (ServiceEndNotifier).
         $schedule->command('appointments:notify-service-ends')->everyMinute()->withoutOverlapping();
+        // Bookings and visits a finished day left open (DayCloser).
+        $schedule->command('appointments:close-past-days')->everyTenMinutes()->withoutOverlapping();
         $schedule->command('billings:send-payment-reminders')->hourly();
         $schedule->command('programs:daily')->dailyAt('00:10')->withoutOverlapping();
     })

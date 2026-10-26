@@ -146,7 +146,7 @@ class SpaBranch extends Model
     {
         if (AccountBranch::ready()) {
             return $this->hasOneThrough(User::class, AccountBranch::class, 'spa_branch_id', 'id', 'id', 'user_id')
-                ->where('account_branches.level', AccountBranch::MANAGEMENT);
+                ->whereIn('account_branches.level', AccountBranch::MANAGER_LEVELS);
         }
 
         return $this->hasOneThrough(

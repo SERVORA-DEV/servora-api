@@ -5,8 +5,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\LegalController;
+use App\Http\Controllers\PushSubscriptionController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Auth\EmailVerificationController;
+use App\Http\Controllers\ContactEmailController;
 use App\Http\Controllers\System\SubscriptionPlanController;
 use App\Http\Controllers\System\SubscriberController;
 use App\Http\Controllers\System\ServiceTemplateController;
@@ -114,6 +116,11 @@ Route::get('/spas/{uuid}', [SpaBranchController::class, 'publicShow']);
 // above's way either order, but it's kept after it for consistency.
 Route::get('/spas/{uuid}/therapists', [SpaBranchController::class, 'publicTherapistAvailability']);
 
+// Public: when each therapist who can do the visit is next free, and that
+// day's free stretches — the booking flow's staff step, which comes before
+// the date (SpaBranchService::publicTherapistFreeTimes).
+Route::get('/spas/{uuid}/therapists/free-times', [SpaBranchController::class, 'publicTherapistFreeTimes']);
+
 // Public: the start times a client can actually book on one day (hours,
 // break, service end before closing, booking policy, therapists on shift
 // vs bookings already made) — see BookingSlotService.
@@ -145,6 +152,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/auth/me', [AuthController::class, 'getUser']);
     Route::delete('/auth/logout', [AuthController::class, 'logout']);
 
+    // Pop-ups for new notifications while Servora isn't open (any role).
+    Route::get('/push/config', [PushSubscriptionController::class, 'config']);
+    Route::post('/push/subscriptions', [PushSubscriptionController::class, 'store']);
+    Route::delete('/push/subscriptions', [PushSubscriptionController::class, 'destroy']);
+
     // mobile client (end customer) routes
     Route::prefix('client')
         ->middleware('role:client')
@@ -171,10 +183,12 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('transactions', [ClientAccountController::class, 'transactions']);
 
             // Customer programs: points, vouchers, discounts and memberships
-            // per spa, one spa's rewards for its page, and points → voucher.
+            // per spa, one spa's rewards for its page, points → voucher, and
+            // one spa's points and rewards history.
             Route::get('rewards', [ClientRewardsController::class, 'index']);
             Route::post('rewards/redeem', [ClientRewardsController::class, 'redeem']);
             Route::get('spas/{branchUuid}/rewards', [ClientRewardsController::class, 'forBranch'])->whereUuid('branchUuid');
+            Route::get('rewards/{businessUuid}/history', [ClientRewardsController::class, 'history'])->whereUuid('businessUuid');
 
             Route::get('notifications', [ClientAccountController::class, 'notifications']);
             Route::post('notifications/read-all', [ClientAccountController::class, 'markAllNotificationsRead']);
@@ -222,6 +236,7 @@ Route::middleware('auth:sanctum')->group(function () {
             // Platform-wide configuration (e.g. the subscription grace
             // period used to compute the Transaction page's Overdue tile).
             Route::get('settings', [SystemSettingController::class, 'show']);
+            Route::post('settings/preview', [SystemSettingController::class, 'preview'])->middleware('permission:setting_update');
             Route::patch('settings', [SystemSettingController::class, 'update'])->middleware('permission:setting_update');
 
             Route::get('audit-logs', [AuditLogController::class, 'index'])->middleware('permission:audit_log_view');
@@ -234,16 +249,19 @@ Route::middleware('auth:sanctum')->group(function () {
             // "read" before "{id}" so it is never taken for an id.
             Route::delete('notifications/read', [NotificationController::class, 'clearRead']);
             Route::delete('notifications/{id}', [NotificationController::class, 'destroy'])->whereNumber('id');
+            Route::get('notifications/{id}', [NotificationController::class, 'show'])->whereNumber('id');
             // Dashboard Quick Actions > Send Announcement.
             Route::post('notifications/announce', [NotificationController::class, 'announce'])->middleware('permission:notification_send');
 
             Route::get('branches', [BranchController::class, 'index'])->middleware('permission:branch_view');
             Route::get('branches/{uuid}', [BranchController::class, 'show'])->middleware('permission:branch_view');
+            Route::get('branches/{uuid}/suspension-impact', [BranchController::class, 'suspensionImpact'])->middleware('permission:branch_suspend');
             Route::post('branches/{uuid}/suspend', [BranchController::class, 'suspend'])->middleware('permission:branch_suspend');
             Route::post('branches/{uuid}/reactivate', [BranchController::class, 'reactivate'])->middleware('permission:branch_suspend');
             Route::get('businesses', [BusinessController::class, 'index'])->middleware('permission:spa_business_view');
             Route::get('businesses/{uuid}', [BusinessController::class, 'show'])->middleware('permission:spa_business_view');
             Route::get('businesses/{uuid}/programs', [BusinessController::class, 'programs'])->middleware('permission:spa_business_view');
+            Route::get('businesses/{uuid}/suspension-impact', [BusinessController::class, 'suspensionImpact'])->middleware('permission:spa_business_suspend');
             Route::post('businesses/{uuid}/suspend', [BusinessController::class, 'suspend'])->middleware('permission:spa_business_suspend');
             Route::post('businesses/{uuid}/reactivate', [BusinessController::class, 'reactivate'])->middleware('permission:spa_business_suspend');
 
@@ -312,6 +330,8 @@ Route::middleware('auth:sanctum')->group(function () {
             // overdue, plan changed) arrive exactly when those gates block
             // everything else.
             Route::middleware('role:business_owner,manager,front_officer')->group(function () {
+                // Changes the open screens' data: asked every few seconds, so cheap by design.
+                Route::get('live/pulse', [\App\Http\Controllers\Business\LivePulseController::class, 'show']);
                 // The signed-in staff member's OWN feed — same
                 // NotificationService as the admin's /system/notifications,
                 // scoped to the caller's user_id.
@@ -526,6 +546,9 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::patch('client/{uuid}/preferred-therapist', [ClientController::class, 'setPreferredTherapist'])
                     ->middleware('permission:client_therapist_manage');
 
+                // Visits left open from days that are over: how many, and close them now.
+                Route::get('past-visits', [AppointmentController::class, 'pastVisits'])->middleware('permission:appointment_view');
+                Route::post('past-visits/close', [AppointmentController::class, 'closePastVisits'])->middleware('permission:appointment_update');
                 Route::get('appointment', [AppointmentController::class, 'index'])->middleware('permission:appointment_view');
                 Route::post('appointment', [AppointmentController::class, 'store'])->middleware('permission:appointment_create');
                 Route::get('appointment/{uuid}', [AppointmentController::class, 'show'])->middleware('permission:appointment_view');
@@ -538,7 +561,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Taking a started or finished service off the visit changes
                 // what is charged: for staff allowed to change a bill.
                 Route::post('appointment-service/{uuid}/void', [AppointmentController::class, 'voidService'])->middleware('permission:billing_update');
-                Route::post('appointment/{uuid}/packages', [AppointmentController::class, 'addPackage'])->middleware(['permission:appointment_update', 'plan.feature:package_access']);
+                Route::post('appointment/{uuid}/packages', [AppointmentController::class, 'addPackage'])->middleware(['permission:appointment_update', 'plan.feature:package_access,open']);
                 Route::post('appointment/{uuid}/additional-services', [AppointmentServiceController::class, 'addAdditionalService'])->middleware('permission:appointment_update');
                 Route::post('appointment/{uuid}/billing', [AppointmentController::class, 'proceedToBilling'])->middleware('permission:billing_create');
 
@@ -569,9 +592,21 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::patch('billing/{uuid}/discount', [BillingController::class, 'discount'])->middleware('permission:billing_update');
                 // Customer programs at checkout — vouchers and discount programs.
                 Route::get('billing/{uuid}/program-options', [BillingController::class, 'programOptions'])->middleware('permission:reward_view');
-                Route::patch('billing/{uuid}/program-discount', [BillingController::class, 'programDiscount'])->middleware(['permission:reward_update', 'plan.feature:reward_access']);
+                Route::patch('billing/{uuid}/program-discount', [BillingController::class, 'programDiscount'])->middleware(['permission:reward_update', 'plan.feature:reward_access,open']);
                 Route::post('billing/{uuid}/refund', [BillingController::class, 'refund'])->middleware('permission:payment_refund');
                 Route::post('payment/{uuid}/void', [PaymentController::class, 'void'])->middleware('permission:payment_refund');
+                // Changing a bill after it is paid (a voucher afterwards, a
+                // refund): applied at once, or a request a manager or the
+                // owner answers — who may do which is checked in
+                // BillingAdjustmentService (App\Support\BillAdjustment).
+                Route::get('billing-adjustments', [\App\Http\Controllers\Business\BillingAdjustmentController::class, 'index'])->middleware('permission:billing_view');
+                Route::get('refund-policies', [\App\Http\Controllers\Business\RefundPolicyController::class, 'index'])->middleware('permission:billing_view');
+                Route::post('billing/{uuid}/adjustments', [\App\Http\Controllers\Business\BillingAdjustmentController::class, 'store'])->middleware(['permission:payment_create', 'throttle:30,1']);
+                Route::delete('billing-adjustments/{uuid}', [\App\Http\Controllers\Business\BillingAdjustmentController::class, 'destroy'])->middleware('permission:payment_create')->whereUuid('uuid');
+                Route::post('billing-adjustments/{uuid}/approve', [\App\Http\Controllers\Business\BillingAdjustmentController::class, 'approve'])
+                    ->middleware(['role:business_owner,manager', 'permission:payment_create'])->whereUuid('uuid');
+                Route::post('billing-adjustments/{uuid}/decline', [\App\Http\Controllers\Business\BillingAdjustmentController::class, 'decline'])
+                    ->middleware(['role:business_owner,manager', 'permission:payment_create'])->whereUuid('uuid');
 
                 Route::get('frontoffice/dashboard', [FrontOfficeDashboardController::class, 'index'])->middleware('permission:dashboard_view');
 
@@ -666,6 +701,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('branch/{uuid}/photos/{photo}/cover', [BranchSettingsController::class, 'setCover'])->middleware('permission:branch_update');
                 Route::patch('branch/{uuid}/photos/order', [BranchSettingsController::class, 'reorderPhotos'])->middleware('permission:branch_update');
                 Route::patch('branch/{uuid}/booking-policy', [BranchSettingsController::class, 'updateBookingPolicy'])->middleware('permission:branch_update');
+                Route::post('branch/{uuid}/email/resend', [ContactEmailController::class, 'resendBranch'])->middleware(['permission:branch_update', 'throttle:6,1']);
                 Route::get('branch/{uuid}/reviews-summary', [BranchSettingsController::class, 'reviewsSummary'])->middleware('permission:review_view');
 
                 // Read side of Business Settings. A manager gets only what a
@@ -681,12 +717,21 @@ Route::middleware('auth:sanctum')->group(function () {
                 // POST because it carries the logo as multipart.
                 Route::prefix('settings')->group(function () {
                     Route::post('identity', [BusinessSettingsController::class, 'updateIdentity']);
+                    Route::post('identity/email/resend', [ContactEmailController::class, 'resendBusiness'])->middleware('throttle:6,1');
                     Route::patch('legal', [BusinessSettingsController::class, 'updateLegal']);
                     Route::patch('payments', [BusinessSettingsController::class, 'updatePayments']);
                     Route::patch('staff-policy', [BusinessSettingsController::class, 'updateStaffPolicy']);
                     Route::patch('booking-defaults', [BusinessSettingsController::class, 'updateBookingDefaults']);
                     Route::patch('notifications', [BusinessSettingsController::class, 'updateNotifications']);
                 });
+
+                // Business Defaults → Refunds: the owner's refund policies
+                // (App\Support\RefundPolicyRule). Read by everyone at
+                // business/refund-policies; changed only here.
+                Route::post('refund-policies', [\App\Http\Controllers\Business\RefundPolicyController::class, 'store']);
+                Route::patch('refund-policies/settings', [\App\Http\Controllers\Business\RefundPolicyController::class, 'settings']);
+                Route::patch('refund-policies/{uuid}', [\App\Http\Controllers\Business\RefundPolicyController::class, 'update'])->whereUuid('uuid');
+                Route::delete('refund-policies/{uuid}', [\App\Http\Controllers\Business\RefundPolicyController::class, 'destroy'])->whereUuid('uuid');
 
                 // Owner identity + business verification submission — must
                 // stay reachable while the account is unverified (that's the
@@ -754,6 +799,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 // the list stays open (the page shows what the plan is missing).
                 Route::apiResource('package', PackageController::class)->only(['store', 'update', 'destroy'])->middleware('plan.feature:package_access');
 
+                Route::post('branch/{uuid}/reverify', [SpaBranchController::class, 'reverify']);
                 Route::post('branch/{uuid}/location', [SpaBranchController::class, 'saveLocation']);
                 Route::post('branch/{uuid}/permit', [SpaBranchController::class, 'savePermit']);
                 Route::post('branch/{uuid}/submit', [SpaBranchController::class, 'submit']);
@@ -773,10 +819,21 @@ Route::middleware('auth:sanctum')->group(function () {
 
 // System Handle Part   
 
+// The button in the sign-up email: the account is created when it is pressed
+// (App\Support\PendingRegistration).
+Route::get('/email/register/{token}', [EmailVerificationController::class, 'completeRegistration'])
+    ->middleware(['signed', 'throttle:30,1'])->name('registration.complete');
+
 Route::get(
     '/email/verify/{id}/{hash}',
     [EmailVerificationController::class, 'verify']
 )->middleware('signed')->name('verification.verify');
+
+// The button in the email that confirms a business's or branch's contact email
+// (App\Support\ContactEmail). Signed, so it can't be guessed or reused for
+// another address.
+Route::get('/contact-email/verify/{kind}/{uuid}/{hash}', [ContactEmailController::class, 'verify'])
+    ->middleware(['signed', 'throttle:30,1'])->name('contact-email.verify');
 
 // xendit webhook (server-to-server, no auth — verified via x-callback-token)
 Route::post('/webhooks/xendit', [XenditWebhookController::class, 'handle']);

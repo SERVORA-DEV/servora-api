@@ -45,8 +45,15 @@ class EmailVerificationService
 
     public function resend(array $payload)
     {
-        // Owner-side verification links only; client accounts verify by OTP.
+        // A sign-up still waiting for its button: send that email again.
         $user = $this->userRepository->findByEmail($payload['email'], 'web');
+        if (! $user && ($again = \App\Support\PendingRegistration::resend($payload['email'])) !== null) {
+            return $again
+                ? response()->json(['message' => 'Confirmation email sent. Please check your inbox.'])
+                : response()->json(['message' => 'We could not send the confirmation email right now. Please try again in a moment.'], 503);
+        }
+
+        // Owner-side verification links only; client accounts verify by OTP.
 
         if (! $user) {
             return response()->json([

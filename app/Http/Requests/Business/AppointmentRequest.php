@@ -48,7 +48,8 @@ class AppointmentRequest extends FormRequest
             'client' => 'required_without:client_uuid|array',
             'client.first_name' => 'required_with:client|string|max:100',
             'client.last_name' => 'required_with:client|string|max:100',
-            'client.phone_number' => 'nullable|string|max:20',
+            // A reservation needs a way to reach them; a walk-in doesn't.
+            'client.phone_number' => [Rule::requiredIf(fn () => $this->has('client') && $this->input('appointment_type', 'Reservation') !== 'Walk-in'), 'nullable', 'string', 'max:20'],
             'client.email' => 'nullable|email|max:255',
             // The spa's own record of them (App\Support\ClientProfile):
             // gender is asked of every new client, age is optional.
@@ -83,6 +84,7 @@ class AppointmentRequest extends FormRequest
         return [
             'client.gender.required_with' => 'Choose the client\'s gender.',
             'client.gender.in' => 'Choose Male or Female.',
+            'client.phone_number.required' => 'Add the client\'s phone number to book a reservation.',
         ];
     }
 }

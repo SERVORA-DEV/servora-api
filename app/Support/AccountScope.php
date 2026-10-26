@@ -48,7 +48,7 @@ class AccountScope
         $branches = self::all($user);
         if ($level === AccountBranch::MANAGEMENT) {
             $levels = self::levels($user);
-            $branches = $branches->filter(fn (SpaBranch $b) => ($levels[$b->id] ?? null) === AccountBranch::MANAGEMENT)->values();
+            $branches = $branches->filter(fn (SpaBranch $b) => AccountBranch::runsBranch($levels[$b->id] ?? null))->values();
         }
 
         $picked = $narrow ? request()?->header('X-Branch') : null;
@@ -148,7 +148,7 @@ class AccountScope
 
         $levels = [];
         if (in_array('manager', $roles, true)) {
-            $levels[] = AccountBranch::MANAGEMENT;
+            array_push($levels, ...AccountBranch::MANAGER_LEVELS);
         }
         if (in_array('frontdesk', $roles, true)) {
             $levels[] = AccountBranch::OPERATION;

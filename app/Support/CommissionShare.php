@@ -39,6 +39,12 @@ class CommissionShare
     }
 
     /**
+     * The base is the service line's own price, before anything a customer
+     * program takes off the BILL (a voucher, a free service, a discount, a
+     * membership perk, points): those live on the bill, never on the line, so
+     * the owner absorbs them and the therapist is paid as if the service were
+     * charged in full. Don't feed the bill's discount or amount in here.
+     *
      * @param  ?array  $policy  Staff Policies, or null when commission is off
      * @param  float  $price  the service line's price (its subtotal)
      * @param  float  $listPrice  its list price × quantity, used when the line carries no price of its own (a package line)

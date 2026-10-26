@@ -27,6 +27,8 @@ class PublicTherapistAvailabilityResource extends JsonResource
             'role' => $staff->role,
             'available' => (bool) $this->resource['available'],
             'reason' => $this->resource['reason'],
+            // When they are next free that day (H:i), for a therapist who is not free then.
+            'next_available' => $this->resource['next'] ?? null,
         ];
     }
 }

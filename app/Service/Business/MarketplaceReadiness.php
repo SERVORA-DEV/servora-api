@@ -26,6 +26,7 @@ use Illuminate\Database\Eloquent\Builder;
 class MarketplaceReadiness
 {
     public const NOT_BOOKABLE = "This spa isn't taking bookings right now.";
+    public const NOT_CHANGEABLE = "This spa can't move bookings right now. Please contact them.";
 
     public static function scope(Builder $query): Builder
     {
@@ -111,9 +112,30 @@ class MarketplaceReadiness
     // The whole rule for one branch — what booking and the time slots check.
     // (The spa page itself stays reachable through publicFindByUuid(), so a
     // client with an existing booking can still open it.)
+    // A NEW booking: the branch has to be on (verified, switched on and listed) as
+    // well as ready — a client already inside the booking flow when the owner
+    // switches it off, or Servora suspends it, must not slip a booking through.
     public static function isBookable(SpaBranch $branch): bool
     {
-        return self::scope(SpaBranch::whereKey($branch->id))->exists();
+        return self::isOn($branch)
+            && (bool) $branch->listing_visible
+            && self::scope(SpaBranch::whereKey($branch->id))->exists();
+    }
+
+    // Moving a booking the client already has: only whether the spa is running
+    // (the business and the branch are verified and the branch is on). Listing
+    // polish (a cover photo, a promo…) has nothing to do with a booking made
+    // long before it was required, and it must not stop the client moving it.
+    public static function acceptsChanges(SpaBranch $branch): bool
+    {
+        $branch->loadMissing('business');
+
+        return self::isOn($branch) && $branch->business?->verification_status === 'Verified';
+    }
+
+    private static function isOn(SpaBranch $branch): bool
+    {
+        return $branch->verification_status === 'Verified' && $branch->operating_status === 'Active';
     }
 
     // `items` is everything that has to be done to be listed (the Required

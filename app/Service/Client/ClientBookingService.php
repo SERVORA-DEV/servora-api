@@ -64,14 +64,21 @@ class ClientBookingService
         return Appointment::query()->whereHas('client', fn ($q) => $q->where('user_id', $user->id));
     }
 
+    // What ClientAppointmentResource shows: the relations, and whether the
+    // client has already rated this booking's spa (`spa_rated`).
+    private function shown(User $user): Builder
+    {
+        return $this->mine($user)->with(self::RELATIONS)->addSelect(['spa_rated' => Review::ratedBranchColumn()]);
+    }
+
     private function findMine(User $user, string $uuid): Appointment
     {
-        return $this->mine($user)->where('uuid', $uuid)->with(self::RELATIONS)->firstOrFail();
+        return $this->shown($user)->where('appointments.uuid', $uuid)->firstOrFail();
     }
 
     public function list(User $user, ?string $scope, int $perPage = 20)
     {
-        $query = $this->mine($user)->with(self::RELATIONS);
+        $query = $this->shown($user);
 
         switch ($scope) {
             case 'upcoming':
@@ -177,8 +184,11 @@ class ClientBookingService
             if ($problem = BookingPolicy::startTimeProblem(BookingPolicy::for($branch), $startsAt)) {
                 return response()->json(['message' => $problem], 422);
             }
-            if (! MarketplaceReadiness::isBookable($branch)) {
-                return response()->json(['message' => MarketplaceReadiness::NOT_BOOKABLE], 422);
+            if ($suspended = \App\Support\Suspension::refusal($branch)) {
+                return $suspended;
+            }
+            if (! MarketplaceReadiness::acceptsChanges($branch)) {
+                return response()->json(['message' => MarketplaceReadiness::NOT_CHANGEABLE], 422);
             }
             // Not onto a day that already holds the most bookings one client may have.
             $dayLimit = BookingPolicy::for($branch)['max_bookings_per_client_per_day'];
@@ -272,7 +282,7 @@ class ClientBookingService
 
         $ahead = (clone $sameDay)
             ->where('queue_status', 'Waiting')
-            ->where('created_at', '<', $ticket->created_at)
+            ->whereRaw(Queue::lineKey() . ' < ?', [$ticket->lineTime()])
             ->with('appointment.services.serviceVariant')
             ->get();
 
@@ -285,7 +295,7 @@ class ClientBookingService
         // before anyone has checked in, fall back to the active roster.
         $roster = Staff::where('spa_branch_id', $ticket->spa_branch_id)->where('role', 'therapist')->where('status', 'active');
         $inToday = \App\Models\Attendance::whereIn('staff_id', (clone $roster)->select('id'))
-            ->whereDate('attendance_date', $date)
+            ->whereDate('attendance_date', \App\Support\BusinessDay::attendanceDate($ticket->spa_branch_id, $date))
             ->whereNotNull('check_in_at')
             ->whereNull('check_out_at')
             ->count();
@@ -322,24 +332,40 @@ class ClientBookingService
             return response()->json(['message' => 'You already reviewed this visit.'], 409);
         }
 
-        $review = Review::create([
-            'appointment_id' => $appointment->id,
-            'client_id' => $appointment->client_id,
-            'rating' => $payload['rating'],
-            'comment' => $payload['comment'] ?? null,
-            'is_anonymous' => (bool) ($payload['is_anonymous'] ?? false),
-            'status' => 'Published',
-            'reviewed_at' => now(),
-        ]);
+        // A spa is rated once (Review::ratedBranch). The client's row is locked
+        // so two quick taps can't both get through.
+        $review = DB::transaction(function () use ($appointment, $payload) {
+            \App\Models\Client::whereKey($appointment->client_id)->lockForUpdate()->first();
+            if (Review::ratedBranch($appointment->client_id, $appointment->spa_branch_id)) {
+                return null;
+            }
 
-        $this->staffNotifier->appointment(
-            $appointment,
-            'New review',
-            "{$this->clientName($appointment)} left a {$payload['rating']}-star review for booking {$appointment->appointment_number}.",
-            null,
-            'Appointment',
-            false,
-        );
+            $review = Review::create([
+                'appointment_id' => $appointment->id,
+                'client_id' => $appointment->client_id,
+                'rating' => $payload['rating'],
+                'comment' => $payload['comment'] ?? null,
+                'is_anonymous' => (bool) ($payload['is_anonymous'] ?? false),
+                'status' => 'Published',
+                'reviewed_at' => now(),
+            ]);
+
+            $this->staffNotifier->appointment(
+                $appointment,
+                'New review',
+                "{$this->clientName($appointment)} left a {$payload['rating']}-star review for booking {$appointment->appointment_number}.",
+                null,
+                'Appointment',
+                false,
+            );
+
+            return $review;
+        });
+        if (! $review) {
+            $spa = $appointment->branch?->branch_name ?? 'this spa';
+
+            return response()->json(['message' => "You've already rated {$spa}. Each spa can be rated once."], 409);
+        }
 
         return (new ClientReviewResource($review->load('appointment.branch.business', 'appointment.services.serviceVariant.service')))
             ->response()

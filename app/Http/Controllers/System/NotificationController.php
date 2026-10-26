@@ -24,6 +24,12 @@ class NotificationController extends Controller
         );
     }
 
+    // One of the admin's own notifications, for its full view.
+    public function show(Request $request, int $id)
+    {
+        return $this->notificationService->showForUser($request->user(), $id);
+    }
+
     public function markRead(Request $request, int $id)
     {
         return $this->notificationService->markRead($request->user(), $id);

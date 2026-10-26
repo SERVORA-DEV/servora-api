@@ -86,11 +86,12 @@ class UserService
     {
         if (empty($payload->email) || empty($payload->password)) {
             return response()->json([
-                'message' => 'Email and password are required'
+                'message' => 'Email or username, and password, are required'
             ], 400);
         }
 
-        $user = $this->userRepository->findByEmail($payload->email, $this->resolveAudience($payload->input('audience')));
+        // The field is called "email" but a staff login may type its username.
+        $user = $this->userRepository->findByLogin((string) $payload->email, $this->resolveAudience($payload->input('audience')));
 
         if (! $user) {
             return response()->json([
@@ -191,9 +192,10 @@ class UserService
      * sends the ID token Google gave the browser; nothing in it is trusted
      * until Google confirms it was issued for our client ID.
      *
-     * Owners only: a new email becomes a business_owner account (already
-     * verified — Google vouches for the address); an existing owner is signed
-     * in. Administrators and staff keep password sign-in.
+     * Owners only: a new email becomes a business_owner account with the
+     * password they chose on the sign-up page, and no email verification —
+     * Google vouches for the address; an existing owner is signed in.
+     * Administrators and staff keep password sign-in.
      */
     public function loginWithGoogle(Request $request)
     {
@@ -203,12 +205,22 @@ class UserService
             return response()->json(['message' => 'Google sign-in is not available.'], 503);
         }
 
-        $claims = $this->verifyGoogleIdToken((string) $request->input('credential'), $clientId);
+        // The client app (audience "mobile") also accepts the extra client IDs.
+        $forClient = $request->input('audience') === User::AUDIENCE_MOBILE;
+        $audiences = $forClient
+            ? array_merge([$clientId], (array) config('services.google.extra_client_ids', []))
+            : [$clientId];
+
+        $claims = $this->verifyGoogleIdToken((string) $request->input('credential'), $audiences);
 
         if ($claims === null) {
             return response()->json([
                 'message' => 'We could not verify your Google account. Please try again.',
             ], 401);
+        }
+
+        if ($forClient) {
+            return $this->googleClientSignIn($claims, $request);
         }
 
         $user = $this->userRepository->findByEmail($claims['email'], User::AUDIENCE_WEB);
@@ -224,11 +236,24 @@ class UserService
                 ], 404);
             }
 
-            // The password is never shown or used: the owner signs in with
-            // Google, and can set a real one through "Forgot password".
+            // The owner still chooses a password for the account (the same rules
+            // as signing up with an email); only the email verification is
+            // skipped, since Google has already vouched for the address.
+            $passwordCheck = \Illuminate\Support\Facades\Validator::make(
+                $request->only('password', 'password_confirmation'),
+                ['password' => ['required', 'confirmed', \Illuminate\Validation\Rules\Password::defaults()]],
+            );
+            if ($passwordCheck->fails()) {
+                return response()->json([
+                    'message' => $passwordCheck->errors()->first('password'),
+                    'needs_password' => true,
+                    'errors' => $passwordCheck->errors(),
+                ], 422);
+            }
+
             $user = $this->createBusinessOwner([
                 'email' => $claims['email'],
-                'password' => Str::random(40),
+                'password' => $request->input('password'),
             ] + $this->termsStamp());
 
             $user->markEmailAsVerified();
@@ -274,10 +299,99 @@ class UserService
         ], 200);
     }
 
+    // "Continue with Google" in the client app: a client (end customer) account
+    // by email. One that exists is signed in; a new one is created already
+    // verified (Google vouches for the address) when the Terms were agreed to,
+    // with the name Google gives. The phone number and the rest of the profile
+    // are asked for by the app's own setup afterwards.
+    public function googleClientSignIn(array $claims, Request $request)
+    {
+        $user = $this->userRepository->findByEmail($claims['email'], User::AUDIENCE_MOBILE);
+
+        if (! $user) {
+            // A new account: the phone is asked for the agreement and a password
+            // (needs_signup), and calls again with them.
+            if (! $request->boolean('terms_accepted')) {
+                return response()->json([
+                    'message' => 'Please agree to the User Agreement and Privacy Policy to create your account with Google.',
+                    'needs_signup' => true,
+                    'email' => $claims['email'],
+                ], 404);
+            }
+
+            // The client still chooses a password for the account (the same rules
+            // as signing up with an email); only the email code is skipped,
+            // since Google has already vouched for the address.
+            $passwordCheck = \Illuminate\Support\Facades\Validator::make(
+                $request->only('password', 'password_confirmation'),
+                ['password' => ['required', 'confirmed', \Illuminate\Validation\Rules\Password::defaults()]],
+            );
+            if ($passwordCheck->fails()) {
+                return response()->json([
+                    'message' => $passwordCheck->errors()->first('password'),
+                    'needs_password' => true,
+                    'errors' => $passwordCheck->errors(),
+                ], 422);
+            }
+
+            $user = $this->userRepository->create([
+                'role' => 'client',
+                'email' => $claims['email'],
+                'password' => $request->input('password'),
+                'first_name' => $this->googleName($claims['given_name'] ?? null),
+                'last_name' => $this->googleName($claims['family_name'] ?? null),
+            ] + $this->termsStamp());
+
+            $user->markEmailAsVerified();
+            $user->account_status = 'Active';
+            $user->save();
+
+            return response()->json([
+                'user' => new UserResource($user->fresh()),
+                'token' => $this->issueLoginToken($user, $request, 'google'),
+            ], 201);
+        }
+
+        if ($user->role !== 'client') {
+            return response()->json([
+                'message' => 'This email is not a client account. Please sign in with your email and password.',
+            ], 403);
+        }
+
+        if (in_array($user->account_status, ['Inactive', 'Suspended'], true)) {
+            return response()->json([
+                'message' => 'This account has been deactivated. Contact support to reactivate it.'
+            ], 403);
+        }
+
+        if (! $user->hasVerifiedEmail()) {
+            // Registered with a password but never proved the address; Google
+            // just did, so the unproven password is thrown away.
+            $user->password = Str::random(40);
+            $user->markEmailAsVerified();
+            $user->account_status = 'Active';
+            $user->save();
+        }
+
+        return response()->json([
+            'user' => new UserResource($user),
+            'token' => $this->issueLoginToken($user, $request, 'google'),
+        ], 200);
+    }
+
+    private function googleName(?string $name): ?string
+    {
+        $name = trim((string) $name);
+
+        return $name === '' ? null : mb_substr($name, 0, 100);
+    }
+
     // Asks Google whether the ID token is genuine, then checks it was issued
-    // for this app, by Google, for a Google-verified email, and hasn't
-    // expired. Returns the claims, or null on any doubt.
-    private function verifyGoogleIdToken(string $idToken, string $clientId): ?array
+    // for one of these apps, by Google, for a Google-verified email, and
+    // hasn't expired. Returns the claims, or null on any doubt.
+    //
+    // @param  string[]  $clientIds  the OAuth client IDs whose tokens are accepted
+    private function verifyGoogleIdToken(string $idToken, array $clientIds): ?array
     {
         if ($idToken === '') {
             return null;
@@ -300,7 +414,7 @@ class UserService
         $claims = $response->json();
 
         if (! is_array($claims)
-            || ($claims['aud'] ?? null) !== $clientId
+            || ! in_array($claims['aud'] ?? null, $clientIds, true)
             || ! in_array($claims['iss'] ?? null, ['accounts.google.com', 'https://accounts.google.com'], true)
             || ! in_array($claims['email_verified'] ?? null, [true, 'true'], true)
             || empty($claims['email'])
@@ -710,30 +824,13 @@ class UserService
         return ['terms_accepted_at' => now(), 'terms_version' => config('legal.version')];
     }
 
+    // Signing up with an email: no account is made yet. What was typed waits
+    // (App\Support\PendingRegistration) and the account is created when the
+    // link in the email is pressed (completeRegistration).
     public function registerBusinessUser(array $payload){
 
-        $user = $this->createBusinessOwner($payload + $this->termsStamp());
-
-        // Local dev used to auto-verify owner accounts to skip email delivery,
-        // which meant the verification link was never exercised anywhere.
-        // Mail now goes out over real Gmail SMTP, so verification behaves
-        // identically in every environment and the link gets tested by use.
-        //
-        // Same reasoning as deliver(): the user and their permission rows are
-        // already committed, so a failed send must not become a 500.
-        // /auth/resend-verification is the recovery path.
-        $sent = true;
-
-        try {
-            $user->sendEmailVerificationNotification();
-        } catch (\Throwable $e) {
-            $sent = false;
-
-            Log::error('Failed to send email verification link', [
-                'email' => $user->email,
-                'exception' => $e->getMessage(),
-            ]);
-        }
+        $pending = \App\Support\PendingRegistration::start($payload, $this->termsStamp());
+        $sent = $pending['sent'];
 
         return response()->json([
             'success' => true,
@@ -743,24 +840,22 @@ class UserService
             // auto-verifies; kept so that contract doesn't change.
             'verified' => false,
             // For POST /auth/verification-status — see verificationStatus().
-            'status_token' => $this->issueVerificationWatchToken($user),
+            'status_token' => $pending['watch'],
             'message' => $sent
-                ? 'Registration successful. Please check your email to verify your account.'
-                : 'Registration successful, but we could not send your verification email. Please use the resend option to try again.',
+                ? 'Almost there. Open the email we sent and press the button to create your account.'
+                : 'We could not send your confirmation email. Please use the resend option to try again.',
         ], 201);
     }
 
-    private function issueVerificationWatchToken(User $user): string
+    // The button in the sign-up email was pressed: the account is created now,
+    // already verified. Returns 'success' | 'already' | 'invalid'.
+    public function completeRegistration(string $token): string
     {
-        $token = Str::random(48);
-
-        Cache::store('durable')->put(
-            self::VERIFICATION_WATCH_PREFIX . $token,
-            $user->id,
-            now()->addHours(self::VERIFICATION_WATCH_HOURS),
-        );
-
-        return $token;
+        return \App\Support\PendingRegistration::complete($token, fn (array $pending) => $this->createBusinessOwner([
+            'email' => $pending['email'],
+            // Already hashed when the sign-up was held.
+            'password' => $pending['password'],
+        ] + $pending['terms']));
     }
 
     // Polled by the sign-up page while it shows "check your inbox". Answers
@@ -769,6 +864,12 @@ class UserService
     // expired token just reads as "not verified".
     public function verificationStatus(string $token)
     {
+        // A sign-up waiting for its button to be pressed.
+        $waiting = \App\Support\PendingRegistration::watching($token);
+        if ($waiting !== null) {
+            return response()->json(['verified' => $waiting], 200);
+        }
+
         $key = self::VERIFICATION_WATCH_PREFIX . $token;
         $userId = Cache::store('durable')->get($key);
         $user = $userId ? User::find($userId) : null;

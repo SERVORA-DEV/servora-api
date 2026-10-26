@@ -9,13 +9,17 @@ class UserPermission extends Model
 {
     use HasFactory;
 
-    // policy_override gets its column from a migration the owner runs; until
-    // then it is simply not written (App\Service\Business\PolicyGate::ready).
+    // policy_override and payment_adjust get their columns from migrations
+    // the owner runs; until then they are simply not written.
     protected static function booted(): void
     {
         static::saving(function (self $row) {
             if (array_key_exists('policy_override', $row->getAttributes()) && ! \App\Service\Business\PolicyGate::ready()) {
                 $row->offsetUnset('policy_override');
+            }
+            // Likewise payment_adjust (App\Models\BillingAdjustment::ready).
+            if (array_key_exists('payment_adjust', $row->getAttributes()) && ! \App\Models\BillingAdjustment::ready()) {
+                $row->offsetUnset('payment_adjust');
             }
         });
     }
@@ -112,6 +116,7 @@ class UserPermission extends Model
         'payment_create',
         'payment_refund',
         'policy_override',
+        'payment_adjust',
 
         'reward_view',
         'reward_create',
@@ -225,6 +230,7 @@ class UserPermission extends Model
             'payment_create' => 'boolean',
             'payment_refund' => 'boolean',
             'policy_override' => 'boolean',
+            'payment_adjust' => 'boolean',
 
             'reward_view' => 'boolean',
             'reward_create' => 'boolean',

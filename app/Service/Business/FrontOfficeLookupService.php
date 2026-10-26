@@ -145,8 +145,6 @@ class FrontOfficeLookupService
                 'earned_today' => $row['earned_today'],
                 'earned_period' => $row['earned_period'],
             ])->values(),
-            // 'check_in' or 'lowest_earnings' — the owner's Staff Policies choice.
-            'rotation_mode' => $rows->first()['rotation_mode'] ?? TherapistQueueCalculator::MODE_CHECK_IN,
         ];
     }
 
@@ -262,9 +260,9 @@ class FrontOfficeLookupService
                 // (App\Support\FrontDeskPolicy, PolicyGate).
                 'policy' => $branch ? array_intersect_key(BookingPolicy::for($branch), array_flip([
                     'booking_lead_time_minutes', 'max_advance_booking_days',
-                    'max_services_per_booking', 'max_service_minutes_per_booking', 'cancellation_window_hours',
+                    'max_services_per_booking', 'max_bookings_per_hour', 'max_service_minutes_per_booking', 'allow_booking_overlap', 'cancellation_window_hours',
                     'queue_enabled', 'max_queue_size', 'walk_ins_first_priority',
-                    'allow_service_extension', 'no_show_policy', 'no_show_suspend_after',
+                    'allow_service_extension', 'no_show_policy', 'no_show_suspend_after', 'reservation_grace_minutes',
                 ])) + ['can_override' => app(PolicyGate::class)->mayOverride($user)] : null,
                 // For the modal's Home service option: whether it's offered,
                 // the fee and area, and the branch's own pin to measure from.

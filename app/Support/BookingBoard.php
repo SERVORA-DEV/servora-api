@@ -23,6 +23,13 @@ class BookingBoard
     public const PAST = 'past';          // today, and the time has gone
     // "Any therapist" at one start time.
     public const FULL = 'full';          // every therapist on shift is taken
+    // Either row: the hour already has as many reservations as the spa takes
+    // in an hour (HourlyCapacity).
+    public const HOUR_FULL = 'hour_full';
+    // Either row: sooner than the spa's notice ("book at least N hours ahead").
+    public const TOO_SOON = 'too_soon';
+    // Either row: the visit would still be running when the branch closes.
+    public const PAST_CLOSING = 'past_closing';
 
     public const DAY_WORKING = 'working';
     public const DAY_OFF = 'day_off';
@@ -33,9 +40,12 @@ class BookingBoard
      * @param  list<array{id: int, uuid: string, on_leave: bool, has_schedule: bool, shifts: list<array{start: int, end: int}>}>  $therapists
      * @param  list<array{start: int, end: int, staff: list<int>}>  $busy  the day's open bookings; staff = who is on them (empty = nobody yet)
      * @param  ?int  $now  minutes from midnight when the day is today, else null
-     * @return array{slots: list<array{time: string, state: string, free_therapists: int}>, therapists: list<array<string, mixed>>}
+     * @param  int  $hourLimit  reservations the spa takes in one clock hour (0 = no limit)
+     * @param  array<int, int>  $hourCounts  reservations already taken, per clock hour
+     * @param  ?int  $soonBefore  minutes from midnight of the day: starts before it are sooner than the spa's notice and can't be booked; null = no notice needed
+     * @return array{slots: list<array{time: string, state: string, free_therapists: int}>, therapists: list<array<string, mixed>>, hours: list<array{hour: string, booked: int, limit: int, full: bool}>}
      */
-    public static function build(array $day, array $therapists, array $busy, int $duration, int $step, ?int $now = null): array
+    public static function build(array $day, array $therapists, array $busy, int $duration, int $step, ?int $now = null, int $hourLimit = 0, array $hourCounts = [], ?int $soonBefore = null): array
     {
         $duration = max($duration, 1);
         $step = max($step, 5);
@@ -50,6 +60,9 @@ class BookingBoard
             $starts[] = $t;
         }
 
+        // A start in an hour that is already full can't be booked, for anyone.
+        $hourFull = fn (int $t) => HourlyCapacity::isFull($hourLimit, $hourCounts[intdiv($t, 60)] ?? 0);
+
         $rows = [];
         foreach ($therapists as $therapist) {
             $mine = array_values(array_filter($busy, fn ($b) => in_array($therapist['id'], $b['staff'], true)));
@@ -57,6 +70,13 @@ class BookingBoard
             $nextFree = null;
             foreach ($starts as $t) {
                 $state = self::therapistState($therapist, $mine, $t, $t + $duration, $now);
+                if ($state === self::FREE && $t + $duration > $day['close']) {
+                    $state = self::PAST_CLOSING;
+                } elseif ($state === self::FREE && $soonBefore !== null && $t < $soonBefore) {
+                    $state = self::TOO_SOON;
+                } elseif ($state === self::FREE && $hourFull($t)) {
+                    $state = self::HOUR_FULL;
+                }
                 if ($state === self::FREE) {
                     $nextFree ??= $t;
                 }
@@ -88,13 +108,23 @@ class BookingBoard
                 'time' => self::clock($t),
                 'state' => $now !== null && $t < $now
                     ? self::PAST
-                    // No therapists on record: nothing to count, so nothing is full.
-                    : (! $therapists || $left > 0 ? self::FREE : self::FULL),
+                    : ($t + $duration > $day['close']
+                        ? self::PAST_CLOSING
+                        : ($soonBefore !== null && $t < $soonBefore
+                        ? self::TOO_SOON
+                        : ($hourFull($t)
+                        ? self::HOUR_FULL
+                        // No therapists on record: nothing to count, so nothing is full.
+                        : (! $therapists || $left > 0 ? self::FREE : self::FULL)))),
                 'free_therapists' => $left,
             ];
         }
 
-        return ['slots' => $any, 'therapists' => $rows];
+        return [
+            'slots' => $any,
+            'therapists' => $rows,
+            'hours' => HourlyCapacity::summary($hourLimit, $hourCounts, array_map(fn (int $t) => intdiv($t, 60), $starts)),
+        ];
     }
 
     private static function therapistState(array $therapist, array $mine, int $start, int $end, ?int $now): string

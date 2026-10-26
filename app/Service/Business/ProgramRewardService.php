@@ -11,6 +11,7 @@ use App\Models\ClientVoucher;
 use App\Models\CustomerProgram;
 use App\Support\AppCache;
 use App\Support\LoyaltyEarning;
+use App\Support\ProgramChannel;
 use App\Support\VoucherTarget;
 use App\Models\User;
 use App\Repository\NotificationRepository;
@@ -60,7 +61,8 @@ class ProgramRewardService
 
     public function planAllows(int $businessId): bool
     {
-        return AppCache::planAllows($businessId, 'reward_access');
+        // Open work (a visit being paid when the plan ends) still earns and redeems for a short while.
+        return AppCache::planAllowsOpenWork($businessId, 'reward_access');
     }
 
     /** Active programs of a business offered at a branch. */
@@ -92,24 +94,30 @@ class ProgramRewardService
 
         $programs = $this->offeredAt($billing->spa_business_id, $billing->spa_branch_id);
         $earned = [];
+        // Where this visit was booked: a program limited to the app or the desk
+        // earns only for visits from there.
+        $where = ProgramChannel::whereOf($appointment);
 
         // Points are for clients who use the app (App\Support\LoyaltyEarning);
         // the vouchers below are for everyone.
         $loyalty = $programs->firstWhere('type', 'loyalty');
-        if ($loyalty && LoyaltyEarning::earns($client->usesApp()) && ($points = $this->creditPoints($client, $billing, $loyalty)) > 0) {
+        if ($loyalty && ProgramChannel::allows(ProgramChannel::of($loyalty), $where) && LoyaltyEarning::earns($client->usesApp()) && ($points = $this->creditPoints($client, $billing, $loyalty)) > 0) {
             $earned[] = number_format($points) . ' points';
         }
 
         $visits = $this->paidVisitServices($client);
-        $paidVisits = count($visits);
         foreach ($programs->where('type', 'voucher') as $voucher) {
+            if (! ProgramChannel::allows(ProgramChannel::of($voucher), $where)) {
+                continue;
+            }
             $due = match ($voucher->condition_kind) {
                 'min_spend' => $voucher->condition_value && (float) $billing->amount + 0.004 >= $voucher->condition_value
                     && ! ClientVoucher::where('customer_program_id', $voucher->id)->where('source_billing_id', $billing->id)->where('status', '!=', 'cancelled')->exists() ? 1 : 0,
                 'visits' => $voucher->condition_value
                     ? max(0, intdiv(VoucherTarget::visits(VoucherTarget::of($voucher->values, 'earn'), $visits), $voucher->condition_value) - $this->issuedCount($client, $voucher, 'visits'))
                     : 0,
-                'first_visit' => $paidVisits === 1 && $this->issuedCount($client, $voucher, 'first_visit') === 0 ? 1 : 0,
+                // A first-visit voucher is not earned after the visit: it is there for
+                // the client's first booking (claimFirstVisit).
                 default => 0,
             };
             for ($i = 0; $i < $due; $i++) {
@@ -119,7 +127,7 @@ class ProgramRewardService
         }
 
         if ($earned) {
-            $this->notifyClient($client, 'You earned rewards', 'From your visit to ' . ($appointment->branch?->branch_name ?? 'the spa') . ': ' . implode(', ', $earned) . '.', $appointment->uuid);
+            $this->notifyClient($client, 'You earned rewards', 'Thanks for visiting ' . ($appointment->branch?->branch_name ?? 'the spa') . '! You earned ' . implode(', ', $earned) . '.');
         }
     }
 
@@ -235,10 +243,13 @@ class ProgramRewardService
     // ── Points → voucher ──────────────────────────────────────────────────
 
     /** @return ClientVoucher|string the new voucher, or why it can't be redeemed */
-    public function redeemPoints(Client $client, CustomerProgram $voucher, ?User $actor, ?int $branchId = null): ClientVoucher|string
+    public function redeemPoints(Client $client, CustomerProgram $voucher, ?User $actor, ?int $branchId = null, string $where = ProgramChannel::DESK): ClientVoucher|string
     {
         if ($voucher->type !== 'voucher' || $voucher->condition_kind !== 'points' || ! $voucher->is_active) {
             return 'That voucher can\'t be bought with points.';
+        }
+        if (! ProgramChannel::allows(ProgramChannel::of($voucher), $where)) {
+            return 'That voucher can\'t be bought here. ' . ProgramChannel::refusal(ProgramChannel::of($voucher));
         }
         if ($voucher->spa_business_id !== $client->spa_business_id || ! $this->enabledFor($client->spa_business_id)) {
             return 'That voucher isn\'t offered by this spa.';
@@ -249,7 +260,15 @@ class ProgramRewardService
 
         $cost = (int) $voucher->condition_value;
         $client = Client::whereKey($client->id)->lockForUpdate()->first();
+        // Checked under the lock so two taps can't both claim a one-time voucher.
+        if ($this->claimedOnce($client, $voucher)) {
+            return 'This client already claimed this voucher — it can only be claimed once.';
+        }
         $loyalty = CustomerProgram::where('spa_business_id', $client->spa_business_id)->where('type', 'loyalty')->where('is_active', true)->first();
+        // Points limited to the app (or the desk) are spent only there.
+        if ($loyalty && ! ProgramChannel::allows(ProgramChannel::of($loyalty), $where)) {
+            return 'Points can\'t be spent here. ' . ProgramChannel::refusal(ProgramChannel::of($loyalty));
+        }
 
         if ($cost <= 0) {
             return 'This voucher has no points price set.';
@@ -315,6 +334,81 @@ class ProgramRewardService
         ]);
     }
 
+    /**
+     * Whether a voucher in a client's wallet can be used where the action
+     * happens: its own channel, and, for one that came with a membership, the
+     * membership's too (a membership's perks are used only where it says).
+     */
+    public function voucherAllowedAt(ClientVoucher $voucher, string $where): bool
+    {
+        if (! ProgramChannel::allows(ProgramChannel::of($voucher->dealProgram()), $where)) {
+            return false;
+        }
+        if ($voucher->client_membership_id) {
+            $membership = ClientMembership::with('program')->find($voucher->client_membership_id);
+            if ($membership?->program && ! ProgramChannel::allows(ProgramChannel::of($membership->program), $where)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // ── First visit: there for the first booking, not earned after it ─────
+
+    /**
+     * Whether a client can still claim this "first visit" voucher: they have
+     * no paid visit yet (the visit being booked or billed now is not paid) and
+     * it has not been issued to them before.
+     */
+    public function firstVisitClaimable(Client $client, CustomerProgram $voucher): bool
+    {
+        if ($voucher->type !== 'voucher' || $voucher->condition_kind !== 'first_visit' || ! $voucher->is_active) {
+            return false;
+        }
+        if (! $client->exists) {
+            return true;
+        }
+
+        return $this->paidVisitServices($client) === []
+            && $this->issuedCount($client, $voucher, 'first_visit') === 0;
+    }
+
+    /**
+     * Gives the client their first-visit voucher so it can be used on this
+     * booking, or returns the one they already hold and have not used.
+     * Null when it is not for them (a paid visit already, used up, wrong
+     * place).
+     */
+    public function claimFirstVisit(Client $client, CustomerProgram $voucher, string $where, ?int $branchId = null): ?ClientVoucher
+    {
+        if ($voucher->type !== 'voucher' || $voucher->condition_kind !== 'first_visit' || ! $voucher->is_active
+            || $voucher->spa_business_id !== $client->spa_business_id
+            || ! $this->enabledFor($client->spa_business_id)
+            || ($branchId && ! $voucher->offeredAt($branchId))
+            || ! ProgramChannel::allows(ProgramChannel::of($voucher), $where)) {
+            return null;
+        }
+
+        $client = Client::whereKey($client->id)->lockForUpdate()->first();
+        if (! $client) {
+            return null;
+        }
+
+        $held = ClientVoucher::where('client_id', $client->id)
+            ->where('customer_program_id', $voucher->id)
+            ->where('source', 'first_visit')
+            ->where('status', 'available')
+            ->first();
+        if ($held) {
+            return $held;
+        }
+
+        return $this->firstVisitClaimable($client, $voucher)
+            ? $this->issueVoucher($client, $voucher, 'first_visit')
+            : null;
+    }
+
     public function issueMembershipVouchers(ClientMembership $membership): int
     {
         $membership->loadMissing('program.items', 'client');
@@ -359,6 +453,17 @@ class ProgramRewardService
         }
 
         return array_values($visits);
+    }
+
+    /** A points voucher is claimed once per client unless the owner set "Can be claimed again". */
+    public static function claimableAgain(CustomerProgram $voucher): bool
+    {
+        return $voucher->value('claimAgain') === 'Yes';
+    }
+
+    public function claimedOnce(Client $client, CustomerProgram $voucher): bool
+    {
+        return ! self::claimableAgain($voucher) && $this->issuedCount($client, $voucher, 'points') > 0;
     }
 
     public function issuedCount(Client $client, CustomerProgram $voucher, string $source): int
@@ -421,7 +526,7 @@ class ProgramRewardService
 
             foreach ($clients as $client) {
                 $this->issueVoucher($client, $voucher, 'birthday', expiresAt: now()->endOfMonth());
-                $this->notifyClient($client, 'Happy birthday!', "{$voucher->name} is in your wallet this month.", null);
+                $this->notifyClient($client, 'Happy birthday!', ($client->business?->business_name ?? 'Your spa') . " has a birthday treat for you: “{$voucher->name}” is in your wallet until the end of the month.");
                 $issued++;
             }
         }
@@ -449,12 +554,16 @@ class ProgramRewardService
         };
     }
 
-    public function notifyClient(Client $client, string $title, string $message, ?string $reference): void
+    // A rewards notice in the client's feed. It refers to the spa (business)
+    // the client holds these rewards at, so tapping it opens that spa's rewards
+    // (App\Support\ClientNotificationLink).
+    public function notifyClient(Client $client, string $title, string $message): void
     {
         if (! $client->user_id) {
             return;
         }
         $userId = $client->user_id;
+        $reference = $client->business?->uuid;
 
         DB::afterCommit(function () use ($userId, $title, $message, $reference) {
             try {

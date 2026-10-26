@@ -149,6 +149,8 @@ class TherapistQueueTest extends TestCase
         $this->assertNotInstanceOf(JsonResponse::class, $created, 'createAppointment failed: ' . $this->msg($created));
 
         $appointment = Appointment::where('uuid', $created->resource->uuid)->firstOrFail();
+        // A service only starts for a client who is here.
+        $appointment->update(['status' => Appointment::STATUS_CHECKED_IN, 'check_in_at' => now()]);
 
         $added = $this->appointmentService->addService($this->owner, $appointment->uuid, [
             'service_variant_uuid' => $this->massageVariant->uuid,

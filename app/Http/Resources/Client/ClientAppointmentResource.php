@@ -151,9 +151,9 @@ class ClientAppointmentResource extends JsonResource
                 'logo_url' => ImageUploadService::url($business->business_logo),
             ] : null,
 
-            // A cancelled booking still lists what was booked; otherwise
-            // services the front desk removed are left out.
-            'services' => ($this->status === Appointment::STATUS_CANCELLED
+            // A cancelled or missed booking still lists what was booked;
+            // otherwise services the front desk removed are left out.
+            'services' => (in_array($this->status, [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW], true)
                     ? $this->services
                     : $this->services->where('status', '!=', 'Cancelled'))
                 ->values()
@@ -195,7 +195,10 @@ class ClientAppointmentResource extends JsonResource
             // for (e.g. inside the spa's cancellation window).
             'cancel_blocked_reason' => $this->status === Appointment::STATUS_SCHEDULED ? $cancelProblem : null,
             'reschedule_blocked_reason' => $this->status === Appointment::STATUS_SCHEDULED ? $rescheduleProblem : null,
-            'can_review' => $this->status === Appointment::STATUS_COMPLETED && ! $this->review,
+            // A spa is rated once (Review::ratedBranch): `spa_rated` when the
+            // client already has, on this visit or another one there.
+            'spa_rated' => $spaRated = $this->review !== null || (bool) $this->resource->getAttribute('spa_rated'),
+            'can_review' => $this->status === Appointment::STATUS_COMPLETED && ! $spaRated,
             // The limit on moving this booking in the app: how many times it
             // has been, and how many are left (null: no count yet).
             ...$this->rescheduleAllowance(),

@@ -107,6 +107,7 @@ return [
         'payment_view',
         'payment_create',
         'payment_refund',
+        'payment_adjust',
 
         'commission_view',
         'commission_update',
@@ -194,6 +195,9 @@ return [
         'payment_create',
         // Voiding a mistaken payment / refunding a bill.
         'payment_refund',
+        // Changing a bill after it is paid (a voucher afterwards, a refund)
+        // without asking the owner first (App\Support\BillAdjustment).
+        'payment_adjust',
         // Going ahead despite a booking rule, with a reason that is kept
         // (App\Service\Business\PolicyGate).
         'policy_override',
@@ -250,6 +254,9 @@ return [
         'payment_refund',
         // Grantable, but off by default — see default_off below.
         'policy_override',
+        // Off by default: without it, changing a paid bill is a request a
+        // manager or the owner approves (App\Support\BillAdjustment).
+        'payment_adjust',
 
         // Customer programs: see what's offered, sell memberships, apply
         // vouchers and redeem points at the counter.
@@ -274,7 +281,7 @@ return [
     // Management). Discounts and voids/refunds move money, so the front
     // desk only gets them when the owner decides to.
     'default_off' => [
-        'front_officer' => ['billing_update', 'payment_refund', 'policy_override'],
+        'front_officer' => ['billing_update', 'payment_refund', 'policy_override', 'payment_adjust'],
     ],
 
 ];

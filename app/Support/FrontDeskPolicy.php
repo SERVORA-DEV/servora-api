@@ -27,7 +27,7 @@ class FrontDeskPolicy
      * @param  int  $minutes  their total length
      * @param  ?array{name: string, no_shows: int}  $client  the client it is for, when known
      */
-    public static function reservation(array $policy, CarbonInterface $startsAt, CarbonInterface $now, int $services = 0, int $minutes = 0, ?array $client = null): array
+    public static function reservation(array $policy, CarbonInterface $startsAt, CarbonInterface $now, int $services = 0, int $minutes = 0, ?array $client = null, ?int $longest = null, bool $package = false): array
     {
         $problems = self::window($policy, $startsAt, $now);
 
@@ -36,9 +36,10 @@ class FrontDeskPolicy
             $problems[] = self::rule('max_services', "A booking can have up to {$max} " . ($max === 1 ? 'service' : 'services') . " here — this one has {$services}.");
         }
 
-        $limit = (int) ($policy['max_service_minutes_per_booking'] ?? 0);
-        if ($limit > 0 && $minutes > $limit) {
-            $problems[] = self::rule('service_time', 'A booking can hold up to ' . self::length($limit) . ' of services here — these take ' . self::length($minutes) . '.');
+        // Past the owner's service-time limit: warned (the same rule the app
+        // is held to — a package, or one long service, is never over it).
+        if ($over = \App\Service\Client\BookingPolicy::serviceTimeProblem($policy, $minutes, $longest, $package)) {
+            $problems[] = self::rule('service_time', $over);
         }
 
         $after = (int) ($policy['no_show_suspend_after'] ?? 0);

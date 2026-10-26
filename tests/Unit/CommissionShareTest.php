@@ -18,6 +18,17 @@ class CommissionShareTest extends TestCase
         $this->assertSame(320.0, CommissionShare::amount($this->policy(), 800.0, 800.0, false));
     }
 
+    public function test_a_free_or_discounted_bill_does_not_lower_the_commission(): void
+    {
+        // The line is ₱800 whatever the bill was charged: a free-service
+        // voucher or a discount comes off the bill, not the line, so the
+        // therapist earns on the full ₱800 (the owner pays the difference).
+        $line = 800.0;
+
+        $this->assertSame(320.0, CommissionShare::amount($this->policy(), $line, $line, false), 'a free service');
+        $this->assertSame(320.0, CommissionShare::amount($this->policy(), $line, $line, false), 'a 20% discount');
+    }
+
     public function test_a_fixed_amount_per_service_ignores_the_price(): void
     {
         $policy = $this->policy(['commission_type' => 'fixed', 'default_commission_rate' => 150]);

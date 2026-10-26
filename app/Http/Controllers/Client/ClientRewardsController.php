@@ -22,6 +22,12 @@ class ClientRewardsController extends Controller
         return $this->rewards->forBranch($request->user(), $branchUuid);
     }
 
+    // Points earned and spent, vouchers and memberships at one spa (business).
+    public function history(Request $request, string $businessUuid)
+    {
+        return $this->rewards->history($request->user(), $businessUuid);
+    }
+
     public function redeem(Request $request)
     {
         $data = $request->validate(['program_uuid' => ['required', 'uuid']]);

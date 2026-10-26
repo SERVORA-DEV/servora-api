@@ -376,9 +376,14 @@ class DashboardService
             ->get(['id', 'uuid', 'spa_branch_id', 'first_name', 'last_name', 'role', 'status']);
         $ids = $roster->pluck('id')->all();
 
+        // Each branch's working day (BusinessDay): before it opens, the day before is still on.
+        $dayOf = collect($branchIds)->mapWithKeys(fn ($id) => [$id => \App\Support\BusinessDay::attendanceDate($id, $today)]);
+        $branchOf = $roster->pluck('spa_branch_id', 'id');
         $attendance = $ids
-            ? DB::table('attendances')->whereIn('staff_id', $ids)->whereDate('attendance_date', $today)
-                ->get(['staff_id', 'check_in_at', 'check_out_at', 'status'])->keyBy('staff_id')
+            ? DB::table('attendances')->whereIn('staff_id', $ids)->whereIn('attendance_date', $dayOf->values()->unique()->all())
+                ->get(['staff_id', 'attendance_date', 'check_in_at', 'check_out_at', 'status'])
+                ->filter(fn ($row) => substr((string) $row->attendance_date, 0, 10) === ($dayOf[$branchOf[$row->staff_id] ?? 0] ?? $today))
+                ->keyBy('staff_id')
             : collect();
         $serving = $this->servingNow->forStaff($ids);
 

@@ -32,6 +32,7 @@ class SpaBranchResource extends JsonResource
             'branch_name' => $this->branch_name,
             'code' => $this->code,
             'email' => $this->email,
+            'email_verified' => \App\Support\ContactEmail::isVerified($this->resource),
             'phone_number' => $this->phone_number,
             'facebook_url' => $this->facebook_url,
             'instagram_handle' => $this->instagram_handle,

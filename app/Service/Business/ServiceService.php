@@ -261,6 +261,17 @@ class ServiceService
 
         $service = $this->serviceRepository->findByUuidForBusiness($uuid, $business->id);
 
+        // A package that includes it would be sold without it, at the full price.
+        $packageIds = \App\Models\PackageServiceItem::where('service_id', $service->id)->pluck('package_id');
+        if ($packageIds->isNotEmpty()) {
+            $names = \App\Models\Package::whereIn('id', $packageIds)->orderBy('name')->pluck('name')->all();
+
+            return response()->json([
+                'message' => "{$service->name} is part of " . (count($names) === 1 ? 'the package' : 'these packages') . ' '
+                    . implode(', ', array_map(fn ($n) => "\"{$n}\"", $names)) . '. Take it out of ' . (count($names) === 1 ? 'it' : 'them') . ' (or delete ' . (count($names) === 1 ? 'it' : 'them') . ') first.',
+            ], 422);
+        }
+
         // Deleted immediately rather than kept for a soft-delete restore —
         // there's no restore endpoint for services today, so keeping the
         // file around would only ever leave it orphaned.

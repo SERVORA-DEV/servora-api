@@ -6,6 +6,7 @@ use App\Http\Resources\AppointmentResource;
 use App\Http\Resources\PaymentResource;
 use App\Models\Addon;
 use App\Models\Appointment;
+use App\Models\Queue;
 use App\Models\AppointmentPackage;
 use App\Models\AppointmentServiceItem;
 use App\Models\Attendance;
@@ -26,7 +27,9 @@ use App\Service\Client\BookingSlotService;
 use App\Service\Client\ClientBookingService;
 use App\Models\TherapistAssignment;
 use App\Models\User;
+use App\Support\ReservationHold;
 use Carbon\Carbon;
+use Carbon\CarbonInterface;
 use App\Repository\Business\AppointmentRepository;
 use App\Repository\Business\AppointmentServiceRepository;
 use App\Repository\Business\ClientRepository;
@@ -36,16 +39,20 @@ use App\Repository\Business\TherapistAssignmentRepository;
 use App\Repository\BillingRepository;
 use App\Repository\PaymentRepository;
 use App\Repository\SpaBusinessRepository;
+use App\Support\ClientNotificationLink;
 use App\Support\ClientProfile;
 use App\Support\FrontDeskPolicy;
 use App\Support\History;
 use App\Support\HomeVisitStart;
+use App\Support\HourlyCapacity;
 use App\Support\PackageShare;
 use App\Support\RotationTurn;
 use App\Support\ServiceAddon;
 use App\Support\ServiceKind;
 use App\Support\ServiceStartRules;
 use App\Support\ServiceVoidRules;
+use App\Support\StaleVisit;
+use App\Support\Suspension;
 use App\Support\StaffGender;
 use Illuminate\Support\Facades\DB;
 
@@ -187,6 +194,16 @@ class AppointmentService
                 return response()->json(['message' => 'spa_branch_uuid is required.'], 422);
             }
 
+            // A suspended branch winds down: nothing new is booked there.
+            if ($suspended = Suspension::refusal($branch)) {
+                return $suspended;
+            }
+
+            // A walk-in joins the line at once: not before the branch opens.
+            if (($payload['appointment_type'] ?? null) === 'Walk-in'
+                && ($closed = $this->closedNowRefusal($branch->id, 'a walk-in can\'t be added yet'))) {
+                return $closed;
+            }
             // A walk-in is here now — on the server's clock, whatever the
             // desk's laptop says the time is.
             if (($payload['appointment_type'] ?? null) === 'Walk-in') {
@@ -216,6 +233,8 @@ class AppointmentService
                     count($payload['services'] ?? []) + (empty($payload['package_uuid']) ? 0 : 1),
                     (int) $this->requestedMinutes($payload),
                     $policyClient,
+                    $this->requestedLongestMinutes($payload),
+                    ! empty($payload['package_uuid']),
                 );
             }
             $overrides = $gate->check($user, $problems);
@@ -244,6 +263,17 @@ class AppointmentService
                 return response()->json(['message' => $scheduleCheck['reason']], 422);
             }
 
+            // The spa's bookings-per-hour limit, and the 5-minute marks: a
+            // hard stop for a reservation (a walk-in is here now and is never
+            // refused by it). The branch row is held while the count is read,
+            // so two desks can't both take the last place in the hour.
+            if (($payload['appointment_type'] ?? 'Reservation') !== 'Walk-in') {
+                SpaBranch::whereKey($branch->id)->lockForUpdate()->first();
+                if ($hourProblem = HourlyCapacity::problemFor($branch, $payload['appointment_date'], $payload['appointment_time'])) {
+                    return response()->json(['message' => $hourProblem], 422);
+                }
+            }
+
             $client = ! empty($payload['client_uuid'])
                 ? $this->clientRepository->findByUuidForBusiness($payload['client_uuid'], $business->id, $this->clientService->branchScope($user))
                 : $this->clientService->findOrCreate($business->id, $payload['client'] ?? [], $branch->id);
@@ -254,12 +284,31 @@ class AppointmentService
                 $client = $this->clientService->completeProfile($client, $payload['client_update']);
             }
 
+            // A reservation needs a way to reach the client (a change of plan,
+            // a reminder, a no-show): a phone number on record, or given with
+            // the booking just above. A walk-in is here, so it can do without.
+            // abort() rolls back a client record made a moment ago.
+            abort_if(($payload['appointment_type'] ?? 'Reservation') !== 'Walk-in' && blank($client->phone_number), 422,
+                "Add the client's phone number to book a reservation.");
+
             // Someone is going to their door: a phone number and the gender
             // come first (App\Support\ClientProfile). abort() rolls back a
             // client record made a moment ago.
             if ($home && Client::hasProfile()) {
                 $missing = ClientProfile::missingForHome(['phone_number' => $client->phone_number, 'gender' => $client->genderValue()]);
                 abort_if((bool) $missing, 422, ClientProfile::homeMessage($missing));
+            }
+
+            // One visit at a time: a client already here today — in the queue
+            // or being served on the floor — can't be booked again for today
+            // until that visit is finished or cancelled. (A later day is fine.)
+            if ($payload['appointment_date'] === now()->toDateString() && ($here = $this->visitHereNow($client->id))) {
+                $name = trim("{$client->first_name} {$client->last_name}") ?: 'This client';
+                $where = $here->status === Appointment::STATUS_IN_SERVICE
+                    ? 'being served right now'
+                    : 'already in the queue' . ($here->queue?->queue_number ? " (ticket {$here->queue->queue_number})" : '');
+
+                return response()->json(['message' => "{$name} is {$where}. Finish or cancel that visit before adding another one today."], 422);
             }
 
             $appointmentType = $payload['appointment_type'] ?? 'Reservation';
@@ -369,6 +418,9 @@ class AppointmentService
 
         // Only branches ready for bookings (services, hours, a therapist… —
         // see MarketplaceReadiness) are listed; a stale link can't book one.
+        if ($suspended = Suspension::refusal($branch)) {
+            return $suspended;
+        }
         if (! MarketplaceReadiness::isBookable($branch)) {
             return response()->json(['message' => MarketplaceReadiness::NOT_BOOKABLE], 422);
         }
@@ -407,7 +459,8 @@ class AppointmentService
             return response()->json(['message' => 'That package is no longer offered. Please go back and choose again.'], 422);
         }
 
-        $scheduleCheck = $this->availabilityService->branchIsOpen($branch->id, $payload['appointment_date'], $payload['appointment_time']);
+        // Inside the branch's hours, and over by closing time.
+        $scheduleCheck = $this->availabilityService->branchIsOpen($branch->id, $payload['appointment_date'], $payload['appointment_time'], fn () => $this->requestedMinutes($payload));
         if (! $scheduleCheck['ok']) {
             return response()->json(['message' => $scheduleCheck['reason']], 422);
         }
@@ -489,8 +542,8 @@ class AppointmentService
 
             // A voucher from the client's wallet for this visit: checked now, so
             // it can't come to nothing at the bill, and held for this booking.
-            if (! empty($payload['voucher_uuid']) && Appointment::holdsVouchers()) {
-                $voucher = $this->voucherForBooking($client, $payload['voucher_uuid'], $serviceItems);
+            if ((! empty($payload['voucher_uuid']) || ! empty($payload['first_visit_program_uuid'])) && Appointment::holdsVouchers()) {
+                $voucher = $this->voucherForBooking($client, $payload['voucher_uuid'] ?? null, $serviceItems, $payload['first_visit_program_uuid'] ?? null, $branch->id);
                 Appointment::whereKey($appointment->id)->update(['client_voucher_id' => $voucher->id]);
             }
 
@@ -513,6 +566,8 @@ class AppointmentService
             $serviceTimeProblem = BookingPolicy::serviceTimeProblem(
                 BookingPolicy::for($branch),
                 $this->availabilityService->estimatedDurationMinutes($appointment),
+                (int) $appointment->services->map(fn ($s) => (int) ($s->serviceVariant?->duration_minutes ?? 0) * max(1, (int) ($s->quantity ?? 1)))->max(),
+                $appointment->services->contains(fn ($s) => $s->source_appointment_package_id !== null),
             );
             abort_if($serviceTimeProblem !== null, 422, (string) $serviceTimeProblem);
 
@@ -575,7 +630,7 @@ class AppointmentService
                 'Booking confirmed',
                 "You're booked at {$branch->branch_name} on "
                     . Carbon::parse("{$payload['appointment_date']} {$payload['appointment_time']}")->format('D, M j \\a\\t g:i A')
-                    . ". Booking no. {$appointment->appointment_number}.",
+                    . ". Your booking number is {$appointment->appointment_number}.",
             );
 
             $this->staffNotifier->appointment(
@@ -649,7 +704,19 @@ class AppointmentService
             return;
         }
 
-        $appointment->load('services.serviceVariant');
+        $appointment->load('services.serviceVariant.service');
+
+        // They have to be able to perform what is booked (a client can't be
+        // given someone the owner has not qualified for it).
+        foreach ($appointment->services as $item) {
+            if (! \App\Support\ServiceKind::needsTherapist($item->kind())) {
+                continue;
+            }
+            $serviceId = $item->serviceVariant?->service_id;
+            if ($serviceId && ! $this->availabilityService->isStaffQualified($staff->id, $serviceId)['ok']) {
+                abort(422, trim("{$staff->first_name} {$staff->last_name}") . ' does not perform ' . ($item->serviceVariant->service->name ?? 'this service') . '. Please pick another therapist.');
+            }
+        }
         // Same 30-minute floor busyWindowsForBranch() applies: an
         // appointment whose services carry no duration would otherwise
         // collapse to a zero-width window that can never overlap anything.
@@ -674,7 +741,15 @@ class AppointmentService
     // places the appointment on the queue (addToQueueInternal is a no-op if
     // it's already queued — see createAppointment()'s walk-in path, which
     // queues at creation time instead).
-    public function checkIn(User $user, string $uuid)
+    // $now: a booking for a later day whose client is here today — moved to
+    // today at this moment, then checked in like any other. Booked "now", they
+    // join the back of the line (ReservationHold::queuedAt), behind everyone
+    // already waiting.
+    // $place: where an early or late reservation joins the line ('now' or
+    // 'last' — from now; 'booked' — at its booked time). $pastClosing: take a
+    // visit that would run past closing anyway. When either is needed and not
+    // given, the answer is a 409 `check_in_choice` for the desk to pick from.
+    public function checkIn(User $user, string $uuid, bool $now = false, ?string $place = null, bool $pastClosing = false)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
         if (! $business) {
@@ -683,11 +758,47 @@ class AppointmentService
 
         $branchIds = $this->branchIds($user);
 
-        return DB::transaction(function () use ($user, $branchIds, $uuid) {
+        $work = function () use ($user, $branchIds, $uuid, $now, $place, $pastClosing) {
             $appointment = $this->appointmentRepository->findByUuidForBranches($uuid, $branchIds);
+
+            if ($stale = self::staleRefusal($appointment)) {
+                return $stale;
+            }
+            // Nobody joins the line before the branch opens (its hours, Branch Settings → Operations).
+            if ($closed = $this->closedNowRefusal($appointment->spa_branch_id, 'nobody can be checked in yet')) {
+                return $closed;
+            }
+            // Here today for a later day's booking: it becomes today's, from now.
+            if ($now && $appointment->status === Appointment::STATUS_SCHEDULED
+                && $appointment->appointment_date->toDateString() > now()->toDateString()) {
+                $from = $appointment->appointment_date->format('M j') . ' ' . Carbon::parse($appointment->appointment_time)->format('g:i A');
+                $appointment->update([
+                    'appointment_date' => now()->toDateString(),
+                    'appointment_time' => now()->format('H:i'),
+                    'remarks' => trim(($appointment->remarks ? $appointment->remarks . ' · ' : '') . "Came early — moved from {$from} and checked in now by {$user->displayName()}"),
+                ]);
+                // Whether it still fits today's hours is asked below, with every check-in.
+            }
+            // A suspended branch winds down: checking someone in starts something new.
+            if ($suspended = Suspension::refusal($appointment->branch)) {
+                return $suspended;
+            }
 
             if (! $appointment->canTransitionTo(Appointment::STATUS_CHECKED_IN)) {
                 return response()->json(['message' => 'Only a scheduled appointment can be checked in.'], 422);
+            }
+            // Only on the day of the booking: a client who comes on another day is
+            // booked for that day instead (move the booking, then check them in).
+            if ($appointment->appointment_date->toDateString() > now()->toDateString()) {
+                return response()->json(['message' => 'This booking is for ' . $appointment->appointment_date->format('D, M j')
+                    . '. To serve them today, use "Check in now" (they join the back of the line), or move the booking.'], 422);
+            }
+            // One visit at a time: not while another visit of theirs is in the queue or on the floor.
+            $here = $appointment->client_id ? $this->visitHereNow($appointment->client_id) : null;
+            if ($here && $here->id !== $appointment->id) {
+                return response()->json(['message' => 'This client is already '
+                    . ($here->status === Appointment::STATUS_IN_SERVICE ? 'being served' : 'in the queue')
+                    . ' on another visit. Finish or cancel that one first.'], 422);
             }
 
             // The queue's size limit (Settings → Booking & Policies).
@@ -700,8 +811,66 @@ class AppointmentService
                 return $overrides;
             }
 
-            $appointment->update(['status' => Appointment::STATUS_CHECKED_IN, 'check_in_at' => now()]);
-            $this->addToQueueInternal($appointment);
+            // Where they join the line (ReservationHold). In time (from the
+            // booked time to the end of the grace period): their booked place.
+            // Early: the desk picks now or the booked time — unless moving up
+            // would take another booking's turn with the same staff. Late: the
+            // desk picks the back of the line or the booked place.
+            $queuedAt = null;
+            $note = null;
+            $remarks = [];
+            $client = trim(($appointment->client?->first_name ?? '') . ' ' . ($appointment->client?->last_name ?? '')) ?: 'This client';
+            // Moved to today just now: plainly the back of the line.
+            if ($now) {
+                $queuedAt = now();
+            } elseif ($appointment->appointment_type !== 'Walk-in' && $appointment->branch) {
+                $bookedStart = Carbon::parse($appointment->appointment_date->format('Y-m-d') . ' ' . $appointment->appointment_time);
+                $grace = (int) (BookingPolicy::for($appointment->branch)['reservation_grace_minutes'] ?? ReservationHold::DEFAULT_GRACE_MINUTES);
+                $booked = $bookedStart->format('g:i A');
+                $arrival = ReservationHold::arrival($bookedStart, $grace, now());
+
+                if ($arrival === 'early') {
+                    if ($conflict = $this->availabilityService->aheadOfBooking($appointment, now())) {
+                        $place = 'booked';
+                        $note = $conflict;
+                    } elseif (! in_array($place, ['now', 'booked'], true)) {
+                        self::askCheckIn('early', "{$client} is early — booked for {$booked}. Queue them now, or at their booked time?", [
+                            ['key' => 'now', 'label' => 'Queue now', 'hint' => 'Ahead of everyone who comes in after ' . now()->format('g:i A') . '.'],
+                            ['key' => 'booked', 'label' => "Queue at booking time ({$booked})", 'hint' => "Takes their {$booked} place in line."],
+                        ]);
+                    }
+                    $queuedAt = $place === 'now' ? now() : $bookedStart;
+                } elseif ($arrival === 'late') {
+                    if (! in_array($place, ['last', 'booked'], true)) {
+                        $held = ReservationHold::endsAt($bookedStart, $grace)->format('g:i A');
+                        self::askCheckIn('late', "{$client} is late — booked for {$booked} and held until {$held}. Where do they join the line?", [
+                            ['key' => 'last', 'label' => 'Queue last', 'hint' => 'Behind everyone who is here now.'],
+                            ['key' => 'booked', 'label' => "Keep their booked place ({$booked})", 'hint' => 'Ahead of everyone who came in after ' . $booked . '.'],
+                        ]);
+                    }
+                    $queuedAt = $place === 'booked' ? $bookedStart : now();
+                    $remarks[] = 'Arrived ' . now()->format('g:i A') . ', past the hold — '
+                        . ($place === 'booked' ? "kept the {$booked} place" : 'queued last');
+                } else {
+                    $queuedAt = $bookedStart;
+                }
+            }
+
+            // Whether the visit can still finish before closing: the desk may
+            // take them anyway, or not take them (the web then cancels it).
+            if ($past = $this->availabilityService->pastClosing($appointment)) {
+                if (! $pastClosing) {
+                    self::askCheckIn('closing', "{$client}'s visit would end about {$past['ends']->format('g:i A')}, after closing at {$past['closes']->format('g:i A')}. Take them anyway?", [
+                        ['key' => 'allow', 'label' => 'Take them anyway', 'hint' => 'Check them in; the visit runs past closing.'],
+                        ['key' => 'cancel', 'label' => "Don't take them", 'hint' => 'Cancels the booking.'],
+                    ]);
+                }
+                $remarks[] = 'Taken past closing';
+            }
+
+            $appointment->update(['status' => Appointment::STATUS_CHECKED_IN, 'check_in_at' => now()]
+                + ($remarks ? ['remarks' => trim(($appointment->remarks ? $appointment->remarks . ' · ' : '') . implode(' · ', $remarks) . " (by {$user->displayName()})")] : []));
+            $this->addToQueueInternal($appointment, $queuedAt);
             $gate->record($appointment, $overrides, $user);
 
             $queueNumber = $appointment->fresh('queue')->queue?->queue_number;
@@ -712,8 +881,47 @@ class AppointmentService
                     . ($queueNumber ? " Your queue number is {$queueNumber}." : ''),
             );
 
-            return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
+            // `note`: why an early arrival kept its booked place, when it did.
+            return (new AppointmentResource($this->appointmentRepository->findByUuid($uuid)))
+                ->additional($note ? ['note' => $note] : []);
+        };
+
+        // A refusal leaves nothing behind: "Check in now" moves the booking to
+        // today before the checks that may still refuse it (already here on
+        // another visit, the queue's size, the closing question).
+        return DB::transaction(function () use ($work) {
+            $result = $work();
+            if ($result instanceof \Illuminate\Http\JsonResponse && $result->getStatusCode() >= 400) {
+                throw new \Illuminate\Http\Exceptions\HttpResponseException($result);
+            }
+
+            return $result;
         });
+    }
+
+    // Stops a check-in to ask the desk (409 `check_in_choice`); thrown, not
+    // returned, so the transaction rolls back whatever was already changed
+    // (a booking "Check in now" had moved to today).
+    private static function askCheckIn(string $kind, string $message, array $options): never
+    {
+        throw new \Illuminate\Http\Exceptions\HttpResponseException(response()->json([
+            'message' => $message,
+            'check_in_choice' => ['kind' => $kind, 'message' => $message, 'options' => $options],
+        ], 409));
+    }
+
+    // A visit from a day that is over and was never closed (App\Support\StaleVisit)
+    // can no longer be run: no check-in, assigning, starting, completing or adding.
+    // Marking it a no-show, cancelling it and moving it stay open, they settle it.
+    // DayCloser closes it by itself. Null when the visit can be worked on.
+    public static function staleRefusal(Appointment $appointment)
+    {
+        if (! in_array($appointment->status, [Appointment::STATUS_SCHEDULED, Appointment::STATUS_CHECKED_IN, Appointment::STATUS_IN_SERVICE], true)
+            || ! StaleVisit::isStale($appointment->appointment_date)) {
+            return null;
+        }
+
+        return response()->json(['message' => 'This visit is from a previous day that was never closed, so it can no longer be changed here. It is closed automatically.'], 422);
     }
 
     public function markNoShow(User $user, string $uuid)
@@ -729,7 +937,33 @@ class AppointmentService
             return response()->json(['message' => 'Only a scheduled appointment that has not been checked in can be marked as no-show.'], 422);
         }
 
-        $appointment->update(['status' => Appointment::STATUS_NO_SHOW]);
+        $this->recordNoShow($appointment);
+
+        return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
+    }
+
+    // A booking the client did not come to. Shared by the front desk (above) and
+    // DayCloser, which marks the ones left "booked" when their day has ended, so
+    // the two leave exactly the same behind: the booking a no-show, its services
+    // (never done) and their staff and room off it, the client and the branch told.
+    // The visit keeps the amount it was booked for (no totals recalculation: a
+    // bulk update does not fire the line's events), so what was missed still reads.
+    // $automatic: marked by DayCloser at the end of the day, not by the desk, so the client is always told.
+    public function recordNoShow(Appointment $appointment, bool $automatic = false): void
+    {
+        DB::transaction(function () use ($appointment) {
+            $appointment->update(['status' => Appointment::STATUS_NO_SHOW]);
+
+            $serviceIds = $appointment->services()->pluck('id');
+            $appointment->services()->where('status', 'Pending')->update(['status' => 'Cancelled']);
+            TherapistAssignment::whereIn('appointment_service_id', $serviceIds)
+                ->where('assignment_status', 'Assigned')
+                ->update(['assignment_status' => 'Cancelled']);
+
+            if ($appointment->queue) {
+                $this->queueRepository->updateStatus($appointment->queue, 'Cancelled');
+            }
+        });
 
         // The no-show policy (Settings → Booking & Policies): say nothing,
         // warn the client, or — after so many — pause their booking from the
@@ -738,16 +972,23 @@ class AppointmentService
         $policy = $appointment->branch ? BookingPolicy::for($appointment->branch) : SpaBusinessSetting::DEFAULTS['booking_defaults'];
         $missed = $this->noShowCount($appointment->client_id);
         $action = FrontDeskPolicy::noShowAction($policy, $missed);
+        if ($automatic && $action === 'none') {
+            $this->clientNotifier->appointment(
+                $appointment,
+                'Booking marked as missed',
+                "Your booking {$appointment->appointment_number} at {$appointment->branch?->branch_name} was marked as missed because you weren't checked in by the end of the day. If you did visit, please let the spa know.",
+            );
+        }
         if ($action !== 'none') {
             $spa = $appointment->branch?->branch_name;
             $this->clientNotifier->appointment(
                 $appointment,
-                $action === 'suspend' ? 'Booking from the app is paused' : 'Marked as no-show',
+                $action === 'suspend' ? 'Booking through the app is paused' : 'You missed your booking',
                 "You missed your booking {$appointment->appointment_number} at {$spa}."
                     . ($action === 'suspend'
-                        ? " That is {$missed} missed bookings, so booking from the app is paused — please contact {$spa} to book."
-                        : ($missed > 1 ? " That is {$missed} missed bookings." : '')
-                            . ($policy['no_show_policy'] === 'suspend' ? " After {$policy['no_show_suspend_after']}, booking from the app is paused." : '')),
+                        ? " You have now missed {$missed} bookings, so booking through the app is paused. Please contact {$spa} to book."
+                        : ($missed > 1 ? " You have now missed {$missed} bookings." : '')
+                            . ($policy['no_show_policy'] === 'suspend' ? " After {$policy['no_show_suspend_after']} missed bookings, booking through the app will be paused." : '')),
             );
         }
         $this->staffNotifier->appointment(
@@ -757,7 +998,73 @@ class AppointmentService
             'on_client_no_show',
         );
 
-        return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
+    }
+
+    // A visit still in service when its day has ended, with nobody having done
+    // anything about it: what was started is finished at its estimated end (when
+    // it began plus its length, and the length of its add-ons) and not later than
+    // the end of the day, so the duration availed is worked out from that; what was
+    // never started is taken off. The visit is then ready to be billed.
+    public function closeStaleVisit(Appointment $appointment): void
+    {
+        DB::transaction(function () use ($appointment) {
+            $mains = $appointment->services()
+                ->where('status', 'In Progress')
+                ->when(Addon::ready(), fn ($q) => $q->whereNull('parent_appointment_service_id'))
+                ->with('therapistAssignments', 'serviceVariant')
+                ->lockForUpdate()
+                ->get();
+            foreach ($mains as $service) {
+                $this->autoFinishService($service, $appointment);
+            }
+
+            $serviceIds = $appointment->services()->pluck('id');
+            $waiting = $appointment->services()->where('status', 'Pending')->exists();
+            if ($waiting) {
+                $appointment->services()->where('status', 'Pending')->update(['status' => 'Cancelled']);
+                TherapistAssignment::whereIn('appointment_service_id', $serviceIds)
+                    ->where('assignment_status', 'Assigned')
+                    ->update(['assignment_status' => 'Cancelled']);
+                // Never done, so never charged: the bulk update did not fire the
+                // line's events, hence the explicit recalculation.
+                $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
+            }
+
+            if ($appointment->queue && ! in_array($appointment->queue->queue_status, ['Completed', 'Cancelled'], true)
+                && ! $appointment->services()->whereIn('status', ['Pending', 'In Progress'])->exists()) {
+                $this->queueRepository->updateStatus($appointment->queue, 'Completed', ['completed_at' => now()]);
+            }
+        });
+    }
+
+    private function autoFinishService(AppointmentServiceItem $service, Appointment $appointment): void
+    {
+        $running = $service->therapistAssignments->where('assignment_status', 'In Progress');
+        $startedAt = $running->pluck('started_at')->filter()->min();
+
+        $minutes = (int) ($service->duration_minutes ?? $service->serviceVariant?->duration_minutes ?? 0);
+        $minutes += (int) $service->liveAddons()->sum('duration_minutes');
+
+        $dayEnd = Carbon::parse($appointment->appointment_date)->endOfDay();
+        $at = $startedAt ? $startedAt->copy()->addMinutes($minutes) : $dayEnd;
+        if ($at->greaterThan($dayEnd)) {
+            $at = $dayEnd;
+        }
+        if ($startedAt && $at->lessThan($startedAt)) {
+            $at = $startedAt->copy();
+        }
+
+        $this->startAddons($service, $at);
+        foreach ($running as $assignment) {
+            $assignment->update([
+                'assignment_status' => 'Completed',
+                'completed_at' => $at,
+                'remarks' => trim(($assignment->remarks ? $assignment->remarks . ' · ' : '') . 'Finished automatically at its estimated end: nobody completed it before the day ended.'),
+            ]);
+        }
+        $service->update(['status' => 'Completed']);
+        app(CommissionCalculator::class)->freeze($service);
+        $this->completeAddons($service, $at);
     }
 
     /** How many bookings this client has missed (no-shows). */
@@ -798,6 +1105,10 @@ class AppointmentService
     // on the ticket itself. Still routed through here rather than
     // QueueService (which stays read-only, see this class's own opening
     // comment) to keep the "exactly one write path" rule intact.
+    // Calling is for a booked client who has not arrived: it alerts them in the
+    // app to come to the spa (a client who is here is checked in and simply has
+    // their service started). Nothing is stored, so a second press within a
+    // couple of minutes is told it was just sent rather than alerting twice.
     public function callQueue(User $user, string $uuid)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
@@ -806,29 +1117,37 @@ class AppointmentService
         }
 
         $appointment = $this->appointmentRepository->findByUuidForBranches($uuid, $this->branchIds($user));
-        $queue = $appointment->queue;
 
-        if (! $queue || $queue->queue_status !== 'Waiting') {
-            return response()->json(['message' => 'Only a waiting client can be called.'], 422);
+        if ($appointment->status !== Appointment::STATUS_SCHEDULED) {
+            return response()->json(['message' => 'Only a client who has not checked in yet can be called. A client who is here is checked in: start their service.'], 422);
+        }
+        if ($appointment->appointment_date->format('Y-m-d') !== StaleVisit::today()) {
+            return response()->json(['message' => 'Only a booking for today can be called.'], 422);
+        }
+        if ($stale = self::staleRefusal($appointment)) {
+            return $stale;
         }
 
         // Calling is an alert in the client's app; a client without the app
-        // has nothing to be alerted on, and is called out at the desk.
+        // has nothing to be alerted on, and is called by phone.
         if (! $appointment->client?->usesApp()) {
-            return response()->json(['message' => 'Only clients who use the Servora app can be called. Call them at the desk, then start their service.'], 422);
+            return response()->json(['message' => 'Only clients who use the Servora app can be called. Phone them instead.'], 422);
         }
 
-        $this->queueRepository->updateStatus($queue, 'Called', ['called_at' => now()]);
+        if (! \Illuminate\Support\Facades\Cache::add("appointment-called:{$appointment->id}", true, now()->addMinutes(2))) {
+            return response()->json(['message' => 'This client was called a moment ago. Give them a couple of minutes.'], 422);
+        }
 
         $this->clientNotifier->appointment(
             $appointment,
-            "It's your turn",
-            "Queue {$queue->queue_number} — please proceed to the front desk at {$appointment->branch?->branch_name}.",
+            ClientNotificationLink::QUEUE_CALL_TITLE,
+            "Please come to {$appointment->branch?->branch_name} and check in at the front desk for booking {$appointment->appointment_number}. Tap to see the queue.",
         );
 
         return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
     }
 
+    // Moves a waiting or called client down one place in the line (see below).
     public function skipQueue(User $user, string $uuid)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
@@ -842,16 +1161,35 @@ class AppointmentService
         if (! $queue || ! in_array($queue->queue_status, ['Waiting', 'Called'], true)) {
             return response()->json(['message' => 'Only a waiting or called client can be skipped.'], 422);
         }
+        // Someone whose service has begun (or is done) is being served: not skipped.
+        if ($appointment->services()->whereIn('status', ['In Progress', 'Completed'])->exists()) {
+            return response()->json(['message' => 'A service for this client has already started, so they can\'t be skipped.'], 422);
+        }
 
-        $this->queueRepository->updateStatus($queue, 'Skipped');
+        // Skipping moves them down one place: they swap with whoever is right behind them,
+        // so ticket 8 skipped goes after ticket 9. (Before the queued_at column exists, the
+        // old behaviour: they step out of the line until put back.)
+        if (! Queue::ready()) {
+            $this->queueRepository->updateStatus($queue, 'Skipped');
+
+            return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
+        }
+
+        $walkInsFirst = $appointment->branch ? (bool) BookingPolicy::for($appointment->branch)['walk_ins_first_priority'] : false;
+        $next = $this->queueRepository->nextBehind($queue->loadMissing('appointment'), $walkInsFirst);
+        if (! $next) {
+            return response()->json(['message' => 'No one is behind this client, so they are already last in line.'], 422);
+        }
+
+        $this->queueRepository->swapPlaces($queue, $next);
 
         return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
     }
 
     // Brings a Called/Skipped ticket back into the active line — e.g. a
     // skipped client shows back up, or Call was a misclick. Always lands
-    // back on Waiting; queue order stays FIFO by created_at
-    // (QueueRepository::listForBranchDate), so recalling doesn't move the
+    // back on Waiting; the line is ordered by each ticket's place, queued_at
+    // (QueueRepository::listForBranchDate, Queue::lineKey), so recalling doesn't move the
     // ticket to the back of the line, it just clears the Called/Skipped flag.
     public function recallQueue(User $user, string $uuid)
     {
@@ -906,8 +1244,9 @@ class AppointmentService
             $this->clientNotifier->appointment(
                 $appointment,
                 'Booking cancelled',
-                "{$appointment->branch?->branch_name} cancelled your booking {$appointment->appointment_number}."
-                    . ($reason ? " Reason: {$reason}" : ''),
+                "{$appointment->branch?->branch_name} has cancelled your booking {$appointment->appointment_number}."
+                    . ($reason ? ' Reason: ' . rtrim($reason, '. ') . '.' : '')
+                    . ' You can book again anytime in the app.',
             );
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
@@ -998,8 +1337,8 @@ class AppointmentService
 
             $this->clientNotifier->appointment(
                 $appointment,
-                'Booking moved',
-                "{$appointment->branch?->branch_name} moved your booking {$appointment->appointment_number} to "
+                'Booking rescheduled',
+                "{$appointment->branch?->branch_name} has moved your booking {$appointment->appointment_number} to "
                     . Carbon::parse("{$payload['appointment_date']} {$payload['appointment_time']}")->format('D, M j \\a\\t g:i A') . '.',
             );
 
@@ -1029,6 +1368,19 @@ class AppointmentService
     // How long the services in a booking request add up to (null when none
     // are picked yet) — lets the closure check catch a visit that starts
     // before a closure but would run into it.
+    // The longest single service in a request (a package is not one).
+    private function requestedLongestMinutes(array $payload): ?int
+    {
+        $items = collect($payload['services'] ?? []);
+        if ($items->isEmpty()) {
+            return null;
+        }
+
+        $minutes = ServiceVariant::whereIn('uuid', $items->pluck('service_variant_uuid'))->pluck('duration_minutes', 'uuid');
+
+        return (int) $items->map(fn ($item) => (int) ($minutes[$item['service_variant_uuid']] ?? 0) * max(1, (int) ($item['quantity'] ?? 1)))->max();
+    }
+
     private function requestedMinutes(array $payload): ?int
     {
         $items = collect($payload['services'] ?? []);
@@ -1059,6 +1411,21 @@ class AppointmentService
         );
         if (! $scheduleCheck['ok']) {
             return response()->json(['message' => $scheduleCheck['reason']], 422);
+        }
+
+        // A reservation (a walk-in moved to a later day becomes one): the
+        // spa's bookings-per-hour limit and the 5-minute marks. Its own
+        // place is not counted, so moving inside its hour is fine.
+        $staysWalkIn = $appointment->appointment_type === 'Walk-in' && $payload['appointment_date'] <= now()->toDateString();
+        if (! $staysWalkIn) {
+            SpaBranch::whereKey($appointment->spa_branch_id)->lockForUpdate()->first();
+            $hourProblem = HourlyCapacity::problemFor(
+                SpaBranch::findOrFail($appointment->spa_branch_id),
+                $payload['appointment_date'], $payload['appointment_time'], $appointment->id,
+            );
+            if ($hourProblem) {
+                return response()->json(['message' => $hourProblem], 422);
+            }
         }
 
         // Moving a checked-in appointment to a new date/time means the
@@ -1110,21 +1477,54 @@ class AppointmentService
         return DB::transaction(function () use ($branchIds, $appointmentUuid, $payload) {
             $appointment = $this->appointmentRepository->findByUuidForBranches($appointmentUuid, $branchIds);
 
+            if ($stale = self::staleRefusal($appointment)) {
+                return $stale;
+            }
+
             if (in_array($appointment->status, [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW], true)) {
                 return response()->json(['message' => 'Cannot add services to a cancelled or no-show appointment.'], 422);
             }
 
-            if ($appointment->allServicesResolved()) {
-                return response()->json(['message' => 'All services are completed — proceed to billing instead of adding more services.'], 422);
+            // Every service done is no reason to stop: the client may want
+            // more before paying. Once the bill is made, the bill is what's left.
+            if ($refusal = $this->addingAfterBillRefusal($appointment, 'services')) {
+                return $refusal;
             }
 
             $nextSort = (int) ($appointment->services()->max('sort_order') ?? 0) + 1;
             $this->addServiceInternal($appointment, $appointment->spa_branch_id, $payload, null, $nextSort);
             $this->assertHomeEligible($appointment);
+            // Nothing added keeps a visit going past closing time.
+            if ($late = $this->availabilityService->finishesPastClosing($appointment)) {
+                abort(422, $late);
+            }
             $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
+            $this->reopenForMore($appointment);
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($appointmentUuid));
         });
+    }
+
+    // Adding to a visit whose services were all done: refused only once its
+    // bill exists (paying is what's left then). Null when it may be added to.
+    private function addingAfterBillRefusal(Appointment $appointment, string $what)
+    {
+        if ($appointment->allServicesResolved() && $this->billingRepository->findForAppointment($appointment->id)) {
+            return response()->json(['message' => "This visit already has a bill — take the payment, then book the extra {$what} as a new visit."], 422);
+        }
+
+        return null;
+    }
+
+    // Something new to do on a visit whose ticket was finished (every service
+    // had been done): the client is still here, being served — the ticket
+    // goes back to Serving so the new service can be started from the floor.
+    private function reopenForMore(Appointment $appointment): void
+    {
+        $queue = $appointment->fresh('queue')->queue;
+        if ($queue && $queue->queue_status === 'Completed') {
+            $this->queueRepository->updateStatus($queue, 'Serving', ['completed_at' => null]);
+        }
     }
 
     // Only a service that hasn't started can be removed — once In Progress
@@ -1144,6 +1544,10 @@ class AppointmentService
 
             if ($service->status !== 'Pending') {
                 return response()->json(['message' => 'Only a service that has not started can be removed.'], 422);
+            }
+            // A package is sold whole: what came with it can't be taken off one by one.
+            if ($service->source_appointment_package_id) {
+                return response()->json(['message' => ($service->displayName() ?? 'This service') . ' comes with the package and can\'t be removed on its own.'], 422);
             }
 
             $this->appointmentServiceRepository->cancel($service);
@@ -1188,6 +1592,10 @@ class AppointmentService
                 ->with('serviceVariant.service')
                 ->firstOrFail();
             $appointment = Appointment::whereKey($main->appointment_id)->lockForUpdate()->firstOrFail();
+
+            if ($stale = self::staleRefusal($appointment)) {
+                return $stale;
+            }
 
             $addon = Addon::where('uuid', $payload['addon_uuid'])
                 ->where('spa_business_id', $business->id)
@@ -1236,6 +1644,10 @@ class AppointmentService
             ]);
             if ($main->status === 'In Progress') {
                 $this->rideWith($line, $main, now());
+            }
+            // Nothing added keeps a visit going past closing time.
+            if ($late = $this->availabilityService->finishesPastClosing($appointment)) {
+                abort(422, $late);
             }
             $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
 
@@ -1330,6 +1742,13 @@ class AppointmentService
                 ->with(['services.therapistAssignments', 'packages', 'queue'])
                 ->firstOrFail();
 
+            // Only a service that has not started can be taken off a visit
+            // (removeService). One that has is part of the record: what the client
+            // paid for it is handed back at checkout instead (a refund for that service).
+            if (in_array($service->status, ['In Progress', 'Completed'], true)) {
+                return response()->json(['message' => 'A service that has started cannot be cancelled. If the client paid for it, refund that service at checkout.'], 422);
+            }
+
             $line = $appointment->services->firstWhere('id', $service->id) ?? $service;
             $package = $service->source_appointment_package_id
                 ? $appointment->packages->firstWhere('id', $service->source_appointment_package_id)
@@ -1372,6 +1791,7 @@ class AppointmentService
                     'status' => $bill->status,
                     'kept' => (float) $bill->payments->where('payment_status', 'Paid')->sum(fn ($p) => (float) $p->amount - (float) $p->refunded_amount),
                     'discount' => (float) $bill->discount_amount,
+                    'credit' => (float) ($bill->credit_amount ?? 0),
                 ] : null,
                 $leftCharge <= 0,
             );
@@ -1454,18 +1874,29 @@ class AppointmentService
         return DB::transaction(function () use ($business, $branchIds, $appointmentUuid, $payload) {
             $appointment = $this->appointmentRepository->findByUuidForBranches($appointmentUuid, $branchIds);
 
+            if ($stale = self::staleRefusal($appointment)) {
+                return $stale;
+            }
+
             if (in_array($appointment->status, [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW], true)) {
                 return response()->json(['message' => 'Cannot add packages to a cancelled or no-show appointment.'], 422);
             }
 
-            if ($appointment->allServicesResolved()) {
-                return response()->json(['message' => 'All services are completed — proceed to billing instead of adding more packages.'], 422);
+            // Every service done is no reason to stop: the client may want
+            // more before paying. Once the bill is made, the bill is what's left.
+            if ($refusal = $this->addingAfterBillRefusal($appointment, 'packages')) {
+                return $refusal;
             }
 
-            $this->addPackageInternal($appointment, $business->id, $payload['package_uuid'], $payload['quantity'] ?? 1);
+            $this->addPackageInternal($appointment, $business->id, $payload['package_uuid'], $payload['quantity'] ?? 1, openWork: true);
             $this->assertHomeEligible($appointment);
+            // Nothing added keeps a visit going past closing time.
+            if ($late = $this->availabilityService->finishesPastClosing($appointment)) {
+                abort(422, $late);
+            }
 
             $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
+            $this->reopenForMore($appointment);
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($appointmentUuid));
         });
@@ -1526,7 +1957,7 @@ class AppointmentService
             ->get();
 
         $attendanceByStaffId = Attendance::whereIn('staff_id', $therapists->pluck('id'))
-            ->where('attendance_date', $date)
+            ->where('attendance_date', \App\Support\BusinessDay::attendanceDate($appointment->spa_branch_id, $date))
             ->get()
             ->keyBy('staff_id');
 
@@ -1660,6 +2091,10 @@ class AppointmentService
                 ->with('serviceVariant', 'appointment')
                 ->firstOrFail();
 
+            if ($stale = self::staleRefusal($service->appointment)) {
+                return $stale;
+            }
+
             if (in_array($service->status, ['Cancelled', 'Completed'], true)) {
                 return response()->json(['message' => 'Cannot assign staff to a cancelled or completed service.'], 422);
             }
@@ -1764,6 +2199,11 @@ class AppointmentService
             $service = $assignment->appointmentService;
             $appointment = $service->appointment;
 
+            if ($stale = self::staleRefusal($appointment)) {
+                return $stale;
+            }
+
+
             // Same dangling-row case as cancelAssignment() — this
             // assignment row is only 'Assigned', but its service already
             // finished via a different assignment.
@@ -1823,7 +2263,34 @@ class AppointmentService
     // directly, since every checked-in appointment is queued by the time
     // either of those returns. No-op if a queue row already exists so callers
     // don't need to guard against calling it twice.
-    private function addToQueueInternal(Appointment $appointment): void
+    // The branch is closed right now (outside its hours, or a closed day —
+    // App\Support\BusinessDay): why $what, and when it opens. Null while open.
+    private function closedNowRefusal(int $branchId, string $what)
+    {
+        $week = \App\Support\BusinessDay::week($branchId);
+        if (\App\Support\BusinessDay::isOpen($week, now())) {
+            return null;
+        }
+        $opens = \App\Support\BusinessDay::opensNext($week, now());
+
+        return response()->json(['message' => "The branch isn't open right now, so {$what}."
+            . ($opens ? ' It opens ' . ($opens->isToday() ? 'at ' . $opens->format('g:i A') : $opens->format('D, M j \a\t g:i A')) . '.' : '')], 422);
+    }
+
+    // The client's visit that is here right now — checked in (in the queue)
+    // or in service — on a day that isn't over (StaleVisit), if any.
+    private function visitHereNow(int $clientId): ?Appointment
+    {
+        return Appointment::where('client_id', $clientId)
+            ->whereIn('status', [Appointment::STATUS_CHECKED_IN, Appointment::STATUS_IN_SERVICE])
+            ->whereDate('appointment_date', '>=', StaleVisit::today())
+            ->with('queue')
+            ->first();
+    }
+
+    // $queuedAt: its place in the line, when that isn't "now" (a reservation
+    // arriving in time keeps its booked time — see checkIn()).
+    private function addToQueueInternal(Appointment $appointment, ?CarbonInterface $queuedAt = null): void
     {
         if ($appointment->queue) {
             return;
@@ -1839,7 +2306,7 @@ class AppointmentService
                 $appointment->spa_branch_id, $date,
                 $appointment->branch ? BookingPolicy::for($appointment->branch)['queue_number_format'] : 'alpha-numeric',
             ),
-        ]);
+        ] + ($queuedAt && Queue::ready() ? ['queued_at' => $queuedAt] : []));
     }
 
     // ── Service execution ────────────────────────────────────────────────
@@ -1871,9 +2338,27 @@ class AppointmentService
                 return $refusal;
             }
 
-            $result = $this->startServiceInternal($service);
+            if ($stale = self::staleRefusal($service->appointment)) {
+                return $stale;
+            }
+
+
+
+            // One sitting begins as one: the services this client has with the same
+            // staff in the same facility start together (and are completed together).
+            // A service of different staff is never started with it. All or none: a
+            // refusal for any of them rolls the whole start back.
+            $mates = $this->sittingMates($service);
+            $together = $mates->pluck('id')->push($service->id)->all();
+
+            $result = $this->startServiceInternal($service, $together);
             if (! $result['ok']) {
                 return response()->json(['message' => $result['reason']], 422);
+            }
+            foreach ($mates as $mate) {
+                $mate->setRelation('appointment', $service->appointment);
+                $matesResult = $this->startServiceInternal($mate, $together);
+                abort_if(! $matesResult['ok'], 422, $matesResult['reason']);
             }
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($service->appointment->uuid));
@@ -1946,7 +2431,7 @@ class AppointmentService
             $this->clientNotifier->appointment(
                 $appointment,
                 'Your home service has started',
-                ($staff->isNotEmpty() ? $staff->join(', ', ' and ') : 'Your staff') . ' started ' . ($services->join(', ', ' and ') ?: 'your service') . '.',
+                ($staff->isNotEmpty() ? $staff->join(', ', ' and ') : 'Your therapist') . ' started your ' . ($services->join(', ', ' and ') ?: 'service') . '.',
             );
             $this->staffNotifier->appointment(
                 $appointment,
@@ -1995,6 +2480,16 @@ class AppointmentService
             return null;
         }
 
+        // Someone removed or switched off since being assigned does not perform it
+        // (and, being gone, would not show as "not timed in" either).
+        $gone = Staff::withTrashed()->whereIn('id', $staffIds)->get(['id', 'first_name', 'last_name', 'status', 'deleted_at'])
+            ->filter(fn (Staff $s) => $s->trashed() || $s->status === 'inactive');
+        if ($gone->isNotEmpty()) {
+            $names = $gone->map(fn (Staff $s) => trim("{$s->first_name} {$s->last_name}"))->implode(', ');
+
+            return "{$names} " . ($gone->count() === 1 ? 'is' : 'are') . ' no longer on the staff. Choose someone else for this service.';
+        }
+
         $appointment->loadMissing('branch.business.settings');
         $policy = $appointment->branch?->business?->settings?->section('staff_policy')
             ?? SpaBusinessSetting::DEFAULTS['staff_policy'];
@@ -2003,7 +2498,7 @@ class AppointmentService
         }
 
         $present = Attendance::whereIn('staff_id', $staffIds)
-            ->where('attendance_date', now()->toDateString())
+            ->where('attendance_date', \App\Support\BusinessDay::forBranch($appointment->spa_branch_id))
             ->whereNotNull('check_in_at')
             ->whereNull('check_out_at')
             ->pluck('staff_id')
@@ -2025,10 +2520,18 @@ class AppointmentService
     // completeService()'s same-therapist auto-continue below — one place
     // for what "actually starting a service" means (guards + transition),
     // so the automatic path can't drift from the manual one.
-    private function startServiceInternal(AppointmentServiceItem $service): array
+    //
+    // $together: the ids of the services starting in this same sitting (the same
+    // staff in the same facility): they run side by side, so none of them counts as
+    // the others' busy staff or as another service of the visit in the way.
+    private function startServiceInternal(AppointmentServiceItem $service, array $together = []): array
     {
         if ($service->status !== 'Pending') {
             return ['ok' => false, 'reason' => 'This service has already started, completed, or been cancelled.'];
+        }
+        // Nothing starts for a client who is not here: check them in first.
+        if (! in_array($service->appointment->status, [Appointment::STATUS_CHECKED_IN, Appointment::STATUS_IN_SERVICE], true)) {
+            return ['ok' => false, 'reason' => 'Check the client in before starting their service.'];
         }
 
         // What it needs depends on its kind (ServiceKind): a therapist,
@@ -2049,7 +2552,7 @@ class AppointmentService
         // progress, this one may only start beside it — same room (or no
         // room on either), different therapists. The visit is locked so two
         // Starts on it are judged one after the other.
-        if ($problem = $this->sameVisitStartProblem($service, $activeAssignments)) {
+        if ($problem = $this->sameVisitStartProblem($service, $activeAssignments, $together)) {
             return ['ok' => false, 'reason' => $problem];
         }
 
@@ -2067,14 +2570,39 @@ class AppointmentService
                 ->filter(fn (AppointmentServiceItem $other) => $this->kindOf($other->isAddon() ? ($other->parent ?? $other) : $other) === ServiceKind::PROCEDURE)
                 ->pluck('id')->all()
             : [];
+        $alongside = array_values(array_unique(array_merge($alongside, $together)));
+
+        // Staff held for another client's reservation that hasn't arrived yet
+        // (App\Support\ReservationHold): this service may not run into it.
+        $grace = $service->appointment->branch
+            ? (int) (BookingPolicy::for($service->appointment->branch)['reservation_grace_minutes'] ?? ReservationHold::DEFAULT_GRACE_MINUTES)
+            : ReservationHold::DEFAULT_GRACE_MINUTES;
+        $length = $service->lengthMinutes() ?? 30;
+
+        // Still waiting in the line (nothing of theirs started yet): nobody ahead
+        // of them may be waiting for the same staff member or facility.
+        $queue = $service->appointment->queue;
+        $waiting = $queue && in_array($queue->queue_status, ['Waiting', 'Called'], true);
+        $walkInsFirst = $service->appointment->branch ? (bool) (BookingPolicy::for($service->appointment->branch)['walk_ins_first_priority'] ?? false) : false;
 
         foreach ($activeAssignments as $assignment) {
+            if ($waiting && ($ahead = $this->availabilityService->aheadInLine($assignment->staff_id, $assignment->facility_id, $service->appointment, $walkInsFirst))) {
+                return ['ok' => false, 'reason' => $ahead];
+            }
             // Room-only rows (staff_id null, rule 7) have no therapist to
             // check busy-ness for — only the facility check below applies.
             if ($assignment->staff_id) {
                 $busy = $this->availabilityService->isStaffCurrentlyBusy($assignment->staff_id, $assignment->id, $alongside);
                 if (! $busy['ok']) {
                     return ['ok' => false, 'reason' => $busy['reason']];
+                }
+                if ($held = $this->availabilityService->reservedElsewhere($assignment->staff_id, $service->appointment_id, now(), $length, $grace)) {
+                    return ['ok' => false, 'reason' => $held];
+                }
+                // Here early for their booking: whoever is booked with the same
+                // staff member before them, and is here too, is served first.
+                if ($first = $this->availabilityService->bookedFirst($assignment->staff_id, $service->appointment)) {
+                    return ['ok' => false, 'reason' => $first];
                 }
             }
 
@@ -2131,6 +2659,39 @@ class AppointmentService
         return ['ok' => true, 'reason' => null];
     }
 
+    // The services of this visit that are one sitting with $service: the same
+    // staff in the same facility, in the same state ($status: 'Pending' to start
+    // them, 'In Progress' to complete them). Needs staff and a facility on
+    // $service — without a room nothing says they are in one place. Add-ons are
+    // not listed: they ride with their own main service.
+    private function sittingMates(AppointmentServiceItem $service, string $status = 'Pending'): \Illuminate\Support\Collection
+    {
+        $assigned = $status === 'Pending' ? 'Assigned' : 'In Progress';
+        $service->loadMissing('therapistAssignments');
+        $mine = $service->therapistAssignments->where('assignment_status', $assigned);
+        $staff = $mine->pluck('staff_id')->filter()->unique()->sort()->values()->all();
+        $room = $mine->pluck('facility_id')->filter()->first();
+        if (! $staff || ! $room) {
+            return collect();
+        }
+
+        return AppointmentServiceItem::where('appointment_id', $service->appointment_id)
+            ->where('id', '!=', $service->id)
+            ->where('status', $status)
+            ->when(Addon::ready(), fn ($q) => $q->whereNull('parent_appointment_service_id'))
+            ->with('therapistAssignments')
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get()
+            ->filter(function (AppointmentServiceItem $other) use ($assigned, $staff, $room) {
+                $theirs = $other->therapistAssignments->where('assignment_status', $assigned);
+
+                return $theirs->pluck('staff_id')->filter()->unique()->sort()->values()->all() == $staff
+                    && (int) $theirs->pluck('facility_id')->filter()->first() === (int) $room;
+            })
+            ->values();
+    }
+
     // time | procedure | facility — a service saved before types existed is
     // time-based (App\Support\ServiceKind).
     private function kindOf(AppointmentServiceItem $service): string
@@ -2140,12 +2701,13 @@ class AppointmentService
 
     // Why this service can't start beside the visit's other services that are
     // in progress, or null (App\Support\ServiceStartRules holds the rules).
-    private function sameVisitStartProblem(AppointmentServiceItem $service, $activeAssignments): ?string
+    private function sameVisitStartProblem(AppointmentServiceItem $service, $activeAssignments, array $together = []): ?string
     {
         Appointment::whereKey($service->appointment_id)->lockForUpdate()->first();
 
         $running = AppointmentServiceItem::where('appointment_id', $service->appointment_id)
             ->where('id', '!=', $service->id)
+            ->when($together, fn ($q) => $q->whereNotIn('id', $together))
             ->where('status', 'In Progress')
             // An add-on is part of its main service, which is in this list.
             ->when(Addon::ready(), fn ($q) => $q->whereNull('parent_appointment_service_id'))
@@ -2205,6 +2767,10 @@ class AppointmentService
                 ->with('therapistAssignments', 'appointment')
                 ->firstOrFail();
 
+            if ($stale = self::staleRefusal($service->appointment)) {
+                return $stale;
+            }
+
             if ($service->status !== 'In Progress') {
                 return response()->json(['message' => 'Only a service currently in progress can be completed.'], 422);
             }
@@ -2213,44 +2779,36 @@ class AppointmentService
             }
 
             $now = now();
-            // Any add-on still waiting (none should be) joins before the
-            // therapists are released.
-            $this->startAddons($service, $now);
-            $completedStaffIds = $service->therapistAssignments
-                ->where('assignment_status', 'In Progress')
-                ->pluck('staff_id')
-                ->filter()
-                ->all();
-            foreach ($service->therapistAssignments->where('assignment_status', 'In Progress') as $assignment) {
-                $assignment->update(['assignment_status' => 'Completed', 'completed_at' => $now]);
+            // One sitting finishes as one: the services this client has with the
+            // same staff in the same facility that are running with this one.
+            $completedStaffIds = [];
+            foreach ($this->sittingMates($service, 'In Progress')->prepend($service) as $line) {
+                $completedStaffIds = array_merge($completedStaffIds, $this->completeLine($line, $now));
             }
-            $service->update(['status' => 'Completed']);
-            // What each therapist earned for it is fixed now, under today's
-            // Staff Policies (CommissionCalculator::freeze).
-            app(CommissionCalculator::class)->freeze($service);
-            $this->completeAddons($service, $now);
+            $completedStaffIds = array_values(array_unique($completedStaffIds));
 
             $appointment = $service->appointment;
 
             // Same therapist continuing straight on to the client's next
             // service needs no separate "Start Service" click — they never
-            // actually left. Only the very next Pending service (by sort
-            // order) is considered; if it has a different therapist (or
-            // none yet), it's left Pending and the normal manual
-            // "Another service is ready" prompt (QueueStatusPanel.vue)
-            // still covers it exactly as before.
-            $nextService = $appointment->services()
-                ->where('status', 'Pending')
-                // Never an add-on: it starts with its main service.
-                ->when(Addon::ready(), fn ($q) => $q->whereNull('parent_appointment_service_id'))
-                ->orderBy('sort_order')
-                ->with('therapistAssignments')
-                ->first();
+            // actually left. That is the client's next waiting service that
+            // THEY are assigned to — one in a different (or no) facility: the
+            // ones in the same facility were started together with this one
+            // and finished with it (sittingMates). A service of a different
+            // therapist is never started by this: it is left Pending and
+            // started on its own, as before.
+            if ($completedStaffIds) {
+                $nextService = $appointment->services()
+                    ->where('status', 'Pending')
+                    // Never an add-on: it starts with its main service.
+                    ->when(Addon::ready(), fn ($q) => $q->whereNull('parent_appointment_service_id'))
+                    ->whereHas('therapistAssignments', fn ($q) => $q->where('assignment_status', 'Assigned')->whereIn('staff_id', $completedStaffIds))
+                    ->orderBy('sort_order')
+                    ->orderBy('id')
+                    ->with('therapistAssignments')
+                    ->first();
 
-            if ($nextService && $completedStaffIds) {
-                $nextAssignment = $nextService->therapistAssignments
-                    ->first(fn ($a) => $a->assignment_status === 'Assigned' && in_array($a->staff_id, $completedStaffIds, true));
-                if ($nextAssignment) {
+                if ($nextService) {
                     $this->startServiceInternal($nextService);
                 }
             }
@@ -2265,14 +2823,45 @@ class AppointmentService
         });
     }
 
+    // Completes one running service: its add-on still waiting (none should
+    // be) joins first, its staff and room are released, what each earned is
+    // fixed under today's Staff Policies (CommissionCalculator::freeze), and its
+    // add-ons are completed with it. Returns the staff who were doing it.
+    private function completeLine(AppointmentServiceItem $service, $now): array
+    {
+        $this->startAddons($service, $now);
+        $staffIds = $service->therapistAssignments
+            ->where('assignment_status', 'In Progress')
+            ->pluck('staff_id')
+            ->filter()
+            ->all();
+        foreach ($service->therapistAssignments->where('assignment_status', 'In Progress') as $assignment) {
+            $assignment->update(['assignment_status' => 'Completed', 'completed_at' => $now]);
+        }
+        $service->update(['status' => 'Completed']);
+        app(CommissionCalculator::class)->freeze($service);
+        $this->completeAddons($service, $now);
+
+        return $staffIds;
+    }
+
     // The wallet voucher a client booked with, or a 422 saying why it can't be
     // used: not theirs, used or expired, already on another booking, or for
     // services this booking doesn't have (VoucherTarget::fits).
-    private function voucherForBooking(\App\Models\Client $client, string $voucherUuid, array $serviceItems): \App\Models\ClientVoucher
+    private function voucherForBooking(\App\Models\Client $client, ?string $voucherUuid, array $serviceItems, ?string $firstVisitProgramUuid = null, ?int $branchId = null): \App\Models\ClientVoucher
     {
-        $voucher = \App\Models\ClientVoucher::with('program')->where('uuid', $voucherUuid)->where('client_id', $client->id)->lockForUpdate()->first();
+        $voucher = $voucherUuid ? \App\Models\ClientVoucher::with('program')->where('uuid', $voucherUuid)->where('client_id', $client->id)->lockForUpdate()->first() : null;
+        // A first-visit voucher not claimed yet: given to the client now (only
+        // while they have no paid visit), then used like any other.
+        if (! $voucher && $firstVisitProgramUuid) {
+            $firstVisit = \App\Models\CustomerProgram::where('uuid', $firstVisitProgramUuid)->where('spa_business_id', $client->spa_business_id)->first();
+            $voucher = $firstVisit ? app(ProgramRewardService::class)->claimFirstVisit($client, $firstVisit, \App\Support\ProgramChannel::APP, $branchId) : null;
+            abort_if(! $voucher, 422, "That first-visit voucher isn't available to you any more.");
+            $voucher->load('program');
+        }
         $program = $voucher?->dealProgram();
         abort_if(! $voucher || ! $program, 422, "That voucher isn't in your wallet.");
+        abort_if(! app(ProgramRewardService::class)->voucherAllowedAt($voucher, \App\Support\ProgramChannel::APP), 422, "That voucher can't be used on the app. " . \App\Support\ProgramChannel::refusalAt(\App\Support\ProgramChannel::APP));
         abort_if(! $voucher->isUsable(), 422, $voucher->status === 'used' ? 'That voucher has already been used.' : 'That voucher has expired.');
         abort_if(\App\Models\ClientVoucher::heldIds([$voucher->id]) !== [], 422, 'That voucher is already on another booking.');
 
@@ -2428,7 +3017,7 @@ class AppointmentService
                 $this->clientNotifier->appointment(
                     $paidFor,
                     'Payment received',
-                    "{$paidFor->branch?->branch_name} received your {$amount} payment for booking {$paidFor->appointment_number}.",
+                    "{$paidFor->branch?->branch_name} received your payment of {$amount} for booking {$paidFor->appointment_number}. Thank you!",
                     'Payment',
                 );
                 // Front desk included — they reconcile the cash drawer — but
@@ -2466,11 +3055,12 @@ class AppointmentService
     // at the appointment's branch — same hard-integrity stance as
     // addServiceInternal(). See addPackage() for why packages explode into
     // per-component service lines.
-    private function addPackageInternal(Appointment $appointment, int $businessId, string $packageUuid, int $quantity): AppointmentPackage
+    // $openWork: added to a visit that is already open, which may be finished just after the plan ends.
+    private function addPackageInternal(Appointment $appointment, int $businessId, string $packageUuid, int $quantity, bool $openWork = false): AppointmentPackage
     {
         // Every way a package gets onto an appointment (a client's booking,
         // the front desk) passes here: the plan has to include packages.
-        if (! \App\Support\AppCache::planAllows($businessId, 'package_access')) {
+        if (! ($openWork ? \App\Support\AppCache::planAllowsOpenWork($businessId, 'package_access') : \App\Support\AppCache::planAllows($businessId, 'package_access'))) {
             abort(422, 'Packages aren\'t available at this spa right now. Please choose services instead.');
         }
 
@@ -2486,6 +3076,14 @@ class AppointmentService
 
         if (! $branchPackage) {
             abort(422, 'This package is not available at this branch.');
+        }
+
+        // Charged as a whole, so every service in it has to still exist: one removed
+        // from the menu would otherwise be skipped and the package sold short.
+        foreach ($package->packageServiceItems as $item) {
+            if (! $item->guideVariant()) {
+                abort(422, 'This package can\'t be booked right now: ' . ($item->service?->name ?? 'one of its services') . ' is no longer on the menu.');
+            }
         }
 
         $price = (float) ($branchPackage->custom_price ?? $package->default_price);
@@ -2752,7 +3350,7 @@ class AppointmentService
         ];
 
         $isCheckedIn = Attendance::where('staff_id', $staff->id)
-            ->where('attendance_date', $date)
+            ->where('attendance_date', \App\Support\BusinessDay::attendanceDate($appointment->spa_branch_id, $date))
             ->whereNotNull('check_in_at')
             ->exists();
 
@@ -2764,6 +3362,24 @@ class AppointmentService
             if (! $check['ok']) {
                 return $check + ['assignment' => null];
             }
+        }
+
+        // One staff member per service: someone already on it who hasn't
+        // started is replaced (their row, and the room on it, are kept);
+        // once it is under way the staff can't be changed here.
+        $current = $service->therapistAssignments()
+            ->whereIn('assignment_status', ['Assigned', 'In Progress'])
+            ->whereNotNull('staff_id')
+            ->first();
+        if ($current) {
+            if ($current->assignment_status === 'In Progress') {
+                return ['ok' => false, 'reason' => 'This service has already started with its staff member.', 'assignment' => null];
+            }
+            if ($current->staff_id !== $staff->id) {
+                $current->update(['staff_id' => $staff->id, 'assigned_at' => now()]);
+            }
+
+            return ['ok' => true, 'reason' => null, 'assignment' => $current->fresh()];
         }
 
         // If a room was already reserved for this service ahead of a
@@ -2829,8 +3445,15 @@ class AppointmentService
     // back-fills every room's service list.
     private function checkRoomEligibility(Facility $facility, Appointment $appointment, AppointmentServiceItem $service, ?int $excludeAssignmentId): array
     {
+        // The client's own room — one of their other services is in it — is
+        // fine whatever it is set up for: they stay put, and the same staff can
+        // do both in one sitting (sittingMates).
+        $theirs = TherapistAssignment::where('facility_id', $facility->id)
+            ->whereIn('assignment_status', ['Assigned', 'In Progress'])
+            ->whereHas('appointmentService', fn ($q) => $q->where('appointment_id', $appointment->id)->where('id', '!=', $service->id))
+            ->exists();
         $serviceId = $service->serviceVariant?->service_id;
-        if ($serviceId && $facility->services()->exists() && ! $facility->services()->where('services.id', $serviceId)->exists()) {
+        if (! $theirs && $serviceId && $facility->services()->exists() && ! $facility->services()->where('services.id', $serviceId)->exists()) {
             return ['ok' => false, 'reason' => 'This facility does not support the selected service.'];
         }
 

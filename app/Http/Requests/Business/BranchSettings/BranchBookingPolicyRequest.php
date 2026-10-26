@@ -13,10 +13,12 @@ class BranchBookingPolicyRequest extends FormRequest
     // Defaults — mirrors POLICY_RULES on the web (useSettingsHub.ts).
     public const KEYS = [
         'home_service_enabled', 'home_service_fee', 'home_service_radius_km', 'home_service_min_minutes', 'allow_reschedule', 'max_reschedules_per_booking',
-        'max_advance_booking_days', 'max_services_per_booking', 'max_bookings_per_client_per_day',
+        'max_advance_booking_days', 'max_services_per_booking', 'max_bookings_per_client_per_day', 'max_bookings_per_hour', 'booking_lead_time_hours',
         // What a missed booking does at this branch, and how many pause booking.
         'no_show_policy', 'no_show_suspend_after',
-        'max_service_minutes_per_booking',
+        // How long a late reservation is still held (App\Support\ReservationHold).
+        'reservation_grace_minutes',
+        'max_service_minutes_per_booking', 'allow_booking_overlap',
         'allow_cancellation', 'cancellation_window_hours',
         // The branch's own client reminders (App\Support\ReminderPolicy); the
         // defaults and limits are Business Settings → Notifications'.

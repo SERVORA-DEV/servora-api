@@ -15,6 +15,11 @@ use Illuminate\Support\Facades\DB;
 // surrounding transaction commits (dropped if it rolls back) and never fails
 // the caller, since a feed entry is a courtesy, not part of the change itself.
 //
+// Whoever is making the change is never told about their own action: a front
+// desk marking a booking checked in, a no-show or paid does not get a notice of
+// it (the others at the branch do). Nothing to exclude when it comes from the
+// scheduler or a client.
+//
 // Honors the owner's Settings > Notifications (the in-app channel switch, and
 // the per-event toggle when one is named) unless the notice is $critical —
 // a suspension is not something an owner can opt out of hearing about.
@@ -63,6 +68,9 @@ class StaffNotifier
         ?string $reference = null,
         bool $critical = false,
     ): void {
+        // The person doing it, unless the caller named someone else to leave out.
+        $exceptUserId ??= request()->user()?->id;
+
         $branch->loadMissing('business.settings');
         $business = $branch->business;
         if (! $business) {

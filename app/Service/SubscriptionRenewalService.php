@@ -64,6 +64,10 @@ class SubscriptionRenewalService
         return Subscription::with(['plan', 'scheduledPlan', 'pendingPlan', 'paymentMethod', 'business.owner'])
             ->where('status', 'Active')
             ->where('auto_renew', true)
+            // Not a business Servora has suspended: it is not charged for what it cannot use.
+            ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('spa_businesses')
+                ->whereColumn('spa_businesses.id', 'subscriptions.spa_business_id')
+                ->where('spa_businesses.verification_status', 'Suspended'))
             ->whereNotNull('expires_at')
             ->where('expires_at', '<=', now()->addDay())
             ->where('expires_at', '>', now()->subDays($graceDays))
@@ -79,6 +83,11 @@ class SubscriptionRenewalService
 
     public function attempt(Subscription $subscription): ?CheckoutSession
     {
+        // Never charge a business Servora has suspended, whichever way this is reached.
+        if (\App\Models\SpaBusiness::whereKey($subscription->spa_business_id)->where('verification_status', 'Suspended')->exists()) {
+            return null;
+        }
+
         $subscription->update(['last_renewal_attempt_at' => now()]);
 
         [$plan, $cycle] = $this->renewalPlanFor($subscription);

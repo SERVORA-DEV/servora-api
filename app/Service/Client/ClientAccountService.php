@@ -18,6 +18,7 @@ use App\Repository\Business\SpaBranchRepository;
 use App\Repository\NotificationRepository;
 use App\Repository\ReviewRepository;
 use App\Service\Business\MarketplaceReadiness;
+use App\Support\ClientNotificationLink;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
@@ -104,7 +105,16 @@ class ClientAccountService
 
     public function notifications(User $user)
     {
-        return ClientNotificationResource::collection($this->notifications->paginateForUser($user->id, 50))
+        $page = $this->notifications->paginateForUser($user->id, 50);
+        // Which spa each rewards notice opens, for the whole page at once.
+        $businesses = ClientNotificationLink::businessUuids($page->items());
+        foreach ($page->items() as $notification) {
+            if ($notification->type === 'Reward') {
+                $notification->setAttribute('link_business_uuid', $businesses[$notification->id] ?? '');
+            }
+        }
+
+        return ClientNotificationResource::collection($page)
             ->additional(['meta' => ['unread_count' => $this->notifications->countUnreadForUser($user->id)]]);
     }
 
@@ -167,7 +177,18 @@ class ClientAccountService
                 ->where('status', Appointment::STATUS_SCHEDULED)
                 ->lockForUpdate()
                 ->get()
-                ->each(fn (Appointment $a) => $appointments->performCancel($a, 'Client deleted their account'));
+                ->each(function (Appointment $a) use ($appointments) {
+                    // Cancelled by the account going: the desk would otherwise still expect them.
+                    if ($appointments->performCancel($a, 'Client deleted their account') === null) {
+                        $name = trim("{$a->client?->first_name} {$a->client?->last_name}") ?: 'A client';
+                        app(\App\Service\Business\StaffNotifier::class)->appointment(
+                            $a,
+                            'Booking cancelled by client',
+                            "{$name} deleted their account, so booking {$a->appointment_number} was cancelled.",
+                            'on_cancellation',
+                        );
+                    }
+                });
 
             ClientFavorite::where('user_id', $user->id)->delete();
             Notification::where('user_id', $user->id)->delete();

@@ -39,6 +39,48 @@ class ServiceTimeLimitTest extends TestCase
         $this->assertStringContainsString('2 hours 30 minutes', $message);
     }
 
+    public function test_without_overlap_a_package_is_held_to_the_limit_too(): void
+    {
+        $policy = ['max_service_minutes_per_booking' => 120];
+
+        $message = BookingPolicy::serviceTimeProblem($policy, 240, 240, true);
+
+        $this->assertNotNull($message);
+        $this->assertStringContainsString('this package takes 4 hours', $message);
+        $this->assertNotNull(BookingPolicy::serviceTimeProblem($policy, 180, 180));
+        $this->assertNull(BookingPolicy::serviceTimeProblem($policy, 120, 120, true));
+    }
+
+    // With "booking overlap" on: the limit only stops more services being added.
+    private function services(int $limit, int $total, int $longest, bool $package = false): ?string
+    {
+        return BookingPolicy::serviceTimeProblem(['max_service_minutes_per_booking' => $limit, 'allow_booking_overlap' => true], $total, $longest, $package);
+    }
+
+    public function test_a_package_is_never_over_the_limit(): void
+    {
+        $this->assertNull($this->services(120, 240, 240, package: true));
+    }
+
+    public function test_one_long_service_on_its_own_is_allowed(): void
+    {
+        $this->assertNull($this->services(120, 180, 180));
+    }
+
+    public function test_a_service_can_be_added_while_the_rest_is_under_the_limit(): void
+    {
+        // 60 chosen, then a 120 added: nothing was at the limit when it went on.
+        $this->assertNull($this->services(120, 180, 120));
+        $this->assertNull($this->services(120, 150, 90));
+    }
+
+    public function test_nothing_more_is_added_once_the_services_reach_the_limit(): void
+    {
+        // 120 already chosen: a 30 on top of it is one too many.
+        $this->assertNotNull($this->services(120, 150, 30));
+        $this->assertNotNull($this->services(120, 240, 120));
+    }
+
     public function test_minutes_read_as_hours_and_minutes(): void
     {
         $this->assertSame('2 hours', BookingPolicy::formatMinutes(120));

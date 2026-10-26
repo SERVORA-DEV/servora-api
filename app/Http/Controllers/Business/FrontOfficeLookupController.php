@@ -90,8 +90,12 @@ class FrontOfficeLookupController extends Controller
         $data = $request->validate([
             'date' => 'required|date_format:Y-m-d',
             'duration' => 'nullable|integer|min:15|max:720',
+            // The spacing of start times: the New Appointment page asks for 5.
+            'step' => 'nullable|integer|in:5,10,15,30,60',
+            // Rescheduling: the booking being moved doesn't count against itself.
+            'exclude_appointment_uuid' => 'nullable|uuid',
         ]);
 
-        return $bookingBoardService->board($request->user(), $data['date'], (int) ($data['duration'] ?? 60));
+        return $bookingBoardService->board($request->user(), $data['date'], (int) ($data['duration'] ?? 60), isset($data['step']) ? (int) $data['step'] : null, $data['exclude_appointment_uuid'] ?? null);
     }
 }

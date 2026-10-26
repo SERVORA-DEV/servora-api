@@ -23,7 +23,14 @@ class BookingPolicy
         // How many bookings one client may have at the business on one day
         // (the client app is held to it; the front desk isn't).
         'max_bookings_per_client_per_day',
+        // How many reservations the spa takes in one clock hour (0 = no limit).
+        'max_bookings_per_hour',
+        // How many hours ahead a booking has to be made (0 = no notice needed).
+        'booking_lead_time_hours',
         'max_service_minutes_per_booking',
+        // Whether a package, or one long service, may run past that limit
+        // (the limit then only stops more services being added).
+        'allow_booking_overlap',
         'allow_reschedule',
         'max_reschedules_per_booking',
         'allow_cancellation',
@@ -31,11 +38,15 @@ class BookingPolicy
         // What the front desk is held to as well (App\Support\FrontDeskPolicy).
         'no_show_policy',
         'no_show_suspend_after',
+        // How long after its time a reservation is held (App\Support\ReservationHold).
+        'reservation_grace_minutes',
         'queue_enabled',
         'max_queue_size',
         'queue_number_format',
         'walk_ins_first_priority',
         'allow_service_extension',
+        // The step extra time is added in (App\Support\ServiceExtension::steps).
+        'extension_increment_mins',
         'max_extension_mins',
         'extension_requires_approval',
         // Home service — see App\Service\Business\HomeServiceRules.
@@ -45,8 +56,9 @@ class BookingPolicy
         'home_service_min_minutes',
     ];
 
-    // How far ahead a booking must be made. The same for every spa and branch,
-    // so it isn't a setting; the policy still carries it for the app and desk.
+    // The notice a booking needs when the owner has not said otherwise (Settings →
+    // Booking → "book at least N hours ahead", 'booking_lead_time_hours'). The
+    // policy carries it as minutes (booking_lead_time_minutes) for the app and desk.
     public const LEAD_TIME_MINUTES = 60;
 
     // Per-request cache (a bookings or spa list asks once per row). Scoped
@@ -107,7 +119,7 @@ class BookingPolicy
         }
 
         $policy['max_bookings_per_client_per_day'] = max(1, $policy['max_bookings_per_client_per_day']);
-        $policy['booking_lead_time_minutes'] = self::LEAD_TIME_MINUTES;
+        $policy['booking_lead_time_minutes'] = $policy['booking_lead_time_hours'] * 60;
 
         return $policy;
     }
@@ -170,19 +182,43 @@ class BookingPolicy
         return null;
     }
 
-    // Why a booking of $minutes is over this branch's "service time per
-    // booking" limit, or null when it fits (or there is no limit). The client
-    // app is refused with this; the front desk only sees it as a warning.
-    public static function serviceTimeProblem(array $policy, int $minutes): ?string
+    // Whether a booking's services go past this branch's "service time per
+    // booking" limit, or null when they don't (or there is no limit). The
+    // client app is refused with this; the front desk only sees it as a warning.
+    //
+    // With "booking overlap" off (the default) a booking can't be longer than
+    // the limit, a package included.
+    //
+    // With it on, the limit stops more services being ADDED, it doesn't cut one
+    // down: a package, or a single long service, may be longer than the limit by
+    // itself, and a service can be added while what is already chosen is still
+    // under it. So the services are over the limit only when what they add up
+    // to without the longest one has reached it. [$longest] is that longest
+    // service's minutes; without it only the plain total is compared.
+    public static function serviceTimeProblem(array $policy, int $minutes, ?int $longest = null, bool $package = false): ?string
     {
         $limit = (int) ($policy['max_service_minutes_per_booking'] ?? 0);
 
-        if ($limit <= 0 || $minutes <= $limit) {
+        if ($limit <= 0) {
             return null;
         }
 
-        return 'This spa books up to ' . self::formatMinutes($limit) . ' per visit, and these services take '
-            . self::formatMinutes($minutes) . '. Remove a service, or book a second visit.';
+        if (empty($policy['allow_booking_overlap'])) {
+            return $minutes <= $limit ? null : 'This spa books up to ' . self::formatMinutes($limit) . ' per visit, and ' . ($package ? 'this package takes ' : 'these services take ')
+                . self::formatMinutes($minutes) . '. Pick something shorter, or book a second visit.';
+        }
+
+        if ($package) {
+            return null;
+        }
+
+        $before = $longest === null ? $minutes : $minutes - $longest;
+        if ($longest === null ? $minutes <= $limit : $before < $limit) {
+            return null;
+        }
+
+        return 'This spa books up to ' . self::formatMinutes($limit) . ' of services per visit, and these already take '
+            . self::formatMinutes($longest === null ? $minutes : $before) . ' before the last one. Remove a service, or book a second visit.';
     }
 
     // 120 → "2 hours", 90 → "1 hour 30 minutes", 45 → "45 minutes".

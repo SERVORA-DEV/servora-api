@@ -9,15 +9,30 @@ use App\Http\Requests\Business\AppointmentServiceRequest;
 use App\Http\Requests\Business\CancelAppointmentRequest;
 use App\Http\Requests\Business\RescheduleAppointmentRequest;
 use App\Service\Business\AppointmentService;
+use App\Service\Business\DayCloser;
 use Illuminate\Http\Request;
 
 class AppointmentController extends Controller
 {
     private AppointmentService $appointmentService;
 
-    public function __construct(AppointmentService $appointmentService)
+    public function __construct(AppointmentService $appointmentService, private DayCloser $dayCloser)
     {
         $this->appointmentService = $appointmentService;
+    }
+
+    // Visits from days that are over and were never closed (App\Support\StaleVisit),
+    // and the desk asking for them to be closed now rather than at the next sweep.
+    public function pastVisits(Request $request)
+    {
+        return response()->json(['data' => ['open' => $this->dayCloser->openCountForUser($request->user())]]);
+    }
+
+    public function closePastVisits(Request $request)
+    {
+        $done = $this->dayCloser->sweepForUser($request->user(), force: true) ?? ['no_shows' => 0, 'finished' => 0, 'released' => 0, 'vouchers' => 0];
+
+        return response()->json(['data' => $done + ['open' => $this->dayCloser->openCountForUser($request->user())]]);
     }
 
     public function index(Request $request)
@@ -38,7 +53,20 @@ class AppointmentController extends Controller
 
     public function checkIn(Request $request, string $uuid)
     {
-        return $this->appointmentService->checkIn($request->user(), $uuid);
+        // `now`: a booking for a later day, served today instead — moved to now
+        // and checked in at the back of the line.
+        // `place`: where an early or late reservation joins the line — now,
+        // last (both: from now) or at its booked time; `allow_past_closing`:
+        // take a visit that would run past closing anyway. Asked for by the
+        // 409 `check_in_choice` answer (AppointmentService::checkIn).
+        $data = $request->validate([
+            'now' => ['sometimes', 'boolean'],
+            'place' => ['sometimes', 'nullable', 'in:now,booked,last'],
+            'allow_past_closing' => ['sometimes', 'boolean'],
+        ]);
+
+        return $this->appointmentService->checkIn($request->user(), $uuid, (bool) ($data['now'] ?? false),
+            $data['place'] ?? null, (bool) ($data['allow_past_closing'] ?? false));
     }
 
     public function cancel(CancelAppointmentRequest $request, string $uuid)

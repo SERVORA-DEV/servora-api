@@ -38,21 +38,26 @@ class GoogleAuthTest extends TestCase
         ]);
     }
 
-    // $agree mirrors the sign-up page, which sends the Terms agreement.
-    private function signIn(bool $agree = false)
+    // $agree mirrors the sign-up page, which sends the Terms agreement and the
+    // password the owner chose (Google skips the email verification, not the password).
+    private function signIn(bool $agree = false, ?string $password = null)
     {
-        return $this->postJson('/api/auth/google', ['credential' => 'fake-id-token'] + ($agree ? ['terms_accepted' => true] : []));
+        return $this->postJson('/api/auth/google', ['credential' => 'fake-id-token']
+            + ($agree ? ['terms_accepted' => true] : [])
+            + ($password !== null ? ['password' => $password, 'password_confirmation' => $password] : []));
     }
 
     public function test_a_new_email_becomes_a_verified_owner_and_is_signed_in(): void
     {
         $this->fakeGoogle();
 
-        $response = $this->signIn(agree: true)->assertCreated();
+        $response = $this->signIn(agree: true, password: 'Chosen-Pass-123')->assertCreated();
 
         $response->assertJsonStructure(['user', 'token']);
 
         $user = User::where('email', self::EMAIL)->firstOrFail();
+        // The owner's own password works, and nothing was emailed to verify.
+        $this->assertTrue(Hash::check('Chosen-Pass-123', $user->password));
         $this->assertSame('business_owner', $user->role);
         $this->assertSame('web', $user->audience);
         $this->assertSame('Active', $user->account_status);
@@ -60,6 +65,65 @@ class GoogleAuthTest extends TestCase
         $this->assertDatabaseHas('user_permissions', ['user_id' => $user->id]);
         $this->assertSame(config('legal.version'), $user->terms_version);
         $this->assertNotNull($user->terms_accepted_at);
+    }
+
+    public function test_a_new_google_account_still_needs_a_password(): void
+    {
+        $this->fakeGoogle();
+
+        $this->signIn(agree: true)->assertStatus(422)->assertJsonPath('needs_password', true);
+        $this->signIn(agree: true, password: 'short')->assertStatus(422)->assertJsonPath('needs_password', true);
+
+        $this->assertDatabaseMissing('users', ['email' => self::EMAIL]);
+    }
+
+    // The client app (audience "mobile"): the same rule, so a Google sign-up
+    // still has a password the client chose.
+    private function clientSignIn(bool $agree = false, ?string $password = null)
+    {
+        return $this->postJson('/api/auth/google', ['credential' => 'fake-id-token', 'audience' => 'mobile']
+            + ($agree ? ['terms_accepted' => true] : [])
+            + ($password !== null ? ['password' => $password, 'password_confirmation' => $password] : []));
+    }
+
+    public function test_a_new_client_is_asked_to_agree_and_to_choose_a_password(): void
+    {
+        $this->fakeGoogle();
+
+        $this->clientSignIn()->assertNotFound()
+            ->assertJsonPath('needs_signup', true)
+            ->assertJsonPath('email', self::EMAIL);
+        $this->clientSignIn(agree: true)->assertStatus(422)->assertJsonPath('needs_password', true);
+        $this->clientSignIn(agree: true, password: 'short')->assertStatus(422)->assertJsonPath('needs_password', true);
+
+        $this->assertDatabaseMissing('users', ['email' => self::EMAIL]);
+    }
+
+    public function test_a_new_client_is_created_verified_with_the_password_they_chose(): void
+    {
+        $this->fakeGoogle();
+
+        $this->clientSignIn(agree: true, password: 'Chosen-Pass-123')->assertCreated()->assertJsonStructure(['user', 'token']);
+
+        $user = User::where('email', self::EMAIL)->firstOrFail();
+        $this->assertSame('client', $user->role);
+        $this->assertTrue(Hash::check('Chosen-Pass-123', $user->password));
+        $this->assertNotNull($user->email_verified_at);
+    }
+
+    public function test_an_existing_client_signs_in_without_a_password(): void
+    {
+        $client = User::factory()->create([
+            'role' => 'client',
+            'audience' => 'mobile',
+            'email' => self::EMAIL,
+            'email_verified_at' => now(),
+            'account_status' => 'Active',
+        ]);
+
+        $this->fakeGoogle();
+
+        $this->clientSignIn()->assertOk()->assertJsonPath('user.uuid', $client->uuid);
     }
 
     public function test_an_unknown_email_is_not_created_from_the_sign_in_page(): void

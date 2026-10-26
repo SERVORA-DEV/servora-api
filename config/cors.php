@@ -67,6 +67,10 @@ return [
         'Content-Type',
         'X-Requested-With',
         'X-XSRF-TOKEN',
+        // The branch the web app is working in (useApi, AccountScope): sent
+        // by a staff login, the owner at the front desk, and "Mark All
+        // Present". Missing here, every one of those requests is blocked.
+        'X-Branch',
         // Sent by the site and the phone app when the API is reached through
         // a forwarded port, so the tunnel answers with the API's JSON and
         // not its "you are about to visit…" page.

@@ -251,7 +251,8 @@ class ClientBookingTest extends TestCase
         $service->checkIn($this->owner, $second);
         $this->travel(1)->seconds();
         $service->checkIn($this->owner, $mine);
-        $service->callQueue($this->owner, $first);
+        // (a ticket already Called, from before calling was for clients not yet here)
+        Queue::whereHas('appointment', fn ($q) => $q->where('uuid', $first))->update(['queue_status' => 'Called']);
 
         Sanctum::actingAs($me);
         $response = $this->getJson("/api/client/appointments/{$mine}/queue")->assertOk();

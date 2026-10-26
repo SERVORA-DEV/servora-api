@@ -335,6 +335,12 @@ class StaffService
             }
         }
 
+        // Switching someone off (they left) while they are mid-service or assigned
+        // to a visit would leave that visit with nobody.
+        if (($payload['status'] ?? null) === 'inactive' && $existing->status !== 'inactive' && ($problem = $this->openWorkProblem($existing, 'switching off'))) {
+            return response()->json(['message' => $problem], 422);
+        }
+
         // A different branch is a move (StaffTransferService): the owner's
         // applies at once, a manager's becomes a request, and someone with
         // bookings still open can't be moved. It is settled before anything
@@ -379,6 +385,28 @@ class StaffService
         $response = $this->answer($model, $business, ['transfer' => $transfer]);
 
         return $transfer['pending'] ? $response->response()->setStatusCode(202) : $response;
+    }
+
+    // The visits a person is still assigned to or serving, or null. Removing or
+    // switching them off with those open would leave a service with nobody (or
+    // with someone who is no longer there), so it waits until they are finished
+    // or reassigned.
+    private function openWorkProblem(Staff $staff, string $action): ?string
+    {
+        $open = \App\Models\TherapistAssignment::where('staff_id', $staff->id)
+            ->whereIn('assignment_status', ['Assigned', 'In Progress'])
+            ->whereHas('appointmentService.appointment', fn ($q) => $q->whereIn('status', [
+                \App\Models\Appointment::STATUS_SCHEDULED, \App\Models\Appointment::STATUS_CHECKED_IN, \App\Models\Appointment::STATUS_IN_SERVICE,
+            ]))
+            ->count();
+        if ($open === 0) {
+            return null;
+        }
+
+        $name = trim("{$staff->first_name} {$staff->last_name}") ?: 'This staff member';
+
+        return "{$name} is still assigned to {$open} open " . ($open === 1 ? 'service' : 'services') . '. Finish or reassign '
+            . ($open === 1 ? 'it' : 'them') . ($action === 'removing' ? ' before removing them.' : ' before switching them off.');
     }
 
     // What the person does (App\Support\StaffSpecialty) on its way to the
@@ -472,6 +500,10 @@ class StaffService
         $existing = $this->staffRepository->findByUuidForBranches($uuid, $this->branchIds($user));
         if (! \App\Models\AccountBranch::ready() && $existing->user_id === $user->id) {
             return response()->json(['message' => "You can't remove your own staff record. Ask the spa owner."], 422);
+        }
+
+        if ($problem = $this->openWorkProblem($existing, 'removing')) {
+            return response()->json(['message' => $problem], 422);
         }
 
         $this->staffRepository->delete($uuid);

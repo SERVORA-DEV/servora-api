@@ -20,6 +20,12 @@ class SystemSettingController extends Controller
         return $this->systemSettingService->getSettings();
     }
 
+    // What these settings would do to businesses that are operating, before they are saved.
+    public function preview(UpdateSystemSettingRequest $request)
+    {
+        return $this->systemSettingService->preview($request->validated());
+    }
+
     public function update(UpdateSystemSettingRequest $request)
     {
         return $this->systemSettingService->updateSettings($request->validated());

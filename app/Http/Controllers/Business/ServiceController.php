@@ -47,7 +47,11 @@ class ServiceController extends Controller
 
     public function destroy(Request $request, string $uuid)
     {
-        $this->serviceService->deleteService($request->user(), $uuid);
+        $result = $this->serviceService->deleteService($request->user(), $uuid);
+        if ($result instanceof \Illuminate\Http\JsonResponse) {
+            return $result;
+        }
+
         return response()->json(['message' => 'Deleted successfully'], 200);
     }
 

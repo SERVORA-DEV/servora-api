@@ -30,6 +30,8 @@ class ServingNow
             ->where('ta.assignment_status', 'In Progress')
             ->where('s.status', 'In Progress')
             ->whereNull('a.deleted_at')
+            // A service left running from a day that is over is not being performed any more (StaleVisit).
+            ->where('a.appointment_date', '>=', \App\Support\StaleVisit::today())
             ->orderBy('ta.started_at')
             ->get(['ta.staff_id', DB::raw((\App\Support\History::ready() ? 'coalesce(s.service_name, sv.name)' : 'sv.name') . ' as service'), 'c.first_name', 'c.last_name'])
             ->unique('staff_id')

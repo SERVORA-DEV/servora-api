@@ -30,12 +30,8 @@ class OwnerBusinessDetailsRequest extends FormRequest
 
         return [
             'business_name' => 'required|string|max:150',
-            'business_email' => [
-                'required',
-                'email',
-                Rule::unique('spa_businesses', 'business_email')->ignore($business?->id),
-            ],
-            'business_phone' => ['required', 'string', 'regex:/^\+[1-9]\d{6,14}$/'],
+            // The business's email and phone are no part of the verification:
+            // they are set (and the email confirmed) in Business Settings.
             'business_description' => 'nullable|string',
         ];
     }

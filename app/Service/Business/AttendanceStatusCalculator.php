@@ -129,7 +129,21 @@ class AttendanceStatusCalculator
         $branchSchedule = BranchSchedule::where('spa_branch_id', $staff->spa_branch_id)
             ->where('day_of_week', Carbon::parse($date)->format('l'))
             ->first();
-        $business = $staff->branch?->business;
+
+        $this->keepWith($attendance, $staff, $branchSchedule, $staff->branch?->business, $force);
+    }
+
+    /**
+     * keep() with everything it would look up handed in, for filling in many
+     * rows at once (a whole branch marked present) without reading the same
+     * staff, schedules and settings again for each one.
+     */
+    public function keepWith(Attendance $attendance, Staff $staff, ?BranchSchedule $branchSchedule, ?SpaBusiness $business, bool $force = false): void
+    {
+        if (! History::ready()) {
+            return;
+        }
+        $date = Carbon::parse($attendance->attendance_date)->format('Y-m-d');
 
         $live = $this->compute(
             $staff, $attendance, $date, $staff->schedules, $branchSchedule, null,
@@ -414,6 +428,10 @@ class AttendanceStatusCalculator
             'overtime_minutes' => $workMinutes === null ? null : (int) $overtimeMinutes,
             'scheduled_start' => $scheduledStart?->format('H:i'),
             'scheduled_end' => $scheduledEnd?->format('H:i'),
+            // The same moments in full (an overnight shift ends the next day), so a screen can say
+            // whether the shift has started or is over right now.
+            'scheduled_start_at' => $scheduledStart?->toIso8601String(),
+            'scheduled_end_at' => $scheduledEnd?->toIso8601String(),
             'is_day_off' => $isDayOff,
             'missing_check_in' => $missingCheckIn,
             'missing_check_out' => $missingCheckOut,

@@ -239,7 +239,9 @@ class BranchDetailResource extends JsonResource
         }
         $programs = app(\App\Service\Business\CustomerProgramService::class);
 
+        // The client app: a program limited to the front desk isn't shown.
         return $rewards->offeredAt($this->spa_business_id, $this->id)
+            ->filter(fn ($p) => $p->type === 'membership' || \App\Support\ProgramChannel::allows(\App\Support\ProgramChannel::of($p), \App\Support\ProgramChannel::APP))
             ->sortBy(fn ($p) => array_search($p->type, ['loyalty', 'voucher', 'discount', 'membership'], true))
             ->map(fn ($p) => [
                 'uuid' => $p->uuid,

@@ -83,6 +83,14 @@ class BusinessSettingsService
 
         $business = $this->spaBusinessRepository->update($business, $payload);
 
+        // A new email is confirmed by the button in the email Servora sends to it
+        // (unless it is the owner's own sign-up address).
+        if (array_key_exists('business_email', $payload)
+            && \App\Support\ContactEmail::normalize($payload['business_email']) !== \App\Support\ContactEmail::normalize($old['business_email'] ?? null)) {
+            \App\Support\ContactEmail::afterSave($business, $old['business_email'] ?? null);
+            $business->refresh();
+        }
+
         $this->audit($user, $business, $old, $business->only(array_keys($payload)), $request);
 
         return $this->respond($business);
@@ -144,7 +152,21 @@ class BusinessSettingsService
         }
 
         $current = $settings->section($section);
-        $settings->{$section} = $this->castLike(SpaBusinessSetting::DEFAULTS[$section], array_replace_recursive($current, $fields));
+        $merged = $this->castLike(SpaBusinessSetting::DEFAULTS[$section], array_replace_recursive($current, $fields));
+
+        // Clients need some way to pay, and a bill that is open needs a method to
+        // be paid with. The form refuses to save every switch off, but a page that
+        // sends one switch at a time could still get there; this is the check that
+        // cannot be skipped.
+        if ($section === 'payments'
+            && ! collect(\App\Http\Requests\Business\Settings\PaymentSettingsRequest::METHODS)->contains(fn ($m) => ! empty($merged[$m]))) {
+            return response()->json([
+                'message' => 'Keep at least one payment method turned on, or nobody can pay their bill.',
+                'errors' => ['accept_cash' => ['Keep at least one payment method turned on.']],
+            ], 422);
+        }
+
+        $settings->{$section} = $merged;
         $settings->save();
 
         // A change to the penalties applies from today on; earlier days keep

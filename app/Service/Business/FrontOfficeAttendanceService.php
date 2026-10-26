@@ -13,6 +13,7 @@ use App\Repository\Business\AttendanceRepository;
 use App\Repository\Business\StaffRepository;
 use App\Repository\SpaBusinessRepository;
 use Carbon\Carbon;
+use App\Support\BusinessDay;
 use App\Support\CheckOutRules;
 use Illuminate\Http\Request;
 
@@ -22,8 +23,9 @@ use Illuminate\Http\Request;
 // WRITE here uses now() and only ever touches today's row. Deliberately
 // separate from AttendanceService (the Manager/Owner surface, which accepts
 // an arbitrary status and any date) rather than loosening its role gate.
-// Reading is wider than writing: today() also accepts tomorrow's date (a
-// read-only preview of who's expected), and history() lists past days.
+// Reading is wider than writing: today() also shows a past day or tomorrow
+// (read-only; tomorrow is a preview of who's expected), and history() lists
+// one staff member's past days.
 //
 // Earnings shown alongside (CommissionCalculator) are what lets the front
 // desk hand a fill-in shift to the therapist who has earned the least.
@@ -40,7 +42,17 @@ class FrontOfficeAttendanceService
         private CommissionCalculator $commissionCalculator,
         private StaffNotifier $staffNotifier,
         private ServingNow $servingNow,
+        private AttendanceRollover $rollover,
     ) {
+    }
+
+    // The working day it is at the branch the desk works (BusinessDay: from opening to the
+    // next opening), after carrying anyone still on the floor from a day that has ended.
+    private function workingDay(array $branchIds, ?Staff $staff = null): string
+    {
+        $this->rollover->forBranches($branchIds);
+
+        return BusinessDay::forBranch($staff?->spa_branch_id ?? \App\Support\AccountScope::workingBranchId($branchIds));
     }
 
     // Same scoping AttendanceService::branchIds uses — resolves to the
@@ -60,9 +72,9 @@ class FrontOfficeAttendanceService
     // AttendanceStatusCalculator), same as the Manager dashboard sees, plus
     // each therapist's commission earnings and who is covering for whom.
     //
-    // $date optionally overrides "today" — but only ever to tomorrow (a
-    // read-only preview of who's expected in, from StaffSchedule). Any other
-    // date 422s; past days are history()'s job.
+    // $date optionally overrides "today": any past day, or tomorrow (a
+    // preview of who's expected in, from StaffSchedule). Both are read-only:
+    // every write goes to the working day. A later date 422s.
     public function today(User $user, ?string $date = null)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
@@ -70,22 +82,40 @@ class FrontOfficeAttendanceService
             return $this->noBusiness();
         }
 
-        $todayDate = now()->format('Y-m-d');
-        $tomorrowDate = now()->addDay()->format('Y-m-d');
+        $branchIds = $this->branchIds($user);
+        $todayDate = $this->workingDay($branchIds);
+        $tomorrowDate = Carbon::parse($todayDate)->addDay()->format('Y-m-d');
         $date = $date ?: $todayDate;
 
-        if (! in_array($date, [$todayDate, $tomorrowDate], true)) {
-            return response()->json(['message' => 'Only today and tomorrow can be viewed here.'], 422);
+        // Past days are read-only here; tomorrow is a preview of who's expected.
+        if ($date > $tomorrowDate) {
+            return response()->json(['message' => 'Only days up to tomorrow can be viewed here.'], 422);
         }
 
-        $branchIds = $this->branchIds($user);
         $staffMembers = $this->attendanceRepository->rosterForRange($branchIds, $date, $date);
+
+        // Whether staff can be timed in right now (only while the branch is open), so the
+        // screen can say so instead of offering a button the API would refuse.
+        $week = BusinessDay::week((int) \App\Support\AccountScope::workingBranchId($branchIds));
+        $open = BusinessDay::isOpen($week, now());
+        $opens = $open ? null : BusinessDay::opensNext($week, now());
 
         return [
             'date' => $date,
-            'data' => $this->rows($business, $staffMembers, $date, $branchIds),
+            // The working day it is now: the only day that can be changed here.
+            'today' => $todayDate,
+            'branch_open' => $open,
+            'opens_label' => $opens ? ($opens->isToday() ? $opens->format('g:i A') : $opens->format('D g:i A')) : null,
+            'data' => $this->rows($business, $staffMembers, $date, $branchIds, live: $date === $todayDate),
             'commission' => $this->commissionMeta($business),
             'shift_swaps' => $this->shiftSwapsAllowed($business),
+            // Whether a service can start only with its staff timed in
+            // (AppointmentService::checkInProblem), so the desk is warned first.
+            'requires_check_in' => (function () use ($business) {
+                $policy = $business->settings?->section('staff_policy') ?? \App\Models\SpaBusinessSetting::DEFAULTS['staff_policy'];
+
+                return (bool) ($policy['attendance_tracking'] ?? true) && (bool) ($policy['require_check_in'] ?? true);
+            })(),
         ];
     }
 
@@ -98,11 +128,20 @@ class FrontOfficeAttendanceService
 
         $branchIds = $this->branchIds($user);
         $staff = $this->staffRepository->findByUuidForBranches($staffUuid, $branchIds);
-        $date = now()->format('Y-m-d');
+        $date = $this->workingDay($branchIds, $staff);
 
         $existing = Attendance::where('staff_id', $staff->id)->where('attendance_date', $date)->first();
         if ($existing?->check_in_at && ! $existing->check_out_at) {
             return response()->json(['message' => $this->nameOf($staff) . ' is already timed in.'], 422);
+        }
+
+        // Staff are timed in only while the branch is open (its hours, Branch Settings → Operations).
+        $week = BusinessDay::week($staff->spa_branch_id);
+        if (! BusinessDay::isOpen($week, now())) {
+            $opens = BusinessDay::opensNext($week, now());
+
+            return response()->json(['message' => 'The branch is closed right now, so staff can\'t be timed in.'
+                . ($opens ? ' It opens ' . ($opens->isToday() ? 'at ' . $opens->format('g:i A') : $opens->format('D, M j \a\t g:i A')) . '.' : '')], 422);
         }
         $oldValues = $existing?->only(self::AUDIT_FIELDS);
 
@@ -127,10 +166,14 @@ class FrontOfficeAttendanceService
         $status = ($hasShift && ! $coveringFor) ? 'Present' : 'Fill In';
 
         // Coming back after checking out (e.g. a second fill-in stint) keeps
-        // the original check-in time and just re-opens the day.
-        $payload = $existing?->check_in_at && $existing->check_out_at
+        // the original check-in time and just re-opens the day. A time-out made while
+        // the branch was closed (before it opened) was never part of this working day:
+        // they are timed in afresh, from now.
+        $backIn = $existing?->check_in_at && $existing->check_out_at
+            && BusinessDay::isOpen($week, $existing->check_out_at);
+        $payload = $backIn
             ? ['check_out_at' => null, 'left_early' => false]
-            : ['check_in_at' => now(), 'status' => $status, 'left_early' => false];
+            : ['check_in_at' => now(), 'check_out_at' => null, 'status' => $status, 'left_early' => false];
 
         $model = $this->attendanceRepository->upsert($staff->id, $date, $payload + [
             'covering_for_staff_id' => $coveringFor?->id ?? $existing?->covering_for_staff_id,
@@ -156,7 +199,7 @@ class FrontOfficeAttendanceService
 
         $branchIds = $this->branchIds($user);
         $staff = $this->staffRepository->findByUuidForBranches($staffUuid, $branchIds);
-        $date = now()->format('Y-m-d');
+        $date = $this->workingDay($branchIds, $staff);
 
         $existing = Attendance::where('staff_id', $staff->id)->where('attendance_date', $date)->first();
 
@@ -197,7 +240,7 @@ class FrontOfficeAttendanceService
 
         $branchIds = $this->branchIds($user);
         $staff = $this->staffRepository->findByUuidForBranches($staffUuid, $branchIds);
-        $date = now()->format('Y-m-d');
+        $date = $this->workingDay($branchIds, $staff);
         $name = $this->nameOf($staff);
 
         $existing = Attendance::where('staff_id', $staff->id)->where('attendance_date', $date)->first();
@@ -354,16 +397,25 @@ class FrontOfficeAttendanceService
 
     // ── Helpers ───────────────────────────────────────────────────────────
 
-    private function rows(SpaBusiness $business, $staffMembers, string $date, array $branchIds): array
+    // $live: $date is the working day it is now. Earnings are the working day's
+    // (from its opening to the next one — up to now while it's live), and the
+    // week's as of then; a later day has none yet.
+    private function rows(SpaBusiness $business, $staffMembers, string $date, array $branchIds, bool $live = false): array
     {
         $branchSchedules = BranchSchedule::whereIn('spa_branch_id', $branchIds)->get()->groupBy('spa_branch_id');
         $dayOfWeek = Carbon::parse($date)->format('l');
         $grace = AttendanceStatusCalculator::graceMinutesFor($business);
         $overtime = AttendanceStatusCalculator::overtimeAllowedFor($business);
-        $earnings = $this->commissionCalculator->earnings($business, $staffMembers->pluck('id')->all());
+        $week = BusinessDay::week((int) \App\Support\AccountScope::workingBranchId($branchIds));
+        $past = ! $live && $date < BusinessDay::forBranch((int) \App\Support\AccountScope::workingBranchId($branchIds));
+        $dayStart = BusinessDay::opensAt($week, $date) ?? Carbon::parse($date)->startOfDay();
+        $dayEnd = $past ? (BusinessDay::nextOpening($week, $date) ?? Carbon::parse($date)->endOfDay()) : null;
+        $earnings = $live || $past
+            ? $this->commissionCalculator->earnings($business, $staffMembers->pluck('id')->all(), $dayEnd, $dayStart)
+            : [];
         // Who is performing a service right now — they can't be checked out,
-        // so the page greys that out. Only today's roster can be "right now".
-        $serving = $date === now()->format('Y-m-d') ? $this->servingNow->forStaff($staffMembers->pluck('id')->all()) : [];
+        // so the page greys that out. Only the live roster can be "right now".
+        $serving = $live ? $this->servingNow->forStaff($staffMembers->pluck('id')->all()) : [];
 
         // Who is covering for whom on this date, both directions — read off
         // the attendance rows the roster already loaded (no extra queries;
@@ -403,6 +455,13 @@ class FrontOfficeAttendanceService
                 'is_day_off' => $resolved['is_day_off'],
                 'scheduled_start' => $resolved['scheduled_start'],
                 'scheduled_end' => $resolved['scheduled_end'],
+                'scheduled_start_at' => $resolved['scheduled_start_at'] ?? null,
+                'scheduled_end_at' => $resolved['scheduled_end_at'] ?? null,
+                // They timed out while the branch was open (its hours): only then can they be timed back in.
+                // A time-out after closing, or one made when the branch opened the next day, is the day's end.
+                'timed_out_in_hours' => $attendance?->check_out_at
+                    ? BusinessDay::isOpen(BusinessDay::week((int) $staff->spa_branch_id), $attendance->check_out_at)
+                    : null,
                 'remarks' => $attendance?->remarks,
                 'covering_for_name' => $covering ? $this->nameOf($covering) : null,
                 'covered_by_name' => $coveredBy[$staff->id] ?? null,
@@ -418,7 +477,7 @@ class FrontOfficeAttendanceService
 
     private function candidateRows(SpaBusiness $business, array $branchIds, ?int $excludeStaffId = null): array
     {
-        $date = now()->format('Y-m-d');
+        $date = BusinessDay::forBranch(\App\Support\AccountScope::workingBranchId($branchIds));
         $therapists = $this->attendanceRepository->rosterForRange($branchIds, $date, $date)
             ->where('role', 'therapist')
             ->reject(fn (Staff $s) => $s->id === $excludeStaffId)
@@ -461,14 +520,15 @@ class FrontOfficeAttendanceService
     // in place instead of refetching the whole roster after every tap.
     private function mutationResponse(string $message, SpaBusiness $business, Staff $staff, array $branchIds): array
     {
-        $date = now()->format('Y-m-d');
+        // The working day the write went to (before opening, that is still yesterday).
+        $date = BusinessDay::forBranch($staff->spa_branch_id);
         $fresh = $this->attendanceRepository->rosterForRange([$staff->spa_branch_id], $date, $date)
             ->where('id', $staff->id);
 
         return [
             'message' => $message,
             'staff_uuid' => $staff->uuid,
-            'row' => $this->rows($business, $fresh, $date, $branchIds)[0] ?? null,
+            'row' => $this->rows($business, $fresh, $date, $branchIds, live: true)[0] ?? null,
         ];
     }
 

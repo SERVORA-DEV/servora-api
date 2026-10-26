@@ -37,6 +37,9 @@ class ClientAppointmentRequest extends FormRequest
             'acknowledge_overlap' => 'sometimes|boolean',
             // One voucher from their wallet for this booking (held until it is billed).
             'voucher_uuid' => 'nullable|uuid',
+            // A first-visit voucher not claimed yet (the program's uuid): it is
+            // given to the client with this booking and used on it.
+            'first_visit_program_uuid' => 'nullable|uuid',
 
             // Home service (HomeServiceRules checks the place and the area).
             'service_location' => 'sometimes|in:In Spa,Home Service',

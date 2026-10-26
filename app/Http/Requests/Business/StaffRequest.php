@@ -32,8 +32,9 @@ class StaffRequest extends FormRequest
             'email' => 'nullable|email|max:255',
             'phone_number' => 'nullable|string|max:20',
 
-            'gender' => ['nullable', Rule::in(['Male', 'Female', 'Other'])],
-            'birth_date' => 'nullable|date|before:today',
+            // Both are asked for when someone is added, and can't be emptied later.
+            'gender' => [$isCreate ? 'required' : 'sometimes', 'required', Rule::in(['Male', 'Female', 'Other'])],
+            'birth_date' => [$isCreate ? 'required' : 'sometimes', 'required', 'date', 'before:today'],
             'hire_date' => [$isCreate ? 'required' : 'sometimes', 'date'],
 
             'role' => [$isCreate ? 'required' : 'sometimes', Rule::in(['therapist', 'manager', 'frontdesk'])],

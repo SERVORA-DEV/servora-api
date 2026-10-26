@@ -65,4 +65,31 @@ class ClientBookingPolicyKeysTest extends TestCase
         $this->assertSame("Please book at least 1 hour ahead.", BookingPolicy::startTimeProblem($policy, $now->copy()->addMinutes(45)));
         $this->assertNull(BookingPolicy::startTimeProblem($policy, $now->copy()->addMinutes(75)));
     }
+
+    // The notice is the owner's again: "book at least N hours ahead", company-wide
+    // with a per-branch override; one hour until they say otherwise.
+    public function test_the_notice_a_booking_needs_is_a_setting_in_hours_defaulting_to_one(): void
+    {
+        $this->assertSame(1, SpaBusinessSetting::DEFAULTS['booking_defaults']['booking_lead_time_hours']);
+        $this->assertContains('booking_lead_time_hours', BookingPolicy::KEYS);
+        $this->assertContains('booking_lead_time_hours', BranchBookingPolicyRequest::KEYS);
+    }
+
+    public function test_a_longer_notice_says_how_long(): void
+    {
+        $policy = ['booking_lead_time_minutes' => 3 * 60, 'max_advance_booking_days' => 30];
+        $now = BookingPolicy::now();
+
+        $this->assertSame('Please book at least 3 hours ahead.', BookingPolicy::startTimeProblem($policy, $now->copy()->addMinutes(150)));
+        $this->assertNull(BookingPolicy::startTimeProblem($policy, $now->copy()->addMinutes(190)));
+    }
+
+    public function test_no_notice_means_any_time_from_now_on(): void
+    {
+        $policy = ['booking_lead_time_minutes' => 0, 'max_advance_booking_days' => 30];
+        $now = BookingPolicy::now();
+
+        $this->assertNull(BookingPolicy::startTimeProblem($policy, $now->copy()->addMinutes(5)));
+        $this->assertSame('Please choose a future time.', BookingPolicy::startTimeProblem($policy, $now->copy()->subMinutes(5)));
+    }
 }

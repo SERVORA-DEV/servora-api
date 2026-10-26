@@ -20,6 +20,8 @@ class SpaBusiness extends Model
         'spa_type',
         'tagline',
         'business_email',
+        // When the email was confirmed (App\Support\ContactEmail).
+        'business_email_verified_at',
         'business_phone',
         'head_office_address',
         'facebook_url',

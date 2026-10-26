@@ -82,8 +82,10 @@ class BillingController extends Controller
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01'],
             'reason' => ['required', 'string', 'max:255'],
+            // The money for one service of the visit, when it is not for the whole bill.
+            'service_uuid' => ['nullable', 'string', 'max:64'],
         ]);
 
-        return $this->billingService->refund($request->user(), $uuid, (float) $data['amount'], $data['reason'], $request);
+        return $this->billingService->refund($request->user(), $uuid, (float) $data['amount'], $data['reason'], $request, $data['service_uuid'] ?? null);
     }
 }

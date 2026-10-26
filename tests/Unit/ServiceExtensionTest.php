@@ -133,6 +133,39 @@ class ServiceExtensionTest extends TestCase
         $this->assertSame(['therapist', 'room'], array_column($clashes, 'kind'));
     }
 
+    public function test_extra_time_comes_in_the_owners_steps_up_to_the_longest_extension(): void
+    {
+        // Foot Reflexology: ₱650 for 60 min, steps of 15, up to 60 in all.
+        $steps = ServiceExtension::steps(60, 650 / 60, 15, 60, 0);
+
+        $this->assertSame([15, 30, 45, 60], array_column($steps, 'extra_minutes'));
+        $this->assertSame([75, 90, 105, 120], array_column($steps, 'minutes'));
+        $this->assertSame([162.5, 325.0, 487.5, 650.0], array_column($steps, 'extra_price'));
+    }
+
+    public function test_time_already_added_counts_against_the_longest_extension(): void
+    {
+        // Already 30 minutes longer: only 15 and 30 more fit under 60.
+        $this->assertSame([15, 30], array_column(ServiceExtension::steps(90, 650 / 60, 15, 60, 30), 'extra_minutes'));
+        $this->assertSame([], ServiceExtension::steps(120, 650 / 60, 15, 60, 60));
+    }
+
+    public function test_with_no_limit_a_few_steps_are_offered_and_nothing_without_a_step_or_a_price(): void
+    {
+        $this->assertSame([15, 30, 45, 60], array_column(ServiceExtension::steps(60, 10.0, 15, 0, 0), 'extra_minutes'));
+        $this->assertSame([], ServiceExtension::steps(60, 10.0, 0, 60, 0));
+        $this->assertSame([], ServiceExtension::steps(60, 0.0, 15, 60, 0));
+    }
+
+    public function test_extra_time_has_to_be_whole_steps(): void
+    {
+        $this->assertTrue(ServiceExtension::isStep(30, 15));
+        $this->assertFalse(ServiceExtension::isStep(20, 15));
+        $this->assertFalse(ServiceExtension::isStep(0, 15));
+        $this->assertFalse(ServiceExtension::isStep(15, 0));
+        $this->assertSame(162.5, ServiceExtension::timePrice(650 / 60, 15));
+    }
+
     public function test_no_one_else_booked_means_no_clash(): void
     {
         $this->assertSame([], ServiceExtension::clashes(900, 850, [7], [3], []));

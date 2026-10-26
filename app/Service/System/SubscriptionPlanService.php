@@ -167,10 +167,12 @@ class SubscriptionPlanService
             ]);
         }
 
-        // The Free Trial plan isn't something owners paid for, so there are no
-        // terms to protect: it is edited in place, and businesses on a trial
-        // get the change straight away (no version, no accept/decline prompt).
-        if ($this->subscriptionPlanRepository->hasSubscribers($plan) && ! $plan->isTrial()) {
+        // A plan with subscribers is versioned, the Free Trial plan included: a
+        // business already on its trial keeps the limits and features it started
+        // with (nothing changes under it mid-trial), and the new version is what
+        // trials started from now on get. A trial cannot renew, so nobody is asked
+        // to accept it.
+        if ($this->subscriptionPlanRepository->hasSubscribers($plan)) {
             // An older version kept only for the owners still on it — its
             // terms are what they paid for.
             if (! $plan->is_active) {
@@ -179,12 +181,14 @@ class SubscriptionPlanService
                 ], 422);
             }
 
-            $newPlan = $this->subscriptionPlanRepository->archiveAndVersion($plan, $payload);
+            // The new version is the plan as it was with the change on top, so a save
+            // that sends only what it changed still makes a complete plan.
+            $newPlan = $this->subscriptionPlanRepository->archiveAndVersion($plan, array_merge(Arr::except($plan->only($plan->getFillable()), ['uuid']), $payload));
 
             // Current subscribers keep the archived terms until their term
             // ends — ask each owner to accept the new version for renewal
             // or let the subscription end (PlanChangeService).
-            $notified = $this->planChangeService->notifySubscribers($plan, $newPlan);
+            $notified = $plan->isTrial() ? 0 : $this->planChangeService->notifySubscribers($plan, $newPlan);
 
             $this->auditLogRepository->recordAdminAction('subscription_plans', $newPlan->id, 'Update', $old, array_merge($new ?? [], [
                 'name' => $newPlan->name,

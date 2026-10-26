@@ -22,6 +22,12 @@ class EmailVerificationController extends Controller
         return $this->emaiVerificationService->verifyEmail($request->all(), $id, $hash);
     }
 
+    // GET (signed): the button in the sign-up email. The account is created now.
+    public function completeRegistration(string $token, \App\Service\UserService $users)
+    {
+        return redirect(rtrim((string) config('app.frontend_url'), '/') . '/verify-email?status=' . $users->completeRegistration($token));
+    }
+
     public function resend(ResendVerificationRequest $request)
     {
         return $this->emaiVerificationService->resend($request->validated());

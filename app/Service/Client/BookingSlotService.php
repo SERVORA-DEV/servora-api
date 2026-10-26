@@ -10,6 +10,7 @@ use App\Models\Staff;
 use App\Models\StaffSchedule;
 use App\Service\Business\AppointmentAvailabilityService;
 use App\Support\BranchClosures;
+use App\Support\HourlyCapacity;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -24,7 +25,10 @@ use Illuminate\Support\Collection;
 //  - a therapist is left for it. Every overlapping booking takes one of the
 //    therapists on shift then (schedule fits the whole window, not on leave),
 //    so "any therapist" bookings can't pile onto a slot nobody can serve.
-//    A requested therapist must also be on shift and not already booked.
+//    A requested therapist must also be on shift and not already booked;
+//  - the hour has room: the owner's "bookings per hour" limit counts the
+//    reservations whose start falls in the same clock hour (8:34 is in the
+//    8 PM hour — App\Support\HourlyCapacity).
 //
 // Everything for the day is loaded once (a handful of queries) and checked
 // in memory, so listing a whole day of slots costs the same as one check.
@@ -33,7 +37,8 @@ use Illuminate\Support\Collection;
 // therapist with no schedule rows works whenever the branch is open.
 class BookingSlotService
 {
-    public const STEP_MINUTES = 30;
+    // A start every five minutes: a client may book 8:35, not only 8:00 and 8:30.
+    public const STEP_MINUTES = HourlyCapacity::STEP_MINUTES;
 
     // Used when the owner hasn't entered hours for that weekday.
     private const FALLBACK_OPEN = '09:00';
@@ -43,12 +48,12 @@ class BookingSlotService
     {
     }
 
-    // @return array{date: string, duration_minutes: int, closed_reason: ?string, slots: list<array{time: string, available: bool, reason: ?string}>}
+    // @return array{date: string, duration_minutes: int, closed_reason: ?string, slots: list<array{time: string, available: bool, reason: ?string}>, hours: list<array{hour: string, booked: int, limit: int, full: bool}>}
     public function slots(SpaBranch $branch, string $date, int $duration, ?Staff $therapist = null, ?int $excludeAppointmentId = null): array
     {
         $duration = max($duration, 1);
         $policy = BookingPolicy::for($branch);
-        $result = ['date' => $date, 'duration_minutes' => $duration, 'closed_reason' => null, 'slots' => []];
+        $result = ['date' => $date, 'duration_minutes' => $duration, 'closed_reason' => null, 'slots' => [], 'hours' => []];
 
         $day = $this->dayWindow($branch->id, $date);
         if ($day['closed']) {
@@ -65,6 +70,9 @@ class BookingSlotService
         }
 
         $ctx = $this->loadDay($branch, $date, $excludeAppointmentId);
+        $hourLimit = HourlyCapacity::limitFor($branch);
+        $hourCounts = $hourLimit > 0 ? HourlyCapacity::bookedByHour($branch->id, $date, $excludeAppointmentId) : [];
+        $hours = [];
 
         for ($start = $day['open']->copy(); $start->lt($day['close']) && $start->isSameDay($day['open']); $start->addMinutes(self::STEP_MINUTES)) {
             $end = $start->copy()->addMinutes($duration);
@@ -76,14 +84,18 @@ class BookingSlotService
                 (bool) BookingPolicy::startTimeProblem($policy, $start) => 'too_soon',
                 $end->gt($day['close']) => 'past_closing',
                 (bool) $this->closureProblem($day, $start, $end) => 'closed',
+                HourlyCapacity::isFull($hourLimit, $hourCounts[$start->hour] ?? 0) => 'hour_full',
                 default => $this->capacityProblem($ctx, $date, $start, $end, $therapist),
             };
+            $hours[] = $start->hour;
             $result['slots'][] = [
                 'time' => $start->format('H:i'),
                 'available' => $problem === null,
                 'reason' => $problem,
             ];
         }
+
+        $result['hours'] = HourlyCapacity::summary($hourLimit, $hourCounts, $hours);
 
         return $result;
     }
@@ -111,6 +123,12 @@ class BookingSlotService
             return $closed . ' Please pick another time.';
         }
 
+        // The hour's limit (and the 5-minute marks) — before the therapists,
+        // it is the clearer reason when both apply.
+        if ($hourProblem = HourlyCapacity::problemFor($branch, $date, $time, $excludeAppointmentId)) {
+            return $hourProblem;
+        }
+
         $problem = $this->capacityProblem($this->loadDay($branch, $date, $excludeAppointmentId), $date, $start, $end, $therapist);
 
         return match ($problem) {
@@ -118,6 +136,115 @@ class BookingSlotService
             'therapist_unavailable' => "{$this->nameOf($therapist)} isn't free at that time. Please pick another time or therapist.",
             default => 'That time just filled up. Please pick another time.',
         };
+    }
+
+    // For each therapist in $staffIds: the first start time after $time on that
+    // day (in the same 5-minute steps the slots use) at which they are on shift
+    // and not booked for $duration minutes, as H:i; null when there is none
+    // left that day. Used to say "available at 5:00 PM" beside a therapist
+    // who isn't free at the time asked for.
+    //
+    // @param  list<int>  $staffIds
+    // @return array<int, ?string>
+    public function nextFreeStarts(SpaBranch $branch, string $date, string $time, int $duration, array $staffIds): array
+    {
+        $duration = max($duration, 1);
+        $result = array_fill_keys($staffIds, null);
+        $day = $this->dayWindow($branch->id, $date);
+        if ($day['closed'] || ! $staffIds) {
+            return $result;
+        }
+
+        $policy = BookingPolicy::for($branch);
+        $ctx = $this->loadDay($branch, $date, null);
+        $hourLimit = HourlyCapacity::limitFor($branch);
+        $hourCounts = $hourLimit > 0 ? HourlyCapacity::bookedByHour($branch->id, $date, null) : [];
+        $left = $staffIds;
+
+        for ($start = Carbon::parse("{$date} {$time}")->addMinutes(self::STEP_MINUTES); $left && $start->lt($day['close']) && $start->isSameDay($day['open']); $start->addMinutes(self::STEP_MINUTES)) {
+            if ($start->lt($day['open'])) {
+                continue;
+            }
+            $end = $start->copy()->addMinutes($duration);
+            if ($end->gt($day['close'])) {
+                break;
+            }
+            if (BookingPolicy::startTimeProblem($policy, $start)
+                || $this->closureProblem($day, $start, $end)
+                || HourlyCapacity::isFull($hourLimit, $hourCounts[$start->hour] ?? 0)) {
+                continue;
+            }
+
+            $taken = $ctx['busy']
+                ->filter(fn ($b) => $start->lt($b['end']) && $end->gt($b['start']))
+                ->flatMap(fn ($b) => $b['staff'])->unique()->all();
+
+            foreach ($left as $key => $id) {
+                if ($this->onShift($ctx, $id, $date, $start, $end) && ! in_array($id, $taken, true)) {
+                    $result[$id] = $start->format('H:i');
+                    unset($left[$key]);
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    // For each therapist in $staffIds: when they are free on $date for a visit
+    // of $duration minutes, as stretches of time ("2:00 PM – 6:00 PM": a visit
+    // can start anywhere from 2:00 and end by 6:00). Built from the same
+    // 5-minute starts and the same checks as the slots (hours, booking rules,
+    // closures, the hour's limit, their shift and bookings), so a free stretch
+    // is always bookable. Times are H:i; an empty list when none is left.
+    //
+    // @param  list<int>  $staffIds
+    // @return array<int, list<array{from: string, to: string}>>
+    public function freeWindows(SpaBranch $branch, string $date, int $duration, array $staffIds): array
+    {
+        $duration = max($duration, 1);
+        $result = array_fill_keys($staffIds, []);
+        $day = $this->dayWindow($branch->id, $date);
+        if ($day['closed'] || ! $staffIds) {
+            return $result;
+        }
+
+        $policy = BookingPolicy::for($branch);
+        $ctx = $this->loadDay($branch, $date, null);
+        $hourLimit = HourlyCapacity::limitFor($branch);
+        $hourCounts = $hourLimit > 0 ? HourlyCapacity::bookedByHour($branch->id, $date, null) : [];
+        // The free stretch each therapist is in at the moment: [first start, last start].
+        $open = [];
+        $close = function (int $id) use (&$open, &$result, $duration) {
+            if (isset($open[$id])) {
+                [$first, $last] = $open[$id];
+                $result[$id][] = ['from' => $first->format('H:i'), 'to' => $last->copy()->addMinutes($duration)->format('H:i')];
+                unset($open[$id]);
+            }
+        };
+
+        for ($start = $day['open']->copy(); $start->lt($day['close']) && $start->isSameDay($day['open']); $start->addMinutes(self::STEP_MINUTES)) {
+            $end = $start->copy()->addMinutes($duration);
+            $dayOk = ! $end->gt($day['close'])
+                && ! BookingPolicy::startTimeProblem($policy, $start)
+                && ! $this->closureProblem($day, $start, $end)
+                && ! HourlyCapacity::isFull($hourLimit, $hourCounts[$start->hour] ?? 0);
+            $taken = $dayOk
+                ? $ctx['busy']->filter(fn ($b) => $start->lt($b['end']) && $end->gt($b['start']))->flatMap(fn ($b) => $b['staff'])->unique()->all()
+                : [];
+
+            foreach ($staffIds as $id) {
+                if ($dayOk && $this->onShift($ctx, $id, $date, $start, $end) && ! in_array($id, $taken, true)) {
+                    $open[$id] = [$open[$id][0] ?? $start->copy(), $start->copy()];
+                } else {
+                    $close($id);
+                }
+            }
+        }
+        foreach (array_keys($open) as $id) {
+            $close($id);
+        }
+
+        return $result;
     }
 
     // ── internals ────────────────────────────────────────────────────────

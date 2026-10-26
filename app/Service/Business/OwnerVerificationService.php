@@ -63,7 +63,7 @@ class OwnerVerificationService
             'suffix' => $fields['suffix'] ?? null,
             'gender' => $fields['gender'],
             'birth_date' => $fields['birth_date'],
-            'phone_number' => $fields['phone_number'],
+            'phone_number' => array_key_exists('phone_number', $fields) ? ($fields['phone_number'] ?: null) : $user->phone_number,
             'profile_photo' => $fields['profile_photo'] ?? $user->profile_photo,
         ]);
 
@@ -89,8 +89,6 @@ class OwnerVerificationService
 
         $payload = [
             'business_name' => $fields['business_name'],
-            'business_email' => $fields['business_email'],
-            'business_phone' => $fields['business_phone'],
             'business_description' => $fields['business_description'] ?? null,
         ];
 
@@ -99,6 +97,15 @@ class OwnerVerificationService
         } else {
             $payload['owner_id'] = $user->id;
             $payload['verification_status'] = 'Unregistered';
+            // The business starts with the owner's own sign-up email, already
+            // proved by signing up. They can put another in Business Settings
+            // (which is then confirmed by the button in an email).
+            if (! \App\Models\SpaBusiness::withTrashed()->where('business_email', $user->email)->exists()) {
+                $payload['business_email'] = $user->email;
+                if (\App\Support\ContactEmail::ready()) {
+                    $payload['business_email_verified_at'] = now();
+                }
+            }
             $this->spaBusinessRepository->create($payload);
         }
 
@@ -349,7 +356,7 @@ class OwnerVerificationService
             ], 422);
         }
 
-        if (! $user->first_name || ! $user->last_name || ! $user->gender || ! $user->birth_date || ! $user->phone_number) {
+        if (! $user->first_name || ! $user->last_name || ! $user->gender || ! $user->birth_date) {
             return response()->json([
                 'message' => 'Please complete your personal details before submitting.',
             ], 422);
@@ -361,7 +368,7 @@ class OwnerVerificationService
             ], 422);
         }
 
-        if (! $business->business_name || ! $business->business_email || ! $business->business_phone) {
+        if (! $business->business_name) {
             return response()->json([
                 'message' => 'Please complete your business details before submitting.',
             ], 422);

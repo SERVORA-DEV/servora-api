@@ -65,7 +65,11 @@ class AppointmentServiceController extends Controller
 
     public function extendService(Request $request, string $uuid, ServiceExtensionService $extension)
     {
-        $payload = $request->validate(['service_variant_uuid' => 'required|uuid']);
+        // A longer length of the menu, or extra time in the owner's steps.
+        $payload = $request->validate([
+            'service_variant_uuid' => 'required_without:extra_minutes|nullable|uuid',
+            'extra_minutes' => 'required_without:service_variant_uuid|nullable|integer|min:1|max:480',
+        ]);
 
         return $extension->extend($request->user(), $uuid, $payload);
     }

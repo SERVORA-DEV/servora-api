@@ -11,6 +11,7 @@ use App\Repository\SpaBusinessRepository;
 use App\Support\History;
 use App\Support\ServiceEndNotice;
 use App\Support\ServiceKind;
+use App\Support\StaleVisit;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -93,6 +94,8 @@ class ServiceEndNotifier
             ->whereNotNull('ta.started_at')
             ->where('s.status', 'In Progress')
             ->whereNull('a.deleted_at')
+            // Not one left running from a day that is over: DayCloser finishes those, there is nothing to check on.
+            ->where('a.appointment_date', '>=', StaleVisit::today())
             ->when($branchIds !== null, fn ($q) => $q->whereIn('a.spa_branch_id', $branchIds))
             // An add-on's time is counted on its main service, above.
             ->when($addons, fn ($q) => $q->whereNull('s.parent_appointment_service_id'))

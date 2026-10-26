@@ -7,6 +7,7 @@ use App\Http\Resources\AttendanceResource;
 use App\Models\Attendance;
 use App\Models\BranchSchedule;
 use App\Models\Staff;
+use App\Models\StaffTransferRequest;
 use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\Business\AttendanceRepository;
@@ -135,7 +136,8 @@ class AttendanceService
         return new AttendanceResource($model);
     }
 
-    // Fills in "Present" only for staff with no attendance row yet for this
+    // Fills in "Present" only for staff scheduled to work that day who have no
+    // attendance row yet for this
     // date — never overwrites an existing Late/Absent/etc. entry, so a
     // manager who already marked exceptions can safely bulk-fill the rest.
     public function bulkMarkPresent(User $user, string $date, ?Request $request = null)
@@ -152,18 +154,77 @@ class AttendanceService
             return response()->json(['message' => 'Pick a branch first, then mark everyone there present.'], 422);
         }
 
-        $roster = $this->attendanceRepository->rosterForDate($branchIds, $date);
+        // Only people who were due to work: a day off, or no schedule at all
+        // for the day, is not someone to mark present.
+        $roster = $this->attendanceRepository->rosterForRange($branchIds, $date, $date);
+        $today = Carbon::today()->format('Y-m-d');
+        $branchSchedules = BranchSchedule::whereIn('spa_branch_id', $branchIds)->where('day_of_week', Carbon::parse($date)->format('l'))->get()->keyBy('spa_branch_id');
+
+        // A whole branch is many records, and each one saved on its own is
+        // several round trips to the database. So the rows are worked out here
+        // (the roster, the branch's hours and the business's settings are each
+        // read once) and written together in one go.
+        $now = Carbon::now();
+        $rows = [];
+        $marked = [];
 
         foreach ($roster as $staff) {
-            if ($staff->attendance->isEmpty()) {
-                $model = $this->attendanceRepository->upsert($staff->id, $date, [
-                    'status' => 'Present',
-                    'created_by' => $user->id,
-                    'updated_by' => $user->id,
-                ]);
-
-                $this->logAttendanceChange($user, $model, 'Create', null, $request);
+            if (! $staff->attendance->isEmpty() || ! $this->statusCalculator->hasWorkingScheduleForDate($staff->schedules, $date)) {
+                continue;
             }
+
+            // Recorded as the schedule had it, the same as "Was in": in at the
+            // shift's start, out at its end once the day is over. Today's shift
+            // is still running, and a day to come has no times yet.
+            $shift = $this->statusCalculator->resolve($staff, null, $date, $staff->schedules, $branchSchedules->get($staff->spa_branch_id));
+            $start = $shift['scheduled_start'];
+            $end = $shift['scheduled_end'];
+            $times = [];
+            if ($start && $date <= $today) {
+                $in = Carbon::parse("{$date} {$start}");
+                // Today: nobody can have timed in at a time that has not come yet,
+                // so a shift that starts later is in as of now.
+                if ($date === $today && $in->gt(Carbon::now())) {
+                    $in = Carbon::now()->startOfMinute();
+                }
+                $times['check_in_at'] = $in;
+                if ($end && $end > $start && $date < $today) {
+                    $times['check_out_at'] = Carbon::parse("{$date} {$end}");
+                }
+            }
+
+            $model = new Attendance([
+                'staff_id' => $staff->id,
+                'attendance_date' => $date,
+                'status' => 'Present',
+                'created_by' => $user->id,
+                'updated_by' => $user->id,
+            ] + $times);
+            $model->uuid = $model->newUniqueId();
+            if (StaffTransferRequest::ready()) {
+                $model->spa_branch_id = $staff->spa_branch_id;
+            }
+            $this->statusCalculator->keepWith($model, $staff, $branchSchedules->get($staff->spa_branch_id), $business);
+            $model->setCreatedAt($now);
+            $model->setUpdatedAt($now);
+
+            $rows[] = $model->getAttributes();
+            $marked[] = trim("{$staff->first_name} {$staff->last_name}");
+        }
+
+        if ($rows) {
+            // One insert takes the same columns for every row.
+            $columns = array_keys(array_merge(...$rows));
+            $rows = array_map(fn ($row) => array_merge(array_fill_keys($columns, null), $row), $rows);
+
+            // Anyone recorded in the meantime is left as they are.
+            Attendance::insertOrIgnore($rows);
+
+            $this->auditLogRepository->record(
+                $user->id, 'attendances', null, 'Create', null,
+                ['date' => $date, 'status' => 'Present', 'marked_all_present' => true, 'staff' => $marked],
+                $request
+            );
         }
 
         return $this->listForDate($user, $date);

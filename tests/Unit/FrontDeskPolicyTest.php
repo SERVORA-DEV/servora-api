@@ -65,10 +65,19 @@ class FrontDeskPolicyTest extends TestCase
 
     public function test_too_many_services_and_too_much_time(): void
     {
-        $problems = FrontDeskPolicy::reservation($this->policy(['max_service_minutes_per_booking' => 180]), $this->now()->addHours(3), $this->now(), 4, 240);
+        $problems = FrontDeskPolicy::reservation($this->policy(['max_service_minutes_per_booking' => 180, 'allow_booking_overlap' => true]), $this->now()->addHours(3), $this->now(), 4, 240, null, 60);
 
         $this->assertSame(['max_services', 'service_time'], $this->rules($problems));
-        $this->assertSame('A booking can hold up to 3 hours of services here — these take 4 hours.', $problems[1]['message']);
+        $this->assertStringContainsString('up to 3 hours of services per visit', $problems[1]['message']);
+
+        // A package, however long, is not over the limit.
+        $overlap = ['max_service_minutes_per_booking' => 180, 'max_services_per_booking' => 3];
+        $package = FrontDeskPolicy::reservation($this->policy($overlap + ['allow_booking_overlap' => true]), $this->now()->addHours(3), $this->now(), 1, 240, null, null, true);
+        $this->assertSame([], $this->rules($package));
+
+        // Without booking overlap the package is held to the limit as well.
+        $strict = FrontDeskPolicy::reservation($this->policy($overlap), $this->now()->addHours(3), $this->now(), 1, 240, null, null, true);
+        $this->assertSame(['service_time'], $this->rules($strict));
     }
 
     public function test_no_limits_set_means_no_limits(): void

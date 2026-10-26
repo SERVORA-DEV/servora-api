@@ -25,6 +25,8 @@ class BusinessSettingsResource extends JsonResource
                 'tagline' => $this->tagline,
                 'business_description' => $this->business_description,
                 'business_email' => $this->business_email,
+                // Confirmed by the button in the email Servora sent to it (or the owner's own sign-up address).
+                'business_email_verified' => \App\Support\ContactEmail::isVerified($this->resource),
                 'business_phone' => $this->business_phone,
                 'head_office_address' => $this->head_office_address,
                 'facebook_url' => $this->facebook_url,

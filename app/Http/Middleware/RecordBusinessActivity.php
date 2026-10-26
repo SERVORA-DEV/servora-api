@@ -379,6 +379,6 @@ class RecordBusinessActivity
             return null;
         }
 
-        return in_array(\App\Models\AccountBranch::MANAGEMENT, $levels, true) ? 'management' : 'operation';
+        return \App\Models\AccountBranch::runsBranch($levels) ? 'management' : 'operation';
     }
 }

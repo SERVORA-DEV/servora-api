@@ -131,6 +131,27 @@ final class AppCache
         return (bool) self::activeSubscription($businessId)?->plan?->{$feature};
     }
 
+    // How long after a subscription ends a feature it had still works for work that
+    // is already open (a visit under way, its bill): so a plan ending at midnight, or
+    // mid-visit, does not take packages and vouchers away from a client being served.
+    // New sales of the feature stay switched off.
+    public const OPEN_WORK_DAYS = 2;
+
+    public static function planAllowsOpenWork(int $businessId, string $feature): bool
+    {
+        if (self::planAllows($businessId, $feature)) {
+            return true;
+        }
+
+        $ended = Subscription::where('spa_business_id', $businessId)
+            ->whereNotNull('expires_at')
+            ->where('expires_at', '>', now()->subDays(self::OPEN_WORK_DAYS))
+            ->latest('id')
+            ->first();
+
+        return (bool) $ended?->plan?->{$feature};
+    }
+
     public static function forgetSubscription(int $businessId): void
     {
         self::forget(self::subscriptionKey($businessId));
@@ -188,6 +209,7 @@ final class AppCache
         }
         self::bump("biz:{$businessId}");
         self::bump('marketplace');
+        LivePulse::bump($businessId); // the owner's and managers' open screens
     }
 
     public static function businessVersion(int $businessId): int

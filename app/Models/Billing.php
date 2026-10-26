@@ -36,6 +36,9 @@ class Billing extends Model
         'client_voucher_id',
 
         'amount',
+        // Refunded before payment (BillAdjustment "credit"): taken off on top
+        // of the discount. amount = subtotal − discount_amount − credit_amount.
+        'credit_amount',
         // Subscription invoices: the 12% VAT included in amount.
         'vat_amount',
 
@@ -56,6 +59,7 @@ class Billing extends Model
             'subtotal' => 'decimal:2',
             'discount_value' => 'decimal:2',
             'discount_amount' => 'decimal:2',
+            'credit_amount' => 'decimal:2',
 
             'issued_at' => 'datetime',
             'due_at' => 'datetime',

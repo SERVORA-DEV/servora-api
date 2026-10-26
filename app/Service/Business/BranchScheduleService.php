@@ -109,6 +109,8 @@ class BranchScheduleService
         // No model events from a bulk write (see CacheInvalidation).
         AppCache::bumpBusiness($branch->spa_business_id);
         $this->hoursChanged($user, $branch);
+        // Clients whose booking no longer fits the new hours are told.
+        app(\App\Service\Business\ClientBookingNotices::class)->hoursChanged($branch);
 
         return BranchScheduleResource::collection($this->branchScheduleRepository->allForBranch($branch->id));
     }
@@ -128,6 +130,7 @@ class BranchScheduleService
 
         $model = $this->branchScheduleRepository->create($payload);
         $this->hoursChanged($user, $branch, 10);
+        app(\App\Service\Business\ClientBookingNotices::class)->hoursChanged($branch);
         return new BranchScheduleResource($model);
     }
 
@@ -151,6 +154,7 @@ class BranchScheduleService
         $schedule = $this->resolveOwnedSchedule($user, $uuid);
         $model = $this->branchScheduleRepository->update($uuid, $payload);
         $this->hoursChanged($user, fn () => $schedule->branch, 10);
+        app(\App\Service\Business\ClientBookingNotices::class)->hoursChanged($schedule->branch);
         return new BranchScheduleResource($model);
     }
 
@@ -159,6 +163,7 @@ class BranchScheduleService
         $schedule = $this->resolveOwnedSchedule($user, $uuid);
         $this->branchScheduleRepository->delete($uuid);
         $this->hoursChanged($user, fn () => $schedule->branch, 10);
+        app(\App\Service\Business\ClientBookingNotices::class)->hoursChanged($schedule->branch);
         return true;
     }
 

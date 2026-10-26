@@ -69,6 +69,8 @@ class BranchClosureService
         ]);
 
         $this->announce($user, $branch, 'Branch Closing', "closed {$branch->branch_name}: " . BranchClosures::period($closure) . " ({$closure->reason}).");
+        // The clients booked inside it are told, so nobody turns up to a closed door.
+        app(\App\Service\Business\ClientBookingNotices::class)->closing($branch, $start, $end, BranchClosures::period($closure), $closure->reason);
 
         return response()->json(['message' => 'Closure saved.', 'data' => $this->present($branch, $closure)], 201);
     }
@@ -92,6 +94,7 @@ class BranchClosureService
         ]);
 
         $this->announce($user, $branch, 'Branch Closure Changed', "changed a closure of {$branch->branch_name}: now " . BranchClosures::period($closure) . " ({$closure->reason}).");
+        app(\App\Service\Business\ClientBookingNotices::class)->closing($branch, $start, $end, BranchClosures::period($closure), $closure->reason);
 
         return response()->json(['message' => 'Closure saved.', 'data' => $this->present($branch, $closure)]);
     }
@@ -104,14 +107,19 @@ class BranchClosureService
         $closure = $this->closureOf($branch, $closureUuid);
 
         if (BranchClosures::isActive($closure)) {
+            $window = [$closure->starts_at->copy(), $closure->ends_at->copy()];
             $closure->update(['ends_at' => Carbon::now()]);
             $this->announce($user, $branch, 'Branch Reopened', "reopened {$branch->branch_name} early. It is taking bookings again.");
+            // The clients whose bookings the rest of the closure had put in doubt.
+            app(\App\Service\Business\ClientBookingNotices::class)->reopened($branch, Carbon::now(), $window[1]);
 
             return response()->json(['message' => 'The branch is open again.']);
         }
 
         $period = BranchClosures::period($closure);
+        $window = [$closure->starts_at->copy(), $closure->ends_at->copy()];
         $closure->delete();
+        app(\App\Service\Business\ClientBookingNotices::class)->reopened($branch, $window[0], $window[1]);
         $this->announce($user, $branch, 'Branch Closure Removed', "removed the closure of {$branch->branch_name} planned for {$period}.");
 
         return response()->json(['message' => 'Closure removed.']);

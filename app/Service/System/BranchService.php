@@ -46,6 +46,14 @@ class BranchService
 
     // Only a currently-Verified branch can be suspended — same guard shape
     // as BusinessService::suspend.
+    // What suspending it would reach, shown before the administrator confirms.
+    public function suspensionImpact(string $uuid): array
+    {
+        $branch = $this->branchRepository->findForList($uuid);
+
+        return ['data' => \App\Support\Suspension::impact([$branch->id])];
+    }
+
     public function suspend(User $admin, string $uuid, string $reason, ?Request $request = null)
     {
         $branch = $this->branchRepository->findForList($uuid);
@@ -77,6 +85,8 @@ class BranchService
         if ($owner) {
             $this->notificationService->branchSuspended($branch, $owner, $reason);
         }
+        // The clients booked for later are told it is on hold.
+        \App\Support\Suspension::tellClients([$branch->id]);
 
         return new SpaBranchResource($this->branchRepository->findForList($uuid));
     }
@@ -112,6 +122,8 @@ class BranchService
         if ($owner) {
             $this->notificationService->branchReactivated($branch, $owner);
         }
+        // The clients who were told their booking was on hold are told it is on.
+        \App\Support\Suspension::tellClientsBack([$branch->id]);
 
         return new SpaBranchResource($this->branchRepository->findForList($uuid));
     }

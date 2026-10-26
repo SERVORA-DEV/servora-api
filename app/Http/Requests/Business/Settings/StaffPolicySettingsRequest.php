@@ -39,7 +39,6 @@ class StaffPolicySettingsRequest extends FormRequest
             'allow_shift_swap' => 'sometimes|boolean',
             'require_manager_approval' => 'sometimes|boolean',
             'allow_overtime' => 'sometimes|boolean',
-            'therapist_rotation' => 'sometimes|required|in:check_in,lowest_earnings',
             // Penalties taken off the pay period's earnings.
             'late_penalty_enabled' => 'sometimes|boolean',
             'late_penalty_mode' => 'sometimes|required|in:day,hour',

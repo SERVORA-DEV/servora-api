@@ -18,6 +18,7 @@ use App\Repository\Business\ClientRepository;
 use App\Repository\BillingRepository;
 use App\Repository\PaymentRepository;
 use App\Repository\SpaBusinessRepository;
+use App\Support\ProgramChannel;
 use App\Support\VoucherTarget;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Arr;
@@ -370,7 +371,7 @@ class CustomerProgramService
             'sold_by' => $user->id,
         ]);
         $this->rewards->issueMembershipVouchers($membership);
-        $this->rewards->notifyClient($client, "Welcome to {$program->name}", 'Your membership runs until ' . $membership->ends_at->format('M j, Y') . '. Your member vouchers are in your wallet.', null);
+        $this->rewards->notifyClient($client, "Welcome to {$program->name}", 'Your membership is active until ' . $membership->ends_at->format('M j, Y') . ', and your member vouchers are now in your wallet.');
 
         return response()->json(['data' => $this->membershipRow($membership->load(['client', 'program', 'branch'])) + [
             'billing_number' => $billing?->billing_number,
@@ -402,7 +403,7 @@ class CustomerProgramService
         $client = $this->client($user, $business, $clientUuid);
         $branchIds = $user->role === 'business_owner' ? null : $this->branchIds($user);
 
-        return ['data' => $this->summaryFor($client, $branchIds ? $branchIds[0] : null)];
+        return ['data' => $this->summaryFor($client, $branchIds ? $branchIds[0] : null, ProgramChannel::DESK)];
     }
 
     // Just a client's usable vouchers, for the front desk's booking page (it
@@ -420,9 +421,40 @@ class CustomerProgramService
         }
         $wallet = ClientVoucher::with('program')->where('client_id', $client->id)->where('status', 'available')
             ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
-            ->orderBy('expires_at')->get();
+            ->orderBy('expires_at')->get()
+            ->filter(fn ($v) => $this->rewards->voucherAllowedAt($v, ProgramChannel::DESK));
 
-        return ['data' => $this->walletEntries($wallet)];
+        // A first-visit voucher the client can still claim shows with the rest,
+        // so the booking page can tag the service it makes free.
+        $claimable = $this->claimableEntries(
+            $client,
+            CustomerProgram::where('spa_business_id', $client->spa_business_id)->where('is_active', true)->get(),
+            ProgramChannel::DESK,
+        );
+
+        return ['data' => $this->walletEntries($wallet)->concat($claimable)->values()];
+    }
+
+    // The first-visit vouchers a client can claim now (no paid visit yet, not
+    // claimed before), as wallet entries: `claimable` and the program's uuid
+    // as the id. Claiming happens when they are used on a booking or a bill
+    // (ProgramRewardService::claimFirstVisit).
+    private function claimableEntries(Client $client, Collection $catalogue, string $where): Collection
+    {
+        if (! $this->rewards->enabledFor($client->spa_business_id)) {
+            return collect();
+        }
+
+        return $catalogue->where('type', 'voucher')->where('condition_kind', 'first_visit')
+            ->filter(fn ($p) => ProgramChannel::allows(ProgramChannel::of($p), $where) && $this->rewards->firstVisitClaimable($client, $p))
+            ->map(fn ($p) => $this->dealEntry($p) + [
+                'uuid' => $p->uuid,
+                'source' => 'first_visit',
+                'claimable' => true,
+                'held' => false,
+                'issued_at' => null,
+                'expires_at' => null,
+            ])->values();
     }
 
     // Each voucher as it was issued: its own copy of the name and deal
@@ -434,21 +466,30 @@ class CustomerProgramService
         // go on another until that is billed or cancelled.
         $held = ClientVoucher::heldIds($wallet->pluck('id'));
 
-        return $wallet->filter(fn ($v) => $v->dealProgram())->map(fn ($v) => [
+        return $wallet->filter(fn ($v) => $v->dealProgram())->map(fn ($v) => $this->dealEntry($v->dealProgram()) + [
             'uuid' => $v->uuid,
-            'program_uuid' => $v->dealProgram()->uuid,
-            'name' => $v->dealProgram()->name,
-            'deal' => $this->dealText($v->dealProgram()),
-            'deal_type' => $v->dealProgram()->value('dealType', '₱ off'),
-            // The number in "10% off" / "₱200 off" (0 for a free service).
-            'deal_value' => (float) $v->dealProgram()->value('value', 0),
-            'usable_on' => $v->dealProgram()->value('usableOn', 'All services'),
-            'usable' => VoucherTarget::of($v->dealProgram()->values, 'usable'),
             'source' => $v->source,
+            'claimable' => false,
             'held' => in_array($v->id, $held, true),
             'issued_at' => $v->issued_at?->toIso8601String(),
             'expires_at' => $v->expires_at?->toIso8601String(),
         ])->values();
+    }
+
+    // What a voucher is, whether it is in the wallet or can still be claimed.
+    private function dealEntry(CustomerProgram $deal): array
+    {
+        return [
+            'program_uuid' => $deal->uuid,
+            'name' => $deal->name,
+            'deal' => $this->dealText($deal),
+            'deal_type' => $deal->value('dealType', '₱ off'),
+            // The number in "10% off" / "₱200 off" (0 for a free service).
+            'deal_value' => (float) $deal->value('value', 0),
+            'usable_on' => $deal->value('usableOn', 'All services'),
+            'usable' => VoucherTarget::of($deal->values, 'usable'),
+            'channel' => ProgramChannel::of($deal),
+        ];
     }
 
     public function redeemForClient(User $user, string $clientUuid, string $programUuid)
@@ -463,12 +504,12 @@ class CustomerProgramService
             $program = CustomerProgram::where('uuid', $programUuid)->where('spa_business_id', $business->id)->firstOrFail();
             $branchIds = $user->role === 'business_owner' ? [] : $this->branchIds($user);
 
-            $result = $this->rewards->redeemPoints($client, $program, $user, $branchIds[0] ?? null);
+            $result = $this->rewards->redeemPoints($client, $program, $user, $branchIds[0] ?? null, ProgramChannel::DESK);
             if (is_string($result)) {
                 return $this->reject($result);
             }
 
-            return ['data' => $this->summaryFor($client->fresh(), $branchIds[0] ?? null)];
+            return ['data' => $this->summaryFor($client->fresh(), $branchIds[0] ?? null, ProgramChannel::DESK)];
         });
     }
 
@@ -477,7 +518,10 @@ class CustomerProgramService
     // progress), discounts (members-only ones locked unless their membership
     // bundles them) and memberships. $branchId limits the catalogue to what
     // that branch offers; null = anything offered at any branch.
-    public function summaryFor(Client $client, ?int $branchId = null): array
+    // $where is who is asking: the client app (default) or the front desk. A
+    // program limited to the other one is left out (ProgramChannel); a
+    // membership is still listed, only its perks follow its channel.
+    public function summaryFor(Client $client, ?int $branchId = null, string $where = ProgramChannel::APP): array
     {
         $business = $client->business;
         $enabled = $this->rewards->enabledFor($client->spa_business_id);
@@ -487,14 +531,21 @@ class CustomerProgramService
                 ->where('spa_business_id', $client->spa_business_id)->where('is_active', true)
                 ->whereHas('branches', fn ($q) => $branchId ? $q->where('spa_branches.id', $branchId) : $q)
                 ->orderBy('created_at')->get()
+                ->filter(fn ($p) => $p->type === 'membership' || ProgramChannel::allows(ProgramChannel::of($p), $where))
+                ->values()
             : collect();
 
         $membership = $client->activeMembership()->with('program.items')->first();
         $memberItemIds = $membership?->perkIds() ?? [];
         $wallet = ClientVoucher::with('program')->where('client_id', $client->id)->where('status', 'available')
             ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
-            ->orderBy('expires_at')->get();
+            ->orderBy('expires_at')->get()
+            ->filter(fn ($v) => $this->rewards->voucherAllowedAt($v, $where))
+            ->values();
         $visits = $this->rewards->paidVisitServices($client);
+        // Points vouchers this client already claimed: a one-time one isn't offered again.
+        $claimedWithPoints = ClientVoucher::where('client_id', $client->id)->where('source', 'points')
+            ->where('status', '!=', 'cancelled')->pluck('customer_program_id')->unique()->all();
 
         $loyalty = $catalogue->firstWhere('type', 'loyalty');
         // Vouchers that can still be got with points this visit; null = no limit.
@@ -516,6 +567,7 @@ class CustomerProgramService
             'enabled' => $enabled,
             'loyalty' => $loyalty ? [
                 'program_uuid' => $loyalty->uuid,
+                'channel' => ProgramChannel::of($loyalty),
                 'name' => $loyalty->name,
                 'points' => (int) $client->current_points,
                 'lifetime_points' => (int) $client->lifetime_points,
@@ -542,8 +594,13 @@ class CustomerProgramService
             ] : null,
             // Each voucher as it was issued: its own copy of the name and
             // deal (ClientVoucher::dealProgram / App\Support\History).
-            'wallet' => $this->walletEntries($wallet),
-            'vouchers' => $catalogue->where('type', 'voucher')->map(fn ($p) => [
+            // Held vouchers first, then a first-visit voucher not yet claimed (it
+            // is there for the client's first booking).
+            'wallet' => $this->walletEntries($wallet)->concat($this->claimableEntries($client, $catalogue, $where))->values(),
+            'vouchers' => $catalogue->where('type', 'voucher')
+                ->reject(fn ($p) => $p->condition_kind === 'points' && ! ProgramRewardService::claimableAgain($p)
+                    && in_array($p->id, $claimedWithPoints, true))
+                ->map(fn ($p) => [
                 'program_uuid' => $p->uuid,
                 'name' => $p->name,
                 'deal' => $this->dealText($p),
@@ -553,7 +610,10 @@ class CustomerProgramService
                 // service"); null when any visit does.
                 'earn' => ['kind' => $p->condition_kind, 'value' => $p->condition_value, 'on' => $this->earnOn($p)],
                 'in_wallet' => $wallet->where('customer_program_id', $p->id)->count(),
+                'channel' => ProgramChannel::of($p),
+                'claimable' => $p->condition_kind === 'first_visit' && $this->rewards->firstVisitClaimable($client, $p),
                 'progress' => $this->progress($p, $client, $visits),
+                'claim_again' => $p->condition_kind === 'points' && ProgramRewardService::claimableAgain($p),
                 'redeemable' => $p->condition_kind === 'points' && $loyalty
                     && $client->current_points >= (int) $p->condition_value
                     && ($redeemsLeft === null || $redeemsLeft > 0),
@@ -565,6 +625,7 @@ class CustomerProgramService
                 'applies_to' => $p->value('appliesTo', 'All services'),
                 'eligible' => $p->value('eligible', ''),
                 'members_only' => $p->audience === 'members',
+                'channel' => ProgramChannel::of($p),
                 'locked' => $p->audience === 'members' && ! in_array($p->id, $memberItemIds, true),
             ])->values(),
             'memberships' => $catalogue->where('type', 'membership')->map(fn ($p) => [
@@ -573,6 +634,7 @@ class CustomerProgramService
                 'price' => (float) $p->value('price', 0),
                 'billing' => $p->value('billing', 'Monthly'),
                 'perks' => $p->value('perks', ''),
+                'channel' => ProgramChannel::of($p),
                 'includes' => $p->items->map(fn ($i) => ['program_uuid' => $i->uuid, 'type' => $i->type, 'name' => $i->name])->values(),
                 'joined' => $membership?->customer_program_id === $p->id,
                 'ends_at' => $membership?->customer_program_id === $p->id ? $membership->ends_at->toIso8601String() : null,

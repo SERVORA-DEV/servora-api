@@ -57,10 +57,15 @@ class LegalTermsTest extends TestCase
 
     public function test_an_owner_who_agrees_has_the_version_and_time_recorded(): void
     {
-        Notification::fake();
+        Mail::fake();
 
         $this->postJson('/api/business/administrator/register', $this->credentials('owner@example.com', ['terms_accepted' => true]))
             ->assertCreated();
+
+        // No account until the link in the email is pressed.
+        $this->assertDatabaseMissing('users', ['email' => 'owner@example.com']);
+        $link = Mail::sent(\App\Mail\RegistrationLinkMail::class)->first()->url;
+        $this->get($link)->assertRedirect();
 
         $owner = User::where('email', 'owner@example.com')->firstOrFail();
         $this->assertSame(config('legal.version'), $owner->terms_version);

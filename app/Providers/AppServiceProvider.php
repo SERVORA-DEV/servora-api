@@ -41,6 +41,9 @@ class AppServiceProvider extends ServiceProvider
         // pages) in step with writes.
         \App\Support\CacheInvalidation::register();
 
+        // Tells open screens that something changed at a business.
+        \App\Support\LivePulse::register();
+
         // Notes every model saved during a business request (Audit Log).
         \App\Support\ActivityRecorder::register();
 

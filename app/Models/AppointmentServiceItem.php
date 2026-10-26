@@ -7,6 +7,8 @@ use App\Support\History;
 use App\Support\ServiceKind;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 
 // Maps to the appointment_services table — named ...Item (not
 // AppointmentService) to avoid colliding with
@@ -56,6 +58,8 @@ class AppointmentServiceItem extends Model
         // extension (App\Support\FrontDeskPolicy::extension).
         'extended_minutes',
         'points_earned',
+        // Money handed back for this service at checkout (App\Support\ServiceRefunds).
+        'refunded_amount',
         'status',
         'notes',
     ];
@@ -67,8 +71,25 @@ class AppointmentServiceItem extends Model
             'discount_amount' => 'decimal:2',
             'subtotal' => 'decimal:2',
             'extra_charge' => 'decimal:2',
+            'refunded_amount' => 'decimal:2',
             'facility_required' => 'boolean',
         ];
+    }
+
+    /**
+     * Whether appointment_services.refunded_amount exists yet (the migration has
+     * been run). Until then a refund can only be for a bill as a whole.
+     */
+    public static function tracksRefunds(): bool
+    {
+        $known = Cache::get('schema:service_refunded_amount');
+        if (is_bool($known)) {
+            return $known;
+        }
+        $ready = Schema::hasColumn('appointment_services', 'refunded_amount');
+        $ready ? Cache::forever('schema:service_refunded_amount', true) : Cache::put('schema:service_refunded_amount', false, 60);
+
+        return $ready;
     }
 
     // Safety net, not the primary mechanism — every service-mutating method

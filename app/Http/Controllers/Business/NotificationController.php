@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
+use App\Service\Business\DayCloser;
 use App\Service\Business\ServiceEndNotifier;
 use App\Service\NotificationService;
 use Illuminate\Http\Request;
@@ -16,6 +17,7 @@ class NotificationController extends Controller
     public function __construct(
         private NotificationService $notificationService,
         private ServiceEndNotifier $serviceEndNotifier,
+        private DayCloser $dayCloser,
     ) {}
 
     public function index(Request $request)
@@ -24,6 +26,8 @@ class NotificationController extends Controller
         // for this person's branch, so the desk hears about it on the bell's
         // next ask even where no scheduler is running.
         $this->serviceEndNotifier->sweepForUser($request->user());
+        // And what a finished day left open (no-shows, visits left in service).
+        $this->dayCloser->sweepForUser($request->user());
 
         return $this->notificationService->listForUser(
             $request->user(),

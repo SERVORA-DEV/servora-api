@@ -161,4 +161,18 @@ class BookingBoardTest extends TestCase
         $this->assertSame('01:00', BookingBoard::clock(1500));
         $this->assertSame(545, BookingBoard::minutes('09:05:00'));
     }
+
+    // Nothing is booked that would still be running when the branch closes.
+    public function test_a_time_that_would_run_past_closing_cannot_be_taken(): void
+    {
+        $therapist = $this->therapist(1, ['has_schedule' => false, 'shifts' => []]);   // works whenever the branch is open
+        $board = BookingBoard::build($this->day(), [$therapist], [], 60, 30);
+        $any = array_column($board['slots'], 'state', 'time');
+        $mine = $this->states($board['therapists'][0]);
+
+        $this->assertSame('free', $any['21:00']);          // ends 22:00, at closing
+        $this->assertSame('past_closing', $any['21:30']);  // would end 22:30
+        $this->assertSame('past_closing', $mine['21:30']);
+    }
 }
+

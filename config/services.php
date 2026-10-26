@@ -44,6 +44,10 @@ return [
     // token is checked against (UserService::verifyGoogleIdToken).
     'google' => [
         'client_id' => env('GOOGLE_CLIENT_ID'),
+        // Other OAuth client IDs whose tokens are also accepted, comma
+        // separated — the client app's Android / iOS ones, if it signs in
+        // without the web client ID as its server client ID.
+        'extra_client_ids' => array_values(array_filter(array_map('trim', explode(',', (string) env('GOOGLE_EXTRA_CLIENT_IDS', ''))))),
     ],
 
     'cloudinary' => [

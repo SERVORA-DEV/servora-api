@@ -27,6 +27,8 @@ class CustomerProgramRequest extends FormRequest
             'values' => ['sometimes', 'array'],
             // Long enough for a voucher's list of chosen services (uuids).
             'values.*' => ['nullable', 'max:4000'],
+            // Where the program applies: everywhere, the app only, or the front desk only.
+            'values.channel' => ['nullable', Rule::in(\App\Support\ProgramChannel::VALUES)],
             'condition' => ['sometimes', 'nullable', 'array'],
             'condition.kind' => ['nullable', Rule::in(CustomerProgram::CONDITIONS)],
             'condition.value' => ['nullable', 'integer', 'min:1', 'max:100000000'],

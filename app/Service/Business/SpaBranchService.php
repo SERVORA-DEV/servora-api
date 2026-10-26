@@ -170,9 +170,7 @@ class SpaBranchService
         $time = $query['time'];
         $duration = (int) ($query['duration_minutes'] ?? 60);
 
-        $therapists = BookingPolicy::clientMayChooseTherapist($branch)
-            ? $this->spaBranchRepository->publicTherapistsForBranch($branch->id)
-            : collect();
+        $therapists = $this->choosableTherapists($branch, $query);
 
         $rows = $therapists->map(function ($staff) use ($date, $time, $duration) {
             $schedule = $this->availabilityService->staffMatchesSchedule($staff->id, $date, $time, $duration);
@@ -190,7 +188,93 @@ class SpaBranchService
             return ['staff' => $staff, 'available' => true, 'reason' => null];
         })->values();
 
+        // Who isn't free then, and when they next are that day.
+        $busyIds = $rows->where('available', false)->map(fn ($row) => $row['staff']->id)->all();
+        if ($busyIds) {
+            $next = app(\App\Service\Client\BookingSlotService::class)->nextFreeStarts($branch, $date, $time, $duration, $busyIds);
+            $rows = $rows->map(fn ($row) => $row['available'] ? $row : $row + ['next' => $next[$row['staff']->id] ?? null])->values();
+        }
+
         return PublicTherapistAvailabilityResource::collection($rows);
+    }
+
+    // The therapists a client may pick here (none when the spa doesn't let
+    // clients choose), narrowed to those who can perform what is being booked.
+    private function choosableTherapists(\App\Models\SpaBranch $branch, array $query): \Illuminate\Support\Collection
+    {
+        $therapists = BookingPolicy::clientMayChooseTherapist($branch)
+            ? $this->spaBranchRepository->publicTherapistsForBranch($branch->id)
+            : collect();
+
+        $serviceIds = $this->therapistServiceIds($query);
+        if ($serviceIds->isNotEmpty()) {
+            $qualifications = app(\App\Repository\Business\StaffServiceRepository::class);
+            $therapists = $therapists->filter(
+                fn ($staff) => $serviceIds->every(fn ($id) => $qualifications->isQualified($staff->id, $id))
+            )->values();
+        }
+
+        return $therapists;
+    }
+
+    // Backs GET /spas/{uuid}/therapists/free-times — public, no auth. For the
+    // booking flow's staff step, which comes before the date: each therapist
+    // who can do what is being booked, with the first day from `from` (within
+    // `days`) they have time free for the whole visit, and that day's free
+    // stretches (BookingSlotService::freeWindows). Bookable time only — the
+    // same answer the slots give — never their shift itself.
+    public function publicTherapistFreeTimes(string $uuid, array $query): array
+    {
+        $branch = $this->spaBranchRepository->publicFindByUuid($uuid, ['business', 'schedules']);
+        $therapists = $this->choosableTherapists($branch, $query);
+        $duration = (int) ($query['duration_minutes'] ?? 60);
+        $from = \Carbon\Carbon::parse($query['from'] ?? now()->toDateString());
+        $days = (int) ($query['days'] ?? 7);
+
+        $found = $therapists->mapWithKeys(fn ($staff) => [$staff->id => ['date' => null, 'windows' => []]])->all();
+        if ($therapists->isNotEmpty() && MarketplaceReadiness::isBookable($branch)) {
+            $slots = app(\App\Service\Client\BookingSlotService::class);
+            $policy = BookingPolicy::for($branch);
+            $left = $therapists->pluck('id')->all();
+            for ($i = 0; $i < $days && $left; $i++) {
+                $date = $from->copy()->addDays($i);
+                // Past how far ahead the spa takes bookings: nothing later is either.
+                $problem = BookingPolicy::startTimeProblem($policy, $date->copy()->endOfDay());
+                if ($problem && ! str_starts_with($problem, 'Please book at least')) {
+                    break;
+                }
+                foreach ($slots->freeWindows($branch, $date->toDateString(), $duration, $left) as $id => $windows) {
+                    if ($windows) {
+                        $found[$id] = ['date' => $date->toDateString(), 'windows' => $windows];
+                        $left = array_values(array_diff($left, [$id]));
+                    }
+                }
+            }
+        }
+
+        return ['data' => $therapists->map(fn ($staff) => ['uuid' => $staff->uuid] + $found[$staff->id])->values()->all()];
+    }
+
+    // The services (ids) a therapist has to be qualified for to take a booking
+    // of these variants / this package — only those someone performs; a
+    // facility-based one needs no therapist.
+    private function therapistServiceIds(array $query): \Illuminate\Support\Collection
+    {
+        $services = collect();
+
+        if (! empty($query['service_variant_uuids'])) {
+            \App\Models\ServiceVariant::with('service')->whereIn('uuid', $query['service_variant_uuids'])->get()
+                ->each(fn ($variant) => $services->push($variant->service));
+        }
+        if (! empty($query['package_uuid'])) {
+            \App\Models\Package::where('uuid', $query['package_uuid'])->first()
+                ?->packageServiceItems()->with('service')->get()
+                ->each(fn ($item) => $services->push($item->service));
+        }
+
+        return $services->filter()
+            ->filter(fn ($service) => \App\Support\ServiceKind::needsTherapist(\App\Support\ServiceKind::of($service->service_type)))
+            ->pluck('id')->unique()->values();
     }
 
     // Backs GET /spas/{uuid}/slots — public, no auth. A requested therapist
@@ -331,6 +415,14 @@ class SpaBranchService
         $payload['operating_status'] = 'Active';
 
         $model = $this->spaBranchRepository->create($payload);
+
+        // An email given with the branch is confirmed like one set later (the
+        // registration itself no longer asks for it).
+        if (! empty($payload['email'])) {
+            \App\Support\ContactEmail::afterSave($model, null);
+            $model->refresh();
+        }
+
         return new SpaBranchResource($model);
     }
 
@@ -403,8 +495,17 @@ class SpaBranchService
         }
 
         $wasStatus = $branch->operating_status;
+        $wasEmail = $branch->email;
 
         $model = $this->spaBranchRepository->update($uuid, $payload);
+
+        // A new email is confirmed by the button in the email Servora sends to it
+        // (unless it is the owner's own sign-up address).
+        if (array_key_exists('email', $payload)
+            && \App\Support\ContactEmail::normalize($payload['email']) !== \App\Support\ContactEmail::normalize($wasEmail)) {
+            \App\Support\ContactEmail::afterSave($model, $wasEmail);
+            $model->refresh();
+        }
 
         // Activate / Deactivate: the branch's manager should know.
         if (isset($payload['operating_status']) && $payload['operating_status'] !== $wasStatus) {
@@ -446,7 +547,27 @@ class SpaBranchService
             ], 422);
         }
 
-        $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
+        $branch = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
+
+        // Deleting it takes its visits and bills out of reach: an unpaid bill could
+        // never be collected. Settle those first, or switch the branch off instead.
+        $open = \App\Models\Appointment::where('spa_branch_id', $branch->id)
+            ->whereIn('status', [\App\Models\Appointment::STATUS_SCHEDULED, \App\Models\Appointment::STATUS_CHECKED_IN, \App\Models\Appointment::STATUS_IN_SERVICE])
+            ->count();
+        $unpaid = \App\Models\Billing::where('spa_branch_id', $branch->id)
+            ->whereNotIn('status', ['Paid', 'Cancelled', 'Refunded'])
+            ->count();
+        if ($open > 0 || $unpaid > 0) {
+            $parts = array_filter([
+                $open > 0 ? $open . ' open ' . ($open === 1 ? 'booking' : 'bookings') : null,
+                $unpaid > 0 ? $unpaid . ($unpaid === 1 ? ' unpaid bill' : ' unpaid bills') : null,
+            ]);
+
+            return response()->json([
+                'message' => "{$branch->branch_name} still has " . implode(' and ', $parts) . ". Finish or cancel them and collect the payments before deleting it, or switch the branch off instead.",
+            ], 422);
+        }
+
         $this->spaBranchRepository->delete($uuid);
         return true;
     }
@@ -465,6 +586,52 @@ class SpaBranchService
      * alone) — only submit() below does that, once Permit is complete too.
      * Same Unregistered/Rejected guard as every other draft-mutating step.
      */
+    /**
+     * "Resubmit documents" on a verified branch: its location and permit are
+     * to be changed, so it goes back to the registration steps (Servora checks it
+     * again when it is submitted). Everything on file stays, the name included.
+     * While it is in that state it is not Verified, so it is not listed or bookable
+     * until it is approved again.
+     */
+    public function startReverification(User $user, string $uuid, ?Request $request = null)
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+
+        if (! $business) {
+            return response()->json([
+                'message' => 'No spa business found for this account.',
+            ], 422);
+        }
+
+        $branch = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
+
+        if ($branch->verification_status !== 'Verified') {
+            return response()->json([
+                'message' => $branch->verification_status === 'Pending'
+                    ? 'This branch is being reviewed already. Its documents can change once that is done.'
+                    : 'This branch is already open for changes.',
+            ], 422);
+        }
+
+        $branch = $this->spaBranchRepository->update($uuid, [
+            'verification_status' => 'Unregistered',
+            'verified_by' => null,
+            'verified_at' => null,
+        ]);
+
+        $this->auditLogRepository->record(
+            $user->id,
+            'spa_branches',
+            $branch->id,
+            'Update',
+            ['verification_status' => 'Verified'],
+            ['verification_status' => 'Unregistered'],
+            $request
+        );
+
+        return new SpaBranchResource($branch);
+    }
+
     public function saveLocation(User $user, string $uuid, array $payload, ?Request $request = null)
     {
         $business = $this->spaBusinessRepository->findForUser($user);

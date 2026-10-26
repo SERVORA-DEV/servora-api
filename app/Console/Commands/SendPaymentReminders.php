@@ -61,8 +61,8 @@ class SendPaymentReminders extends Command
 
         $clients->appointment(
             $appointment,
-            'Payment pending',
-            "You have {$amount} left to pay for booking {$appointment->appointment_number} at {$appointment->branch?->branch_name}.",
+            'Payment reminder',
+            "You have a remaining balance of {$amount} for booking {$appointment->appointment_number} at {$appointment->branch?->branch_name}.",
             'Payment',
         );
         $staff->appointment(

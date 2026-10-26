@@ -35,16 +35,24 @@ use Illuminate\Support\Facades\DB;
 // bill is Paid in full (CommissionShare::paidFor). A service that is done but
 // not paid for yet, or whose payment was voided or fully refunded, counts for
 // nothing here until the bill is paid; the amount kept at completion is
-// untouched and appears, dated when the service was done, the moment it is.
-// The same goes for the home-service fee below.
+// untouched and appears the moment it is. It is credited at the later of the
+// time the service was done and the time the bill was paid (creditedAt()), so
+// a visit from yesterday paid today counts in today's pay period instead of
+// falling into one that may already have been paid out. The same goes for the
+// home-service fee below.
+//
+// Switching commission OFF stops anything new being earned (a service completed
+// while it is off keeps nothing), but what was already earned and kept stays
+// counted and shown: it is owed, and a pay run done while the switch is off
+// must not pay it as nothing.
 //
 // On top of commission, a home visit's flat home-service fee goes to the
 // therapist(s) who did it, in full (HomeServiceRules) — split equally when
 // more than one therapist completed services on that booking, and counted
 // even when commission itself is switched off.
 //
-// Used by the front-desk attendance roster, fill-in suggestions and the
-// "lowest earnings first" therapist rotation.
+// Used by the front-desk attendance roster and fill-in suggestions (who covers
+// for someone on leave: the lowest earner is suggested first).
 class CommissionCalculator
 {
     /** Staff Policies with defaults, or null when commission is turned off. */
@@ -148,10 +156,13 @@ class CommissionCalculator
      * staff id. Every id asked for comes back (0.0 when they've completed
      * nothing); an empty array when commission is off.
      *
+     * $dayStart: where "today" begins when it isn't midnight — a working day
+     * runs from the branch's opening (BusinessDay).
+     *
      * @param  int[]  $staffIds
      * @return array<int, array{today: float, week: float, period: float}>
      */
-    public function earnings(?SpaBusiness $business, array $staffIds, ?Carbon $now = null): array
+    public function earnings(?SpaBusiness $business, array $staffIds, ?Carbon $now = null, ?Carbon $dayStart = null): array
     {
         $policy = $this->policy($business);
         if (! $staffIds) {
@@ -159,15 +170,19 @@ class CommissionCalculator
         }
 
         $now = $now ?? now();
-        $todayStart = $now->copy()->startOfDay();
-        $periodStart = $this->periodStart($policy, $now);
-        $weekStart = $now->copy()->startOfWeek(Carbon::MONDAY);
+        $todayStart = $dayStart ? $dayStart->copy() : $now->copy()->startOfDay();
+        // The week and pay period are the day's own: a past Sunday's working
+        // day ends at Monday's opening but belongs to the week before.
+        $periodStart = $this->periodStart($policy, $todayStart);
+        $weekStart = $todayStart->copy()->startOfWeek(Carbon::MONDAY);
         // One query covering whichever window reaches furthest back.
         $from = $periodStart->copy()->min($todayStart)->min($weekStart);
 
         $homeFees = $this->homeFeeLines($staffIds, $from, $now)->filter(fn ($line) => $this->paid($line));
-        // Commission off and no home visits: nothing to show (callers hide the UI).
-        if (! $policy && $homeFees->isEmpty()) {
+        $lines = $this->lines($staffIds, $from, $now);
+        // Commission off, nothing earned before it was switched off and no home
+        // visits: nothing to show (callers hide the UI).
+        if (! $policy && $homeFees->isEmpty() && ! $lines->contains(fn ($line) => (float) ($line->commission_amount ?? 0) > 0)) {
             return [];
         }
 
@@ -189,14 +204,12 @@ class CommissionCalculator
             }
         };
 
-        if ($policy) {
-            foreach ($this->lines($staffIds, $from, $now) as $line) {
-                // Nothing shows until the client has paid for the visit.
-                if (! $this->paid($line)) {
-                    continue;
-                }
-                $credit((int) $line->staff_id, $this->amountFor($line, $policy), $line->completed_at);
+        foreach ($lines as $line) {
+            // Nothing shows until the client has paid for the visit.
+            if (! $this->paid($line)) {
+                continue;
             }
+            $credit((int) $line->staff_id, $this->amountFor($line, $policy), $line->completed_at);
         }
 
         foreach ($homeFees as $line) {
@@ -227,11 +240,9 @@ class CommissionCalculator
             $byDay[$day] = round(($byDay[$day] ?? 0) + $amount, 2);
         };
 
-        if ($policy) {
-            foreach ($this->lines([$staffId], $start, $end) as $line) {
-                if ($this->paid($line)) {
-                    $add($line->completed_at, $this->amountFor($line, $policy));
-                }
+        foreach ($this->lines([$staffId], $start, $end) as $line) {
+            if ($this->paid($line)) {
+                $add($line->completed_at, $this->amountFor($line, $policy));
             }
         }
 
@@ -262,7 +273,7 @@ class CommissionCalculator
         $serviceLines = $this->lines([$staffId], $start, $end, detailed: true);
         $lines = [];
 
-        if ($policy) {
+        {
             foreach ($serviceLines as $line) {
                 // Not paid for yet: done (it counts in services_done below),
                 // but nothing earned to show.
@@ -276,13 +287,13 @@ class CommissionCalculator
                 $base = (float) $line->subtotal;
                 // The kind it was worked out as: what was kept with the
                 // amount, else today's.
-                $type = $line->kept_type ?? CommissionShare::type($policy, (bool) ($line->is_home ?? false));
+                $type = $line->kept_type ?? ($policy ? CommissionShare::type($policy, (bool) ($line->is_home ?? false)) : 'percentage');
                 $lines[] = [
                     'at' => Carbon::parse($line->completed_at)->toIso8601String(),
                     'date' => Carbon::parse($line->completed_at)->format('Y-m-d'),
                     'kind' => $line->source_appointment_package_id !== null ? 'package' : 'service',
                     // Worked out at the home service commission rather than the plan's.
-                    'home' => CommissionShare::homeApplies($policy, (bool) ($line->is_home ?? false)),
+                    'home' => $policy ? CommissionShare::homeApplies($policy, (bool) ($line->is_home ?? false)) : false,
                     'service' => $line->service_name,
                     'client' => $name($line),
                     'appointment_uuid' => $line->appointment_uuid,
@@ -357,7 +368,7 @@ class CommissionCalculator
         foreach ($serviceLines as $line) {
             $id = (int) $line->staff_id;
             $result[$id]['services_done']++;
-            if (! $policy || ! $this->paid($line)) {
+            if (! $this->paid($line)) {
                 continue;
             }
             $amount = $this->amountFor($line, $policy);
@@ -403,6 +414,21 @@ class CommissionCalculator
         ];
     }
 
+    // When a bill was paid in full — null while it is not.
+    private const BILL_PAID_AT = "(select b.paid_at from billings b where b.appointment_id = %s and b.deleted_at is null order by b.id desc limit 1)";
+
+    /**
+     * SQL for when something done at $completed becomes commission: the time
+     * it was done, or the time its visit's bill was paid when that is later.
+     * $appointmentId is the SQL for the visit's id.
+     */
+    private function creditedAt(string $completed, string $appointmentId): string
+    {
+        $paid = sprintf(self::BILL_PAID_AT, $appointmentId);
+
+        return "(case when {$paid} > {$completed} then {$paid} else {$completed} end)";
+    }
+
     // The visit's bill status, for CommissionShare::paidFor — null when it has
     // no bill yet. A visit has one bill (made at checkout).
     private const BILL_STATUS = "(select b.status from billings b where b.appointment_id = %s and b.deleted_at is null order by b.id desc limit 1) as bill_status";
@@ -426,7 +452,8 @@ class CommissionCalculator
             ->where('ta.assignment_status', 'Completed')
             ->where('a.home_service_fee', '>', 0)
             ->groupBy('ta.staff_id', 'a.id', 'a.home_service_fee')
-            ->havingRaw('max(ta.completed_at) between ? and ?', [$from, $to])
+            ->havingRaw('max(ta.completed_at) <= ?', [$to])
+            ->havingRaw($this->creditedAt('max(ta.completed_at)', 'a.id') . ' between ? and ?', [$from, $to])
             ->when($detailed, fn ($q) => $q
                 ->leftJoin('clients as c', 'c.id', '=', 'a.client_id')
                 ->groupBy('a.uuid', 'a.appointment_number', 'c.first_name', 'c.last_name')
@@ -435,7 +462,7 @@ class CommissionCalculator
                 'ta.staff_id',
                 'a.home_service_fee',
                 DB::raw(sprintf(self::BILL_STATUS, 'a.id')),
-                DB::raw('max(ta.completed_at) as completed_at'),
+                DB::raw($this->creditedAt('max(ta.completed_at)', 'a.id') . ' as completed_at'),
                 DB::raw("(select count(distinct t2.staff_id) from therapist_assignments t2 join appointment_services s2 on s2.id = t2.appointment_service_id where s2.appointment_id = a.id and t2.assignment_status = 'Completed' and t2.staff_id is not null) as split"),
             ])
             ->get();
@@ -454,7 +481,9 @@ class CommissionCalculator
             ->join('appointment_services as s', 's.id', '=', 'ta.appointment_service_id')
             ->when($assignmentIds !== null, fn ($q) => $q->whereIn('ta.id', $assignmentIds), fn ($q) => $q->whereIn('ta.staff_id', $staffIds))
             ->where('ta.assignment_status', 'Completed')
-            ->when($from && $to, fn ($q) => $q->whereBetween('ta.completed_at', [$from, $to]))
+            ->when($from && $to, fn ($q) => $q
+                ->where('ta.completed_at', '<=', $to)
+                ->whereRaw($this->creditedAt('ta.completed_at', 's.appointment_id') . ' between ? and ?', [$from, $to]))
             ->join('appointments as a', 'a.id', '=', 's.appointment_id')
             ->when($detailed, fn ($q) => $q
                 ->leftJoin('clients as c', 'c.id', '=', 'a.client_id')
@@ -464,7 +493,8 @@ class CommissionCalculator
             ->addSelect([
                 'ta.id as assignment_id',
                 'ta.staff_id',
-                'ta.completed_at',
+                // Credited at (creditedAt()): when it was done, or when its bill was paid if later.
+                DB::raw($this->creditedAt('ta.completed_at', 's.appointment_id') . ' as completed_at'),
                 's.subtotal',
                 's.unit_price',
                 's.quantity',
@@ -489,12 +519,16 @@ class CommissionCalculator
             ->get();
     }
 
-    private function amountFor(object $line, array $policy): float
+    private function amountFor(object $line, ?array $policy): float
     {
         // What was earned when it was completed stands, whatever the rules
-        // say today.
+        // say today (and whether commission has been switched off since).
         if (($line->commission_amount ?? null) !== null) {
             return (float) $line->commission_amount;
+        }
+        // Commission is off and nothing was kept: nothing to work out from.
+        if ($policy === null) {
+            return 0.0;
         }
 
         // A package line may carry no price of its own (the package was paid

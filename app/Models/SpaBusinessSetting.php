@@ -23,6 +23,9 @@ class SpaBusinessSetting extends Model
             'accept_bank_transfer' => false,
             'gcash_number' => null,
             'paymaya_number' => null,
+            // Business Defaults → Refunds: a refund of a paid bill that fits
+            // none of the owner's refund policies (App\Support\RefundPolicyRule).
+            'allow_custom_refunds' => true,
         ],
 
         'staff_policy' => [
@@ -63,11 +66,6 @@ class SpaBusinessSetting extends Model
             'late_penalty_amount' => 0,
             'absent_penalty_enabled' => false,
             'absent_penalty_amount' => 0,
-
-            // Who the front desk's therapist rotation puts next: 'check_in' (first
-            // timed in, back of the line after each service) or 'lowest_earnings'
-            // (whoever has earned the least commission this pay period goes first).
-            'therapist_rotation' => 'check_in',
         ],
 
         'booking_defaults' => [
@@ -89,10 +87,19 @@ class SpaBusinessSetting extends Model
             'max_services_per_booking' => 3,
             // Bookings one client may have on the same day (client app).
             'max_bookings_per_client_per_day' => 1,
+            // Reservations accepted in one clock hour (a booking at 8:34 PM is in
+            // the 8 PM hour). 0 = no limit. See App\Support\HourlyCapacity.
+            'max_bookings_per_hour' => 0,
+            // How many hours ahead a booking has to be made (0 = any time from now on).
+            // The app is stopped by it; the front desk needs a reason to book sooner.
+            'booking_lead_time_hours' => 1,
             // The most service time one booking may hold, in minutes
             // (0 = no limit). The client app is refused past it; the front
             // desk is only warned — see BookingPolicy::serviceTimeProblem.
             'max_service_minutes_per_booking' => 0,
+            // A package, or one long service, may run past that limit; the limit
+            // then only stops more services being added. Off: nothing may.
+            'allow_booking_overlap' => false,
 
             'cancellation_window_hours' => 24,
             // What a missed booking does (Business Defaults → Missed bookings):
@@ -101,6 +108,11 @@ class SpaBusinessSetting extends Model
             // owner chooses; nobody is flagged unless the business asks for it.
             'no_show_policy' => 'warn',
             'no_show_suspend_after' => 3,
+            // How long after its booked time a reservation is still held
+            // (App\Support\ReservationHold): its staff can't be started on
+            // anyone else, and arriving in time keeps the booked place in the
+            // line. Arriving later puts the client at the back.
+            'reservation_grace_minutes' => 15,
 
 
             'queue_enabled' => true,

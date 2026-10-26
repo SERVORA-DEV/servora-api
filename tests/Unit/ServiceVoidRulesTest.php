@@ -52,6 +52,13 @@ class ServiceVoidRulesTest extends TestCase
         $this->assertStringStartsWith('Remove the discount on the bill first', (string) $problem);
     }
 
+    public function test_money_refunded_before_payment_closes_voiding(): void
+    {
+        $problem = ServiceVoidRules::problem('Completed', 'in_service', $this->bill(['credit' => 120]), false);
+
+        $this->assertSame('Money has been refunded off this bill already, so its services can no longer be voided.', $problem);
+    }
+
     public function test_the_only_charge_on_a_bill_cannot_be_voided(): void
     {
         $problem = ServiceVoidRules::problem('Completed', 'in_service', $this->bill(), true);

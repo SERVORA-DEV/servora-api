@@ -18,7 +18,7 @@ class ServiceVoidRules
     /**
      * @param  string  $serviceStatus  'Pending' | 'In Progress' | 'Completed' | 'Cancelled'
      * @param  string  $appointmentStatus  the visit's status
-     * @param  ?array{status: string, kept: float, discount: float}  $bill  null when the visit has no bill yet;
+     * @param  ?array{status: string, kept: float, discount: float, credit?: float}  $bill  null when the visit has no bill yet (credit: refunded before payment);
      *         kept = money paid and not refunded or voided
      * @param  bool  $leavesNothing  voiding it would leave the visit with nothing to charge
      */
@@ -46,6 +46,9 @@ class ServiceVoidRules
         }
         if ($bill['discount'] > 0.004) {
             return 'Remove the discount on the bill first — it was worked out from the current total.';
+        }
+        if (($bill['credit'] ?? 0) > 0.004) {
+            return 'Money has been refunded off this bill already, so its services can no longer be voided.';
         }
         if ($leavesNothing) {
             return 'This is the only charge on the bill, so nothing would be left to bill.';

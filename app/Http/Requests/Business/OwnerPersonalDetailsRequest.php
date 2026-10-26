@@ -34,8 +34,9 @@ class OwnerPersonalDetailsRequest extends FormRequest
             'gender' => ['required', Rule::in(['Male', 'Female', 'Prefer not to say'])],
             'birth_date' => 'required|date|before:today',
 
+            // Optional: a phone number is no part of the verification.
             'phone_number' => [
-                'required',
+                'nullable',
                 'string',
                 'regex:/^\+[1-9]\d{6,14}$/',
                 Rule::unique('users', 'phone_number')->ignore($userId),

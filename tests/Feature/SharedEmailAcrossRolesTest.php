@@ -60,6 +60,10 @@ class SharedEmailAcrossRolesTest extends TestCase
             'terms_accepted' => true,
         ])->assertCreated();
 
+        // The owner's account is created when the link in the email is pressed.
+        $this->assertSame(1, User::where('email', self::EMAIL)->count());
+        $this->get(Mail::sent(\App\Mail\RegistrationLinkMail::class)->first()->url)->assertRedirect();
+
         $this->assertSame(2, User::where('email', self::EMAIL)->count());
     }
 

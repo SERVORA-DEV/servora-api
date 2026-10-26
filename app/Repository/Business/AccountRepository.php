@@ -144,6 +144,9 @@ class AccountRepository
             if (! \App\Service\Business\PolicyGate::ready()) {
                 unset($filtered['policy_override']);
             }
+            if (! \App\Models\BillingAdjustment::ready()) {
+                unset($filtered['payment_adjust']);
+            }
             if ($filtered) {
                 $account->permission()->update($filtered);
                 // A query update fires no model event — drop the cached row.

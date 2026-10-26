@@ -306,15 +306,23 @@ class PlanFitService
     {
         $branches = $this->branches($business);
         $upcoming = Appointment::whereIn('spa_branch_id', $branches->pluck('id'))
-            ->whereIn('status', self::UPCOMING)
-            ->whereDate('appointment_date', '>=', $effectiveAt->toDateString())
+            ->where(fn ($q) => $q
+                ->where(fn ($s) => $s->whereIn('status', self::UPCOMING)->whereDate('appointment_date', '>=', $effectiveAt->toDateString()))
+                // A visit already under way is not "upcoming" but cannot be cut off either.
+                ->orWhereIn('status', [Appointment::STATUS_CHECKED_IN, Appointment::STATUS_IN_SERVICE]))
+            ->selectRaw('spa_branch_id, COUNT(*) as total')
+            ->groupBy('spa_branch_id')
+            ->pluck('total', 'spa_branch_id');
+        // Nor can a bill that is still to be paid.
+        $unpaid = \App\Models\Billing::whereIn('spa_branch_id', $branches->pluck('id'))
+            ->whereNotIn('status', ['Paid', 'Cancelled', 'Refunded'])
             ->selectRaw('spa_branch_id, COUNT(*) as total')
             ->groupBy('spa_branch_id')
             ->pluck('total', 'spa_branch_id');
 
         return [
             $branches->map(fn (SpaBranch $b) => [
-                'id' => $b->id, 'uuid' => $b->uuid, 'name' => $b->branch_name, 'upcoming' => (int) ($upcoming[$b->id] ?? 0),
+                'id' => $b->id, 'uuid' => $b->uuid, 'name' => $b->branch_name, 'upcoming' => (int) ($upcoming[$b->id] ?? 0) + (int) ($unpaid[$b->id] ?? 0),
             ]),
             $this->accounts($business)->map(fn (User $u) => [
                 'id' => $u->id, 'uuid' => $u->uuid,

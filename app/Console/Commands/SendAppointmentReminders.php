@@ -61,9 +61,9 @@ class SendAppointmentReminders extends Command
         if (! $alreadyKnows) {
             $notifier->appointment(
                 $appointment,
-                'Appointment reminder',
-                "Your booking {$appointment->appointment_number} at {$appointment->branch?->branch_name} is "
-                    . $startsAt->diffForHumans(['parts' => 1]) . ' — ' . $startsAt->format('D, M j \\a\\t g:i A') . '.',
+                'Booking reminder',
+                "Just a reminder: your booking {$appointment->appointment_number} at {$appointment->branch?->branch_name} is on "
+                    . $startsAt->format('D, M j \\a\\t g:i A') . ' (' . $startsAt->diffForHumans(['parts' => 1]) . '). See you soon!',
             );
         }
 

@@ -50,6 +50,20 @@ class BusinessService
     // Only a currently-Verified business can be suspended — mirrors the
     // "only a pending X can be approved/rejected" guard used throughout
     // OwnerVerificationService/BranchRegistrationService.
+    /** @return int[] */
+    private function branchIdsOf(\App\Models\SpaBusiness $business): array
+    {
+        return \App\Models\SpaBranch::where('spa_business_id', $business->id)->pluck('id')->all();
+    }
+
+    // What suspending it would reach, shown before the administrator confirms.
+    public function suspensionImpact(string $uuid): array
+    {
+        $business = $this->businessRepository->findForList($uuid);
+
+        return ['data' => \App\Support\Suspension::impact($this->branchIdsOf($business))];
+    }
+
     public function suspend(User $admin, string $uuid, string $reason, ?Request $request = null)
     {
         $business = $this->businessRepository->findForList($uuid);
@@ -80,6 +94,8 @@ class BusinessService
         if ($business->owner) {
             $this->notificationService->businessSuspended($business, $business->owner, $reason);
         }
+        // The clients booked for later are told it is on hold.
+        \App\Support\Suspension::tellClients($this->branchIdsOf($business));
 
         return new BusinessResource($this->businessRepository->findForList($uuid));
     }
@@ -114,6 +130,8 @@ class BusinessService
         if ($business->owner) {
             $this->notificationService->businessReactivated($business, $business->owner);
         }
+        // The clients who were told their booking was on hold are told it is on.
+        \App\Support\Suspension::tellClientsBack($this->branchIdsOf($business));
 
         return new BusinessResource($this->businessRepository->findForList($uuid));
     }

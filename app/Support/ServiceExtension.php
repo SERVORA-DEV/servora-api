@@ -35,6 +35,49 @@ class ServiceExtension
     }
 
     /**
+     * Extra time in the owner's steps (Settings → Booking & Policies → Service
+     * extension: "+15 min", up to the longest extension), for when the menu has
+     * no longer length — or as well as the lengths it has. Charged by the
+     * minute at the rate of the length it is on (₱650 for 60 min → ₱10.83 a
+     * minute → +15 min is ₱162.50).
+     *
+     * @param  int  $currentMinutes  the length it is running at now
+     * @param  float  $perMinute  what one minute of this service costs
+     * @param  int  $step  the owner's extension step, in minutes
+     * @param  int  $max  the longest it may be extended in all (0 = no limit)
+     * @param  int  $already  minutes it has been extended by so far
+     * @return list<array{minutes: int, extra_minutes: int, extra_price: float}>
+     */
+    public static function steps(int $currentMinutes, float $perMinute, int $step, int $max, int $already): array
+    {
+        if ($step <= 0 || $perMinute <= 0) {
+            return [];
+        }
+        // With no limit set, a handful of steps is enough to choose from.
+        $count = $max > 0 ? intdiv(max(0, $max - $already), $step) : 4;
+
+        $steps = [];
+        for ($k = 1; $k <= min($count, 8); $k++) {
+            $extra = $k * $step;
+            $steps[] = ['minutes' => $currentMinutes + $extra, 'extra_minutes' => $extra, 'extra_price' => self::timePrice($perMinute, $extra)];
+        }
+
+        return $steps;
+    }
+
+    /** What $minutes of extra time costs at $perMinute, to the centavo. */
+    public static function timePrice(float $perMinute, int $minutes): float
+    {
+        return round($perMinute * $minutes, 2);
+    }
+
+    /** Whether $minutes is a whole number of the owner's steps. */
+    public static function isStep(int $minutes, int $step): bool
+    {
+        return $step > 0 && $minutes > 0 && $minutes % $step === 0;
+    }
+
+    /**
      * Why this service can't be extended at all — null when it can.
      *
      * A service that came with a package can be: the package keeps its price

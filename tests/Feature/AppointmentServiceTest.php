@@ -420,6 +420,79 @@ class AppointmentServiceTest extends TestCase
         $this->assertSame('In Progress', $line->fresh()->status);
     }
 
+    public function test_a_service_cannot_start_until_the_client_is_checked_in(): void
+    {
+        $appointment = $this->createAppointment();
+        $line = $this->addService($appointment);
+        $this->service->assignTherapist($this->owner, $line->uuid, ['staff_uuid' => $this->therapistA->uuid]);
+
+        $refused = $this->service->startService($this->owner, $line->uuid);
+        $this->assertInstanceOf(JsonResponse::class, $refused);
+        $this->assertSame(422, $refused->getStatusCode());
+        $this->assertStringContainsString('Check the client in', $this->msg($refused));
+        $this->assertSame('Pending', $line->fresh()->status);
+
+        $this->service->checkIn($this->owner, $appointment->uuid);
+        $started = $this->service->startService($this->owner, $line->uuid);
+        $this->assertNotInstanceOf(JsonResponse::class, $started, $this->msg($started));
+    }
+
+    public function test_a_client_with_a_started_service_cannot_be_skipped(): void
+    {
+        $line = $this->checkedInWith($this->variantOf(['facility_required' => false]));
+        $appointment = $line->appointment;
+        $this->service->assignTherapist($this->owner, $line->uuid, ['staff_uuid' => $this->therapistA->uuid]);
+
+        // Waiting with nothing started: skipping is allowed...
+        $skipped = $this->service->skipQueue($this->owner, $appointment->uuid);
+        $this->assertNotInstanceOf(JsonResponse::class, $skipped, $this->msg($skipped));
+        $this->service->recallQueue($this->owner, $appointment->uuid);
+
+        // ...but not once one of their services has begun.
+        $line->update(['status' => 'In Progress']);
+        $refused = $this->service->skipQueue($this->owner, $appointment->uuid);
+        $this->assertInstanceOf(JsonResponse::class, $refused);
+        $this->assertStringContainsString('already started', $this->msg($refused));
+    }
+
+    public function test_calling_is_only_for_a_booked_client_who_has_not_checked_in(): void
+    {
+        $line = $this->checkedInWith($this->variantOf(['facility_required' => false]));
+
+        $refused = $this->service->callQueue($this->owner, $line->appointment->uuid);
+        $this->assertInstanceOf(JsonResponse::class, $refused);
+        $this->assertStringContainsString('not checked in yet', $this->msg($refused));
+    }
+
+    // The services a client has with the same staff in the same facility are one
+    // sitting: started together, completed together. Another staff member's
+    // service on the same visit is never part of it.
+    public function test_one_sitting_starts_and_completes_together(): void
+    {
+        $variant = $this->variantOf(['facility_required' => false]);
+        $first = $this->checkedInWith($variant);
+        $appointment = $first->appointment;
+        $second = $this->addService($appointment, $variant);
+        $other = $this->addService($appointment, $variant);
+
+        foreach ([$first, $second] as $line) {
+            $this->service->assignTherapist($this->owner, $line->uuid, ['staff_uuid' => $this->therapistA->uuid, 'facility_uuid' => $this->facilityA->uuid]);
+        }
+        $this->service->assignTherapist($this->owner, $other->uuid, ['staff_uuid' => $this->therapistB->uuid, 'facility_uuid' => $this->facilityA->uuid]);
+
+        $started = $this->service->startService($this->owner, $first->uuid);
+        $this->assertNotInstanceOf(JsonResponse::class, $started, $this->msg($started));
+        $this->assertSame('In Progress', $first->fresh()->status);
+        $this->assertSame('In Progress', $second->fresh()->status, 'the same staff in the same facility start together');
+        $this->assertSame('Pending', $other->fresh()->status, 'a service of other staff is not started with it');
+
+        $done = $this->service->completeService($this->owner, $second->uuid);
+        $this->assertNotInstanceOf(JsonResponse::class, $done, $this->msg($done));
+        $this->assertSame('Completed', $first->fresh()->status, 'completing one completes the sitting');
+        $this->assertSame('Completed', $second->fresh()->status);
+        $this->assertSame('Pending', $other->fresh()->status);
+    }
+
     public function test_an_optional_facility_does_not_stop_a_service_starting(): void
     {
         $line = $this->checkedInWith($this->variantOf(['facility_required' => false]));

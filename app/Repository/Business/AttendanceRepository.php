@@ -105,14 +105,16 @@ class AttendanceRepository
 
     // One row per (staff, date) — attendances_staff_date_unique — so marking
     // a day twice always updates the existing row rather than duplicating it.
-    public function upsert(int $staffId, string $date, array $payload)
+    // $withStaff: false when only the row itself is wanted (a bulk fill of a whole
+    // branch), so the staff member and branch are not read again for each one.
+    public function upsert(int $staffId, string $date, array $payload, bool $withStaff = true)
     {
         $model = Attendance::updateOrCreate(
             ['staff_id' => $staffId, 'attendance_date' => $date],
             $payload
         );
 
-        return $model->load('staff.branch');
+        return $withStaff ? $model->load('staff.branch') : $model;
     }
 
     public function findByUuid(string $uuid)

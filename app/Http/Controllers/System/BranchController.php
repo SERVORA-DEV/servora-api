@@ -26,6 +26,11 @@ class BranchController extends Controller
         return $this->branchService->getBranch($uuid);
     }
 
+    public function suspensionImpact(string $uuid)
+    {
+        return $this->branchService->suspensionImpact($uuid);
+    }
+
     public function suspend(SuspendReasonRequest $request, string $uuid)
     {
         return $this->branchService->suspend($request->user(), $uuid, $request->validated()['reason'], $request);

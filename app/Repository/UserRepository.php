@@ -25,6 +25,23 @@ class UserRepository
             ->first();
     }
 
+    // What someone types to sign in: an email, or (a staff login only) the
+    // username the owner's Staff Accounts gave it. Usernames are not case
+    // sensitive. An owner, an administrator or a client signs in by email.
+    public function findByLogin(string $login, string $audience)
+    {
+        $login = trim($login);
+        if (str_contains($login, '@')) {
+            return $this->findByEmail($login, $audience);
+        }
+
+        return User::with('staff.branch')
+            ->whereRaw('lower(username) = ?', [mb_strtolower($login)])
+            ->where('audience', $audience)
+            ->whereIn('role', ['manager', 'front_officer'])
+            ->first();
+    }
+
     public function create(array $payload)
     {
         return User::create($payload);

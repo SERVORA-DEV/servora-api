@@ -24,31 +24,13 @@ use Illuminate\Support\Collection;
 // assign out of turn. Nothing here blocks an assignment; it only says who
 // would be next if nobody had a preference.
 //
-// The owner picks the order in Settings → Staff Policies (therapist_rotation):
-// 'check_in' is the fair-turn line above; 'lowest_earnings' puts whoever has
-// earned the least commission this pay period first (CommissionCalculator),
-// so a therapist filling in for extra income actually gets clients. Ties —
-// and 'lowest_earnings' with commission turned off — fall back to the
-// check-in line.
+// There is one order for every spa: time-in order. The earnings each person
+// has made are carried along for the front desk to see, but never decide who
+// is next.
 class TherapistQueueCalculator
 {
-    public const MODE_CHECK_IN = 'check_in';
-    public const MODE_LOWEST_EARNINGS = 'lowest_earnings';
-
     public function __construct(private CommissionCalculator $commissionCalculator)
     {
-    }
-
-    /** The owner's rotation mode for a branch's business. */
-    public function modeFor(?SpaBusiness $business): string
-    {
-        $business?->loadMissing('settings');
-        $policy = $business?->settings?->section('staff_policy') ?? [];
-        $mode = $policy['therapist_rotation'] ?? self::MODE_CHECK_IN;
-
-        return $mode === self::MODE_LOWEST_EARNINGS && $this->commissionCalculator->policy($business)
-            ? self::MODE_LOWEST_EARNINGS
-            : self::MODE_CHECK_IN;
     }
 
     /**
@@ -78,7 +60,7 @@ class TherapistQueueCalculator
         $staffIds = $therapists->pluck('id')->all();
 
         $attendanceByStaffId = Attendance::whereIn('staff_id', $staffIds)
-            ->where('attendance_date', $date)
+            ->where('attendance_date', \App\Support\BusinessDay::attendanceDate($branchId, $date))
             ->get()
             ->keyBy('staff_id');
 
@@ -86,11 +68,10 @@ class TherapistQueueCalculator
         $activeStatusByStaffId = $this->activeAssignmentStatus($staffIds, $date);
 
         $business = SpaBranch::with('business.settings')->find($branchId)?->business;
-        $mode = $this->modeFor($business);
         $earnings = $this->commissionCalculator->earnings($business, $staffIds);
 
         [$onFloor, $offFloor] = $therapists
-            ->map(function (Staff $staff) use ($attendanceByStaffId, $lastCompletedByStaffId, $activeStatusByStaffId, $earnings, $mode) {
+            ->map(function (Staff $staff) use ($attendanceByStaffId, $lastCompletedByStaffId, $activeStatusByStaffId, $earnings) {
                 $attendance = $attendanceByStaffId->get($staff->id);
 
                 // On the floor = timed in and not yet timed out. Timing out is
@@ -115,17 +96,12 @@ class TherapistQueueCalculator
                     // null when commission is turned off.
                     'earned_today' => $earnings[$staff->id]['today'] ?? null,
                     'earned_period' => $earnings[$staff->id]['period'] ?? null,
-                    'rotation_mode' => $mode,
                 ];
             })
             ->partition(fn (array $row) => $row['in_queue']);
 
         return $onFloor
             ->sortBy([
-                // 'lowest_earnings' mode: least commission this pay period first.
-                fn (array $a, array $b) => $mode === self::MODE_LOWEST_EARNINGS
-                    ? ($a['earned_period'] ?? 0) <=> ($b['earned_period'] ?? 0)
-                    : 0,
                 // The whole rotation rule, in one key. A therapist who hasn't
                 // finished anything today sorts by when they timed in; one who
                 // has sorts by when they last finished — which is exactly

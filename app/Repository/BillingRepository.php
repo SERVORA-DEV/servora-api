@@ -23,11 +23,14 @@ class BillingRepository
 
     // Billing history for the business owner's subscription page — newest
     // first, regardless of subscription status, so past invoices stay
-    // visible even after a plan expires or is cancelled.
+    // visible even after a plan expires or is cancelled. Only what the owner paid
+    // Servora: the bills for their own clients' appointments are the spa's takings,
+    // not a subscription charge, and don't belong in this history or its totals.
     public function findForBusiness(int $spaBusinessId, int $limit = 25)
     {
         return Billing::with('subscription.plan')
             ->where('spa_business_id', $spaBusinessId)
+            ->where('billing_type', 'Subscription')
             ->orderByDesc('issued_at')
             ->limit($limit)
             ->get();

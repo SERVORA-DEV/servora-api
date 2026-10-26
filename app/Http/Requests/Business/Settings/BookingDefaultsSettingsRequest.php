@@ -39,11 +39,15 @@ class BookingDefaultsSettingsRequest extends FormRequest
             'max_advance_booking_days' => 'sometimes|required|integer|min:1|max:365',
             'max_services_per_booking' => 'sometimes|required|integer|min:1|max:20',
             'max_bookings_per_client_per_day' => 'sometimes|required|integer|min:1|max:10',
+            'max_bookings_per_hour' => 'sometimes|required|integer|min:0|max:50',
+            'booking_lead_time_hours' => 'sometimes|required|integer|min:0|max:168',
             'max_service_minutes_per_booking' => 'sometimes|required|integer|min:0|max:1440',
+            'allow_booking_overlap' => 'sometimes|boolean',
 
             'cancellation_window_hours' => 'sometimes|required|integer|min:0|max:720',
             'no_show_policy' => 'sometimes|required|in:none,warn,suspend',
             'no_show_suspend_after' => 'sometimes|required|integer|min:1|max:20',
+            'reservation_grace_minutes' => 'sometimes|required|integer|min:0|max:120',
 
 
             'queue_enabled' => 'sometimes|boolean',

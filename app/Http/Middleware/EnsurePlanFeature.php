@@ -24,11 +24,17 @@ class EnsurePlanFeature
         private SpaBusinessRepository $spaBusinessRepository,
     ) {}
 
-    public function handle(Request $request, Closure $next, string $feature): Response
+    // 'plan.feature:reward_access,open': for work that is already open (a bill being
+    // paid, a visit being served), the feature keeps working for a short while after
+    // the plan ends (AppCache::planAllowsOpenWork).
+    public function handle(Request $request, Closure $next, string $feature, ?string $mode = null): Response
     {
         $business = $request->user() ? $this->spaBusinessRepository->findForUser($request->user()) : null;
 
-        if (! $business || ! AppCache::planAllows($business->id, $feature)) {
+        $allowed = $business && ($mode === 'open'
+            ? AppCache::planAllowsOpenWork($business->id, $feature)
+            : AppCache::planAllows($business->id, $feature));
+        if (! $allowed) {
             return response()->json([
                 'message' => 'Your plan doesn\'t include ' . (self::NAMES[$feature] ?? 'this feature') . '. Upgrade to use them.',
                 'code' => 'PLAN_FEATURE_REQUIRED',

@@ -3,6 +3,9 @@
 namespace App\Http\Resources;
 
 use App\Models\Appointment;
+use App\Models\AppointmentServiceItem;
+use App\Service\Business\BillingAdjustmentService;
+use App\Service\Business\BillingService;
 use App\Service\Client\BookingPolicy;
 use App\Support\FinishedVisit;
 use Illuminate\Http\Request;
@@ -20,6 +23,18 @@ class BillingResource extends JsonResource
         $this->appointmentContext = $appointment;
 
         return $this;
+    }
+
+    /** @return list<array{service_uuid: string, charge: float, paid: float, refunded: float, refundable: float}> */
+    private function serviceRefunds(): array
+    {
+        $plan = app(BillingService::class)->serviceRefunds($this->resource);
+
+        return $this->appointment->services
+            ->filter(fn ($s) => isset($plan[$s->id]))
+            ->map(fn ($s) => ['service_uuid' => $s->uuid] + $plan[$s->id])
+            ->values()
+            ->all();
     }
 
     /**
@@ -40,6 +55,8 @@ class BillingResource extends JsonResource
             'discount_value' => $this->discount_value !== null ? (float) $this->discount_value : null,
             'discount_amount' => (float) $this->discount_amount,
             'discount_reason' => $this->discount_reason,
+            // Refunded before payment, on top of the discount (BillAdjustment "credit").
+            'credit_amount' => (float) ($this->credit_amount ?? 0),
             // Where the discount came from: a customer program the front desk
             // picked, one of the client's vouchers, or typed in (null).
             'discount_source' => $this->client_voucher_id ? 'voucher' : ($this->discount_program_id ? 'program' : null),
@@ -70,6 +87,27 @@ class BillingResource extends JsonResource
             // billing (loaded without these relations) stays lean.
             'appointment' => new AppointmentResource($this->whenLoaded('appointment')),
             'payments' => PaymentResource::collection($this->whenLoaded('payments')),
+            // What of the money belongs to each service, and what can still be
+            // handed back for it (App\Support\ServiceRefunds) — for the
+            // checkout, which has the visit's services loaded.
+            'service_refunds' => $this->when(
+                $this->relationLoaded('appointment') && $this->appointment?->relationLoaded('services') && $this->relationLoaded('payments'),
+                fn () => $this->serviceRefunds(),
+            ),
+            // Whether a refund can be for a single service on this server yet.
+            'service_refunds_enabled' => AppointmentServiceItem::tracksRefunds(),
+            // Changes after the bill was paid (a voucher afterwards, a refund),
+            // applied or waiting for approval, and whether this person can
+            // make one and what happens when they do (BillingAdjustmentService).
+            // Only on the bill page, like service_refunds.
+            'adjustments' => $this->when(
+                $this->relationLoaded('appointment') && $this->appointment?->relationLoaded('services') && $this->relationLoaded('payments'),
+                fn () => app(BillingAdjustmentService::class)->forBill($this->resource, $request->user()),
+            ),
+            'adjust' => $this->when(
+                $this->relationLoaded('appointment') && $this->appointment?->relationLoaded('services') && $this->relationLoaded('payments'),
+                fn () => app(BillingAdjustmentService::class)->optionsFor($this->resource, $request->user()),
+            ),
         ];
     }
 }

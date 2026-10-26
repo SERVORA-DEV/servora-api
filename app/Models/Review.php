@@ -33,4 +33,27 @@ class Review extends Model
     {
         return $this->belongsTo(Client::class);
     }
+
+    // A client rates a spa once. Reviews hang off a visit and are shown per
+    // branch (its page, its rating), so "a spa" is the branch: one review per
+    // client per branch, from whichever visit they rated it on.
+    public static function ratedBranch(int $clientId, int $branchId): bool
+    {
+        return self::where('client_id', $clientId)
+            ->whereHas('appointment', fn ($q) => $q->where('spa_branch_id', $branchId))
+            ->exists();
+    }
+
+    // The same check as a column on an appointments query (`spa_rated`), so
+    // a list of bookings needs no query per booking.
+    public static function ratedBranchColumn(): \Illuminate\Database\Query\Builder
+    {
+        return self::query()->toBase()
+            ->selectRaw('1')
+            ->join('appointments as rated_visit', 'rated_visit.id', '=', 'reviews.appointment_id')
+            ->whereColumn('reviews.client_id', 'appointments.client_id')
+            ->whereColumn('rated_visit.spa_branch_id', 'appointments.spa_branch_id')
+            ->whereNull('reviews.deleted_at')
+            ->limit(1);
+    }
 }

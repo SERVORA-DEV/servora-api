@@ -106,7 +106,7 @@ class AuditLogRepository
             // A login's highest level anywhere (a sign-in is at no one branch).
             'actor_level' => $user->role === 'business_owner'
                 ? 'owner'
-                : (in_array(\App\Models\AccountBranch::MANAGEMENT, \App\Support\AccountScope::levels($user), true) ? 'management' : 'operation'),
+                : (\App\Models\AccountBranch::runsBranch(\App\Support\AccountScope::levels($user)) ? 'management' : 'operation'),
         ];
     }
 

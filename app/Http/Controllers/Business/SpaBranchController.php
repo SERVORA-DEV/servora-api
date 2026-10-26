@@ -10,6 +10,7 @@ use App\Http\Requests\Business\SpaBranchPermitRequest;
 use App\Http\Requests\Client\PublicBookingSlotsRequest;
 use App\Http\Requests\Client\PublicTherapistAvailabilityRequest;
 use App\Http\Requests\Client\PublicTherapistDaysOffRequest;
+use App\Http\Requests\Client\PublicTherapistFreeTimesRequest;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -62,6 +63,13 @@ class SpaBranchController extends Controller
         return $this->spaBranchService->publicTherapistAvailability($uuid, $request->validated());
     }
 
+    // Public, unauthenticated — the booking flow's staff step (before the
+    // date): when each therapist who can do the visit is next free.
+    public function publicTherapistFreeTimes(PublicTherapistFreeTimesRequest $request, string $uuid)
+    {
+        return $this->spaBranchService->publicTherapistFreeTimes($uuid, $request->validated());
+    }
+
     // Public, unauthenticated — the bookable start times on one day, for
     // the client booking and reschedule screens' time chips.
     public function publicSlots(PublicBookingSlotsRequest $request, string $uuid)
@@ -103,13 +111,23 @@ class SpaBranchController extends Controller
 
     public function destroy(Request $request, string $uuid)
     {
-        $this->spaBranchService->deleteSpaBranch($request->user(), $uuid);
+        $result = $this->spaBranchService->deleteSpaBranch($request->user(), $uuid);
+        if ($result instanceof \Illuminate\Http\JsonResponse) {
+            return $result;
+        }
+
         return response()->json(['message' => 'Deleted successfully'], 200);
     }
     
     public function restore(string $uuid)
     {
         return $this->spaBranchService->restoreSpaBranch($uuid);
+    }
+
+    // POST business/branch/{uuid}/reverify — "Resubmit documents" on a verified branch.
+    public function reverify(\Illuminate\Http\Request $request, string $uuid)
+    {
+        return $this->spaBranchService->startReverification($request->user(), $uuid, $request);
     }
 
     public function saveLocation(SpaBranchLocationRequest $request, string $uuid)
