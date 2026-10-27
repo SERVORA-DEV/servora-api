@@ -44,6 +44,45 @@ class LegalTermsTest extends TestCase
         $this->assertStringNotContainsString('{email}', $text);
     }
 
+    public function test_each_document_has_a_short_summary_and_tagged_sections(): void
+    {
+        $documents = $this->getJson('/api/legal')->assertOk()->json('data.documents');
+
+        foreach (['terms', 'privacy'] as $key) {
+            $this->assertNotEmpty($documents[$key]['summary'], "{$key} has no summary");
+
+            foreach ($documents[$key]['sections'] as $section) {
+                $this->assertContains($section['audience'], ['all', 'client', 'owner']);
+            }
+        }
+
+        $audiences = collect($documents['terms']['sections'])->pluck('audience', 'heading');
+        $this->assertSame('owner', $audiences['Spa owners: verification']);
+        $this->assertSame('client', $audiences['Clients: bookings and visits']);
+    }
+
+    public function test_no_placeholder_reaches_readers_once_the_operator_details_are_set(): void
+    {
+        config(['legal.operator' => [
+            'name' => 'Servora Inc.', 'address' => 'Davao City', 'email' => 'hello@example.com',
+            'dpo' => 'A. Dela Cruz', 'venue' => 'Davao City',
+        ]]);
+
+        $this->assertSame([], \App\Support\LegalDocuments::unresolved());
+        $this->artisan('legal:check')->assertSuccessful();
+    }
+
+    public function test_the_check_names_every_placeholder_still_showing(): void
+    {
+        config(['legal.operator' => [
+            'name' => '[Company name]', 'address' => 'Davao City', 'email' => 'hello@example.com',
+            'dpo' => 'A. Dela Cruz', 'venue' => 'Davao City',
+        ]]);
+
+        $this->assertContains('terms intro: [Company name]', \App\Support\LegalDocuments::unresolved());
+        $this->artisan('legal:check')->assertFailed();
+    }
+
     public function test_an_owner_cannot_register_without_agreeing(): void
     {
         Notification::fake();

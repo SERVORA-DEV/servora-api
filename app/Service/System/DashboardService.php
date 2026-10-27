@@ -109,6 +109,12 @@ class DashboardService
                 'plans_overdue' => $this->subscriptionRepository->countOverdue(0)
                     - $this->subscriptionRepository->countOverdue((int) SystemSetting::current()->subscription_grace_period_days),
                 'trials_ending' => $trials->filter(fn ($s) => $s->expires_at && $s->expires_at->lte($now->copy()->addDays(self::TRIAL_ENDING_DAYS)))->count(),
+                // How long the oldest waiting request has been waiting, as the
+                // time it was last changed to Pending (a row is made Unregistered
+                // and moves to Pending when the owner submits it). Null when
+                // nothing is waiting.
+                'oldest_owner_verification_at' => $this->isoOrNull(OwnerIdentityVerification::where('status', 'Pending')->min('updated_at')),
+                'oldest_branch_registration_at' => $this->isoOrNull(SpaBranch::where('verification_status', 'Pending')->min('updated_at')),
             ],
             'kpis' => [
                 'total_businesses' => [
@@ -294,6 +300,12 @@ class DashboardService
     {
         return Subscription::where('status', 'Active')
             ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', Carbon::now()));
+    }
+
+    /** A database timestamp (or null) as an ISO-8601 string with its zone, for the client to read. */
+    private function isoOrNull(mixed $timestamp): ?string
+    {
+        return $timestamp ? Carbon::parse($timestamp)->toIso8601String() : null;
     }
 
     private function deltaPct(int|float $current, int|float $previous): float
