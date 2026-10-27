@@ -184,6 +184,13 @@ class AttendanceStatusCalculator
         $now = $now ?: Carbon::now();
         $graceMinutes ??= self::LATE_GRACE_MINUTES;
         $schedule = $this->matchSchedule($staffSchedules, $date);
+        // Covering for someone (FrontOfficeAttendanceService::checkIn): their
+        // shift is the one worked — its start, its end, the overtime past it —
+        // and the cover is a fill-in, so never late for it. Someone just filling
+        // in for lack of staff has no shift but their own, if any.
+        if ($coveredShift = $this->coveredShift($attendance, $date)) {
+            $schedule = $coveredShift;
+        }
         $isDayOff = (bool) ($schedule?->is_day_off);
 
         $scheduledStart = ($schedule && ! $isDayOff && $schedule->start_time)
@@ -323,6 +330,22 @@ class AttendanceStatusCalculator
         $schedule = $this->matchSchedule($staffSchedules, $date);
 
         return $schedule !== null && ! $schedule->is_day_off;
+    }
+
+    // The working shift of the person this row is covering on $date, or null.
+    private function coveredShift(?Attendance $attendance, string $date): ?StaffSchedule
+    {
+        if (! $attendance?->covering_for_staff_id) {
+            return null;
+        }
+        $covered = $attendance->relationLoaded('coveringFor') ? $attendance->coveringFor : Staff::find($attendance->covering_for_staff_id);
+        if (! $covered) {
+            return null;
+        }
+        $schedules = $covered->relationLoaded('schedules') ? $covered->schedules : $covered->schedules()->get();
+        $shift = $this->matchSchedule($schedules, $date);
+
+        return $shift && ! $shift->is_day_off ? $shift : null;
     }
 
     private function matchSchedule(Collection $staffSchedules, string $date): ?StaffSchedule

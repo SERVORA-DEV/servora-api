@@ -319,7 +319,7 @@ class CheckoutService
         $session = CheckoutSession::where('spa_business_id', $business->id)->where('uuid', $uuid)->firstOrFail();
         $this->refresh($session);
 
-        return $this->present($session->fresh(['plan', 'paymentMethod']));
+        return $this->present($session->fresh(['plan', 'paymentMethod', 'subscription']));
     }
 
     public function refresh(CheckoutSession $session): void
@@ -784,10 +784,41 @@ class CheckoutService
             'failure_reason' => $session->failure_reason,
             'amount' => (float) $session->amount,
             'vat_amount' => (float) $session->vat_amount,
-            'billing_cycle' => $session->billing_cycle,
-            'plan' => $session->plan ? ['uuid' => $session->plan->uuid, 'name' => $session->plan->name] : null,
+            // An upgrade carries no cycle of its own: it keeps the one the term runs on.
+            'billing_cycle' => $session->billing_cycle ?? $session->subscription?->billing_cycle,
+            'plan' => $session->plan ? $this->presentPlan($session->plan) : null,
             'payment_method' => $session->paymentMethod?->present(),
+            // What the money went through ("Credit Card", "GCash"), also for a
+            // one-off payment that saved no method. Only once it has been paid.
+            'paid_via' => $session->status === 'completed' && $session->purpose !== 'save_method'
+                ? Payment::where('reference_number', $session->reference_id)->value('payment_method')
+                : null,
+            // The term this payment bought; the post-purchase page shows it.
+            'term' => $session->status === 'completed' && $session->subscription
+                ? ['starts_at' => $session->subscription->starts_at, 'expires_at' => $session->subscription->expires_at]
+                : null,
             'completed_at' => $session->completed_at,
+        ];
+    }
+
+    // The plan as it was bought: name plus what it includes (the success page
+    // reads this, so it shows the plan that was paid for even when a renewal
+    // only takes over once the current term ends).
+    private function presentPlan(SubscriptionPlan $plan): array
+    {
+        return [
+            'uuid' => $plan->uuid,
+            'name' => $plan->name,
+            'category' => $plan->category,
+            'description' => $plan->description,
+            'max_branches' => (int) $plan->max_branches,
+            'max_user_accounts' => (int) $plan->max_user_accounts,
+            'package_access' => (bool) $plan->package_access,
+            'reward_access' => (bool) $plan->reward_access,
+            'review_access' => (bool) $plan->review_access,
+            'report_access' => (bool) $plan->report_access,
+            'report_export' => (bool) $plan->report_export,
+            'mobile_app_access' => (bool) $plan->mobile_app_access,
         ];
     }
 
