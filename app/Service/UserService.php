@@ -467,7 +467,7 @@ class UserService
 
         if (! $challenge) {
             return response()->json([
-                'message' => 'This sign-in attempt has expired. Please log in again.',
+                'message' => 'This sign-in attempt has expired. Please sign in again.',
                 'challenge_expired' => true,
             ], 422);
         }
@@ -564,7 +564,7 @@ class UserService
 
         if (! $challenge) {
             return response()->json([
-                'message' => 'This sign-in attempt has expired. Please log in again.',
+                'message' => 'This sign-in attempt has expired. Please sign in again.',
                 'challenge_expired' => true,
             ], 422);
         }
@@ -770,7 +770,7 @@ class UserService
         $user->tokens()->delete();
 
         return response()->json([
-            'message' => 'Password reset successfully. Please log in with your new password.'
+            'message' => 'Password reset successfully. Please sign in with your new password.'
         ], 200);
     }
 
@@ -938,7 +938,7 @@ class UserService
 
         if ($user->hasVerifiedEmail()) {
             return response()->json([
-                'message' => 'Email already verified. You can log in now.'
+                'message' => 'Email already verified. You can sign in now.'
             ], 200);
         }
 
@@ -995,7 +995,7 @@ class UserService
 
         if ($user->hasVerifiedEmail()) {
             return response()->json([
-                'message' => 'Email already verified. You can log in now.'
+                'message' => 'Email already verified. You can sign in now.'
             ], 200);
         }
 
@@ -1024,7 +1024,7 @@ class UserService
         DB::table('email_verification_otps')->where('email', $user->email)->where('audience', $user->audience)->delete();
 
         return response()->json([
-            'message' => 'Email verified successfully. You can now log in.'
+            'message' => 'Email verified successfully. You can now sign in.'
         ], 200);
     }
 

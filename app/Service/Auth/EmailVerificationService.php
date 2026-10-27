@@ -63,7 +63,7 @@ class EmailVerificationService
 
         if ($user->hasVerifiedEmail()) {
             return response()->json([
-                'message' => 'This email is already verified. You can log in.'
+                'message' => 'This email is already verified. You can sign in.'
             ]);
         }
 
