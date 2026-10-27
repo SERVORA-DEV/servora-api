@@ -101,7 +101,7 @@ class StaffScheduleService
             });
 
             if ($business->owner) {
-                $this->notificationService->scheduleChangeRequested($business->owner, $this->nameOf($staff), $this->userName($user));
+                $this->notificationService->scheduleChangeRequested($business->owner, $this->nameOf($staff), $this->userName($user), $staff->uuid);
             }
 
             return StaffScheduleResource::collection($this->staffScheduleRepository->currentForStaff($staff->id))
@@ -167,7 +167,7 @@ class StaffScheduleService
         });
 
         if ($request->requester) {
-            $this->notificationService->scheduleChangeDecided($request->requester, $this->nameOf($request->staff), true, null);
+            $this->notificationService->scheduleChangeDecided($request->requester, $this->nameOf($request->staff), true, null, $request->staff?->uuid);
         }
 
         return StaffScheduleResource::collection($this->staffScheduleRepository->currentForStaff($request->staff_id))
@@ -193,7 +193,7 @@ class StaffScheduleService
         ]);
 
         if ($request->requester) {
-            $this->notificationService->scheduleChangeDecided($request->requester, $this->nameOf($request->staff), false, $reason);
+            $this->notificationService->scheduleChangeDecided($request->requester, $this->nameOf($request->staff), false, $reason, $request->staff?->uuid);
         }
 
         return response()->json(['message' => 'Schedule change rejected.', 'pending_request' => null]);

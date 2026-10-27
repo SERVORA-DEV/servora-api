@@ -2243,9 +2243,26 @@ class AppointmentService
                 ->with('appointmentService.appointment')
                 ->firstOrFail();
 
+            $service = $assignment->appointmentService;
+
+            if (! $assignment->facility_id) {
+                return response()->json(['message' => 'This service has no facility to remove.'], 422);
+            }
             if (in_array($assignment->assignment_status, ['Completed', 'Cancelled'], true)
-                || in_array($assignment->appointmentService->status, ['Completed', 'Cancelled'], true)) {
+                || in_array($service->status, ['Completed', 'Cancelled'], true)) {
                 return response()->json(['message' => 'This service is already finished — its facility can no longer be changed.'], 422);
+            }
+            // The client is in the room: it can be changed (assignRoom), not
+            // taken away, until the service is completed.
+            if ($assignment->assignment_status === 'In Progress' || $service->status === 'In Progress') {
+                return response()->json(['message' => 'This service is under way in that facility — it can be moved to another facility, but not left without one until it is completed.'], 422);
+            }
+            // The same checks as assigning one.
+            if ($stale = self::staleRefusal($service->appointment)) {
+                return $stale;
+            }
+            if ($refusal = $this->addonFollows($service, 'shares its staff and facility')) {
+                return $refusal;
             }
 
             $assignment->update($assignment->staff_id

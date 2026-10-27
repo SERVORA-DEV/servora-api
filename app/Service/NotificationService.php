@@ -138,17 +138,19 @@ class NotificationService
 
     // ── Staff schedule changes (StaffScheduleService) ───────────────────
 
-    public function scheduleChangeRequested(User $owner, string $staffName, string $managerName): void
+    // The reference is the staff member, so a click opens their page.
+    public function scheduleChangeRequested(User $owner, string $staffName, string $managerName, ?string $staffUuid = null): void
     {
         $this->notificationRepository->create(
             $owner->id,
             'Schedule Change Needs Approval',
             "{$managerName} changed {$staffName}'s weekly schedule. Open their page in Employees to approve or reject it.",
-            'Attendance'
+            'Attendance',
+            $staffUuid,
         );
     }
 
-    public function scheduleChangeDecided(User $manager, string $staffName, bool $approved, ?string $reason): void
+    public function scheduleChangeDecided(User $manager, string $staffName, bool $approved, ?string $reason, ?string $staffUuid = null): void
     {
         $this->notificationRepository->create(
             $manager->id,
@@ -156,7 +158,8 @@ class NotificationService
             $approved
                 ? "Your change to {$staffName}'s weekly schedule was approved and is now in effect."
                 : "Your change to {$staffName}'s weekly schedule was rejected." . ($reason ? " Reason: {$reason}" : ''),
-            'Attendance'
+            'Attendance',
+            $staffUuid,
         );
     }
 
@@ -253,7 +256,8 @@ class NotificationService
             $owner->id,
             'Branch Registration Approved',
             "\"{$branch->branch_name}\" has been approved and is now bookable.",
-            'System'
+            'System',
+            $branch->uuid,
         );
     }
 
@@ -263,7 +267,8 @@ class NotificationService
             $owner->id,
             'Branch Registration Rejected',
             "\"{$branch->branch_name}\" was rejected: {$reason}",
-            'System'
+            'System',
+            $branch->uuid,
         );
     }
 
@@ -390,7 +395,8 @@ class NotificationService
             $owner->id,
             'Branch Suspended',
             "\"{$branch->branch_name}\" has been suspended: {$reason}",
-            'System'
+            'System',
+            $branch->uuid,
         );
 
         $this->staffNotifier->branch($branch, 'Branch Suspended', "\"{$branch->branch_name}\" has been suspended by Servora. Contact your spa owner for details.", includeOwner: false, critical: true);
@@ -402,7 +408,8 @@ class NotificationService
             $owner->id,
             'Branch Reactivated',
             "\"{$branch->branch_name}\" has been reactivated and is no longer suspended.",
-            'System'
+            'System',
+            $branch->uuid,
         );
 
         $this->staffNotifier->branch($branch, 'Branch Reactivated', "\"{$branch->branch_name}\" is active again.", includeOwner: false, critical: true);

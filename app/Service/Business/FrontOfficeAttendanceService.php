@@ -569,7 +569,8 @@ class FrontOfficeAttendanceService
     {
         $staff->loadMissing('branch');
         if ($staff->branch) {
-            $this->staffNotifier->branch($staff->branch, $title, $message, type: 'Attendance', exceptUserId: $actor->id);
+            // About the staff member, so a click opens their attendance.
+            $this->staffNotifier->branch($staff->branch, $title, $message, type: 'Attendance', exceptUserId: $actor->id, reference: $staff->uuid);
         }
     }
 
