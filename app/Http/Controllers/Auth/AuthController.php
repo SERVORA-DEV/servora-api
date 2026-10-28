@@ -33,6 +33,13 @@ class AuthController extends Controller
         return $this->userService->login($request);
     }
 
+    // The administrators' own door (see UserService::login): the same checks,
+    // but only an administrator account gets in, and only here.
+    public function adminLogin(Request $request)
+    {
+        return $this->userService->login($request, asAdmin: true);
+    }
+
     public function loginWithGoogle(GoogleLoginRequest $request)
     {
         return $this->userService->loginWithGoogle($request);

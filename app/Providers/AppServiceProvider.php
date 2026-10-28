@@ -64,6 +64,14 @@ class AppServiceProvider extends ServiceProvider
             Limit::perMinute(20)->by('login-ip:'.$r->ip()),
         ]);
 
+        // The administrators' own door: much tighter than the owner one. Few
+        // people ever sign in here, so five tries a minute per address and a
+        // small number per IP per hour is plenty.
+        RateLimiter::for('admin-login', fn (Request $r) => [
+            Limit::perMinute(5)->by('admin-login:'.strtolower((string) $r->input('email')).'|'.$r->ip()),
+            Limit::perHour(30)->by('admin-login-ip:'.$r->ip()),
+        ]);
+
         // Endpoints that send email/SMS (register, forgot password): stops
         // mail bombing and burning the SMTP quota.
         RateLimiter::for('auth-sensitive', fn (Request $r) => [

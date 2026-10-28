@@ -68,6 +68,10 @@ Route::get('/legal', [LegalController::class, 'show']);
 
 // authentication part
 Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:auth-login');
+// The administrators' door: the only place an administrator password is
+// accepted (the owner door above refuses it). Its own, tighter rate limit, and
+// the optional ADMIN_ALLOWED_IPS list — see config/admin_access.php.
+Route::post('/auth/admin/login', [AuthController::class, 'adminLogin'])->middleware(['admin.ip', 'throttle:admin-login']);
 // "Continue with Google" for business owners (sign-in and sign-up) — see
 // UserService::loginWithGoogle. Per-IP, since there is no email input to key on.
 Route::post('/auth/google', [AuthController::class, 'loginWithGoogle'])->middleware('throttle:20,1');
@@ -198,7 +202,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // system administrator access route
     Route::prefix('system')
-        ->middleware('role:system_administrator')
+        ->middleware(['admin.ip', 'role:system_administrator', 'admin.2fa'])
         ->group(function () {
             // Every route below is gated by the administrator's own
             // permission flags (EnsurePermission + App\Support\AdminPermissions);

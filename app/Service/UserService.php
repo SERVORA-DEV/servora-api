@@ -82,7 +82,12 @@ class UserService
     // short-lived challenge instead of a token (see verifyTwoFactorLogin),
     // same two-step shape as the forget-password flow (email -> OTP ->
     // short-lived reset_token -> real action).
-    public function login(object $payload)
+    // Two doors, one lock. The owner door (`$asAdmin` false) refuses an
+    // administrator account and the admin door refuses everyone else, each with
+    // the same "Invalid email or password." a wrong password gets, so neither
+    // door says which emails belong to administrators. The check comes after the
+    // password is verified, so the work done is the same either way.
+    public function login(object $payload, bool $asAdmin = false)
     {
         if (empty($payload->email) || empty($payload->password)) {
             return response()->json([
@@ -102,6 +107,18 @@ class UserService
         if (! Hash::check($payload->password, $user->password)) {
             $this->auditLogRepository->recordAuthEvent(
                 $user->id, 'Login Failed', ['reason' => 'wrong_password'], $payload->ip(), $payload->userAgent(),
+            );
+
+            return response()->json([
+                'message' => 'Invalid email or password.'
+            ], 401);
+        }
+
+        if (($user->role === 'system_administrator') !== $asAdmin) {
+            $this->auditLogRepository->recordAuthEvent(
+                $user->id, 'Login Failed',
+                ['reason' => $asAdmin ? 'not_an_administrator' : 'administrator_at_owner_door'],
+                $payload->ip(), $payload->userAgent(),
             );
 
             return response()->json([

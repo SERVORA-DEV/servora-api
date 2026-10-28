@@ -37,6 +37,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'permission' => \App\Http\Middleware\EnsurePermission::class,
             'plan.feature' => \App\Http\Middleware\EnsurePlanFeature::class,
             'activity' => \App\Http\Middleware\RecordBusinessActivity::class,
+            'admin.ip' => \App\Http\Middleware\RestrictAdminIp::class,
+            'admin.2fa' => \App\Http\Middleware\RequireAdminTwoFactor::class,
         ]);
     })
     // Requires a real OS cron / Windows Task Scheduler entry running
