@@ -9,15 +9,20 @@ class NotificationRepository
 {
     // Every new notification is also popped up on its user's browsers and
     // phones while Servora isn't open there (PushSender, after the response).
-    public function create(int $userId, string $title, string $message, string $type = 'System', ?string $referenceUuid = null): Notification
+    //
+    // A manual announcement passes its id and priority; automated notifications
+    // leave both null, which is how the two stay apart.
+    public function create(int $userId, string $title, string $message, string $type = 'System', ?string $referenceUuid = null, ?int $announcementId = null, ?string $priority = null): Notification
     {
+        // The announcement columns are only written when there is an announcement, so
+        // every automated notification is exactly the row it always was.
         $notification = Notification::create([
             'user_id' => $userId,
             'title' => $title,
             'message' => $message,
             'type' => $type,
             'reference_uuid' => $referenceUuid,
-        ]);
+        ] + ($announcementId !== null ? ['announcement_id' => $announcementId, 'priority' => $priority] : []));
         app(PushSender::class)->queue($notification);
 
         return $notification;

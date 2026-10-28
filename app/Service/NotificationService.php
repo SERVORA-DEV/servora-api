@@ -87,34 +87,9 @@ class NotificationService
         ], 200);
     }
 
-    // Dashboard Quick Actions > Send Announcement. The only real, working
-    // notification inbox in the app today is this admin one (the owner-side
-    // useOwnerNotifications.ts has no backend route and is never actually
-    // wired into business/TopBar.vue), so that's the real audience — every
-    // OTHER system administrator, same "not the actor" rule as
-    // administratorCreated.
-    public function sendAnnouncement(User $actor, array $payload)
-    {
-        $senderName = trim("{$actor->first_name} {$actor->last_name}") ?: $actor->email;
-        $message = "{$payload['message']}\n\n— {$senderName}";
-
-        $recipients = $this->adminUsersRepository->allAdministrators()
-            ->reject(fn (User $admin) => $admin->id === $actor->id);
-
-        foreach ($recipients as $admin) {
-            $this->notificationRepository->create($admin->id, $payload['title'], $message, 'System');
-        }
-
-        $this->auditLogRepository->record($actor->id, 'announcements', null, 'Create', null, [
-            'name' => $payload['title'],
-            'recipients' => $recipients->count(),
-        ], request());
-
-        return response()->json([
-            'message' => 'Announcement sent.',
-            'recipients' => $recipients->count(),
-        ], 200);
-    }
+    // Manual announcements are not written here: see System\AnnouncementService.
+    // Everything below is automated, fired by an event (a booking, a payment,
+    // an approval, a reminder), and carries no announcement.
 
     // ── Write side: fired from the real actions below as they happen ────
     //

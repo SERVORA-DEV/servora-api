@@ -17,6 +17,7 @@ use App\Http\Controllers\System\TransactionController;
 use App\Http\Controllers\System\SystemSettingController;
 use App\Http\Controllers\System\AuditLogController;
 use App\Http\Controllers\System\SecurityController;
+use App\Http\Controllers\System\AnnouncementController;
 use App\Http\Controllers\System\NotificationController;
 use App\Http\Controllers\System\BranchController;
 use App\Http\Controllers\System\BusinessController;
@@ -250,8 +251,14 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::delete('notifications/read', [NotificationController::class, 'clearRead']);
             Route::delete('notifications/{id}', [NotificationController::class, 'destroy'])->whereNumber('id');
             Route::get('notifications/{id}', [NotificationController::class, 'show'])->whereNumber('id');
-            // Dashboard Quick Actions > Send Announcement.
-            Route::post('notifications/announce', [NotificationController::class, 'announce'])->middleware('permission:notification_send');
+            // Manual announcements (create, history, who they would reach, and the
+            // searchable recipient lists). Kept apart from the automated notifications.
+            Route::prefix('announcements')->middleware('permission:notification_send')->group(function () {
+                Route::get('/', [AnnouncementController::class, 'index']);
+                Route::post('/', [AnnouncementController::class, 'store']);
+                Route::post('preview', [AnnouncementController::class, 'preview']);
+                Route::get('recipient-options', [AnnouncementController::class, 'options']);
+            });
 
             Route::get('branches', [BranchController::class, 'index'])->middleware('permission:branch_view');
             Route::get('branches/{uuid}', [BranchController::class, 'show'])->middleware('permission:branch_view');

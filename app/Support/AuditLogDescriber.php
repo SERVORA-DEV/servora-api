@@ -81,7 +81,9 @@ class AuditLogDescriber
                 : self::generic($log->action, 'subscription plan'),
             'system_settings' => 'Changed billing settings',
             'service_templates' => self::generic($log->action, 'service template'),
-            'announcements' => 'Sent an announcement' . (isset($new['recipients']) ? " to {$new['recipients']} " . ($new['recipients'] === 1 ? 'administrator' : 'administrators') : ''),
+            'announcements' => 'Sent an announcement' . (isset($new['recipients'])
+                ? ' to ' . self::announcementAudience($new['audience'] ?? 'admins', (int) $new['recipients'])
+                : ''),
             'users' => match ($log->action) {
                 'Create' => 'Added administrator',
                 'Update' => 'Updated administrator account',
@@ -108,6 +110,19 @@ class AuditLogDescriber
             },
             default => self::generic($action, 'own account'),
         };
+    }
+
+    // "3 administrators", "1 business owner", "12 clients": who an announcement reached.
+    private static function announcementAudience(string $audience, int $count): string
+    {
+        [$one, $many] = match ($audience) {
+            'businesses' => ['business owner', 'business owners'],
+            'branches' => ['branch owner or manager', 'branch owners and managers'],
+            'clients' => ['client', 'clients'],
+            default => ['administrator', 'administrators'],
+        };
+
+        return "{$count} " . ($count === 1 ? $one : $many);
     }
 
     private static function generic(string $action, string $object): string
