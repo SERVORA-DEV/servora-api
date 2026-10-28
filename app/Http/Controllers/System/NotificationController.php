@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\System;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\System\AnnouncementRequest;
 use App\Service\NotificationService;
 use Illuminate\Http\Request;
 
@@ -49,10 +48,5 @@ class NotificationController extends Controller
     public function clearRead(Request $request)
     {
         return $this->notificationService->clearRead($request->user());
-    }
-
-    public function announce(AnnouncementRequest $request)
-    {
-        return $this->notificationService->sendAnnouncement($request->user(), $request->validated());
     }
 }

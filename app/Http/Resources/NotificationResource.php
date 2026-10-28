@@ -16,6 +16,8 @@ class NotificationResource extends JsonResource
             'title' => $this->title,
             'message' => $this->message,
             'type' => $this->type,
+            // normal | important | urgent for an announcement; null for automated notifications.
+            'priority' => $this->priority,
             'is_read' => $this->is_read,
             'read_at' => $this->read_at,
             'reference_uuid' => $this->reference_uuid,

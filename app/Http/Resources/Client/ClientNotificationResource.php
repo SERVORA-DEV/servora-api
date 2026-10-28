@@ -23,6 +23,8 @@ class ClientNotificationResource extends JsonResource
             'title' => $this->title,
             'message' => $this->message,
             'type' => $this->type,
+            // normal | important | urgent for an announcement; null for automated notices.
+            'priority' => $this->priority,
             'kind' => $kind,
             'appointment_uuid' => in_array($this->type, ['Appointment', 'Payment'], true) ? $this->reference_uuid : null,
             'business_uuid' => $kind === 'reward'
