@@ -32,12 +32,17 @@ class FacilityRepository
     // backward-compatible rule enforced in AppointmentService's
     // checkRoomEligibility) rather than being hidden from every filtered
     // picker just because it hasn't been categorized yet.
-    public function listAvailableForBranches(array $spaBranchIds, ?int $serviceId = null)
+    //
+    // $withMaintenance: keep rooms under maintenance on the list — the Live Spa Floor
+    // shows them (and a client still in service in one: setting a room under
+    // maintenance never sends anyone out of it, it only stops it being used next).
+    // A picker leaves them out.
+    public function listAvailableForBranches(array $spaBranchIds, ?int $serviceId = null, bool $withMaintenance = false)
     {
         return Facility::with('services:id,uuid')
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->where('is_available', true)
-            ->where('status', '!=', 'Maintenance')
+            ->when(! $withMaintenance, fn ($q) => $q->where('status', '!=', 'Maintenance'))
             ->when($serviceId, fn ($q) => $q->where(fn ($q2) => $q2
                 ->doesntHave('services')
                 ->orWhereHas('services', fn ($sq) => $sq->where('services.id', $serviceId))

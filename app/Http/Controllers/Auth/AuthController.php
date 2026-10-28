@@ -11,6 +11,7 @@ use App\Http\Requests\Auth\ResendRegistrationOtpRequest;
 use App\Http\Requests\Auth\ResetPasswordRequest;
 use App\Http\Requests\Auth\VerifyPasswordResetOtpRequest;
 use App\Http\Requests\Auth\VerifyRegistrationOtpRequest;
+use App\Rules\NoEmoji;
 use App\Service\UserService;
 use Illuminate\Http\Request;
 
@@ -28,8 +29,20 @@ class AuthController extends Controller
         return $this->userService->getUser($request->user()->uuid);
     }
 
+    // The sign-in has no form request of its own: its two credentials are held
+    // to the same no-emoji rule as the forms that set them.
+    private function plainCredentials(Request $request): void
+    {
+        $request->validate([
+            'email' => [new NoEmoji()],
+            'password' => [new NoEmoji()],
+        ]);
+    }
+
     public function login(Request $request)
     {
+        $this->plainCredentials($request);
+
         return $this->userService->login($request);
     }
 
@@ -37,6 +50,8 @@ class AuthController extends Controller
     // but only an administrator account gets in, and only here.
     public function adminLogin(Request $request)
     {
+        $this->plainCredentials($request);
+
         return $this->userService->login($request, asAdmin: true);
     }
 

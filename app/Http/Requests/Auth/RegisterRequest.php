@@ -6,6 +6,7 @@ use Illuminate\Validation\Rules\Password;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use App\Rules\NoEmoji;
 
 class RegisterRequest extends FormRequest
 {
@@ -27,12 +28,14 @@ class RegisterRequest extends FormRequest
                 'email',
                 // Unique per audience: the same email may also hold a client account.
                 Rule::unique('users', 'email')->where('audience', 'web'),
+                new NoEmoji(),
             ],
 
             'password' => [
                 'required',
                 'confirmed',
                 Password::defaults(),
+                new NoEmoji(),
             ],
 
             // "I agree to the Terms of Service and Privacy Policy" — the

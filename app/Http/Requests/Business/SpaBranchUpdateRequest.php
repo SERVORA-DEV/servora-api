@@ -7,6 +7,7 @@ use App\Support\SocialLinks;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use App\Rules\NoEmoji;
 
 class SpaBranchUpdateRequest extends FormRequest
 {
@@ -49,8 +50,8 @@ class SpaBranchUpdateRequest extends FormRequest
                     ->ignore($this->route('branch'), 'uuid'),
             ],
 
-            'email' => 'nullable|email|max:255',
-            'phone_number' => 'nullable|string|max:20',
+            'email' => ['nullable', 'email', 'max:255', new NoEmoji()],
+            'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji()],
 
             // Branch Settings → Branch Details → Social links.
             // Each branch's own links; any left empty show the company's

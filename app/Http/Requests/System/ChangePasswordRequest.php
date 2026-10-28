@@ -5,6 +5,7 @@ namespace App\Http\Requests\System;
 use Illuminate\Validation\Rules\Password;
 
 use Illuminate\Foundation\Http\FormRequest;
+use App\Rules\NoEmoji;
 
 class ChangePasswordRequest extends FormRequest
 {
@@ -25,6 +26,7 @@ class ChangePasswordRequest extends FormRequest
                 'required',
                 'confirmed',
                 Password::defaults(),
+                new NoEmoji(),
             ],
         ];
     }

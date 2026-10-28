@@ -27,6 +27,9 @@ class FacilityResource extends JsonResource
             // withExists() alias in FacilityRepository.
             'status' => ! $this->is_available ? 'Inactive' : ($this->is_occupied ? 'Occupied' : $this->status),
             'is_available' => (bool) $this->is_available,
+            // The stored setting, which 'Occupied' above hides while a client is in the
+            // room: it is under maintenance and stops being used once they are done.
+            'under_maintenance' => $this->status === 'Maintenance',
             'amenities' => $this->amenities ?? [],
             'services' => $this->whenLoaded('services', fn () => $this->services->map(fn ($s) => [
                 'uuid' => $s->uuid,

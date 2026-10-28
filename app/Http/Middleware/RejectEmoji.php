@@ -18,12 +18,14 @@ class RejectEmoji
             if ($fields) {
                 $errors = [];
                 foreach ($fields as $field) {
-                    $label = str_replace('_', ' ', preg_replace('/\.\d+$/', '', (string) \Illuminate\Support\Arr::last(explode('.', $field))));
-                    $errors[$field] = ["The {$label} can't contain emoji."];
+                    $errors[$field] = [Emoji::message($field)];
                 }
 
+                // A password and its confirmation are one complaint, not two.
+                $said = array_values(array_unique(array_map(fn ($messages) => $messages[0], $errors)));
+
                 return response()->json([
-                    'message' => $errors[$fields[0]][0] . (count($fields) > 1 ? ' (and ' . (count($fields) - 1) . ' more)' : ''),
+                    'message' => $said[0] . (count($said) > 1 ? ' (and ' . (count($said) - 1) . ' more)' : ''),
                     'errors' => $errors,
                 ], 422);
             }

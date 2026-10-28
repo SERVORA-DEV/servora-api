@@ -6,6 +6,7 @@ use Illuminate\Validation\Rules\Password;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use App\Rules\NoEmoji;
 
 // Validates POST/PATCH /business/account. An account is a standalone
 // Manager/Front Officer login tied to a specific Staff record (see
@@ -24,8 +25,8 @@ class AccountRequest extends FormRequest
         $isCreate = $this->isMethod('post');
 
         return [
-            'username' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:50', Rule::unique('users', 'username')],
-            'email' => [$isCreate ? 'required' : 'sometimes', 'email', 'max:255', Rule::unique('users', 'email')->where('audience', 'web')],
+            'username' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:50', Rule::unique('users', 'username'), new NoEmoji()],
+            'email' => [$isCreate ? 'required' : 'sometimes', 'email', 'max:255', Rule::unique('users', 'email')->where('audience', 'web'), new NoEmoji()],
 
             // Which staff member this login belongs to — locked at
             // creation, same as role below, since reassigning an account to
@@ -34,8 +35,8 @@ class AccountRequest extends FormRequest
             // one-account-per-staff rule are all enforced in
             // AccountService::createAccount, not here.
             // The account's own name.
-            'first_name' => ['sometimes', 'nullable', 'string', 'max:100'],
-            'last_name' => ['sometimes', 'nullable', 'string', 'max:100'],
+            'first_name' => ['sometimes', 'nullable', 'string', 'max:100', new NoEmoji()],
+            'last_name' => ['sometimes', 'nullable', 'string', 'max:100', new NoEmoji()],
 
             // Where it works and at which level (AccountService checks the
             // branches are the owner's own). Before that migration, a login is
@@ -55,7 +56,7 @@ class AccountRequest extends FormRequest
             // client, on create or update.
             'spa_branch_uuid' => ['prohibited'],
 
-            'password' => [$isCreate ? 'required' : 'nullable', 'string', Password::defaults()],
+            'password' => [$isCreate ? 'required' : 'nullable', 'string', Password::defaults(), new NoEmoji()],
 
             'account_status' => ['sometimes', Rule::in(['Active', 'Inactive', 'Suspended'])],
 

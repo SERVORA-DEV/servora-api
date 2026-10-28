@@ -126,6 +126,69 @@ class GoogleAuthTest extends TestCase
         $this->clientSignIn()->assertOk()->assertJsonPath('user.uuid', $client->uuid);
     }
 
+    // Tapping "Sign up with Google" with an account that already exists is a
+    // sign-in, not an "already registered" error: the agreement and password
+    // the sign-up screen sends along are ignored, and no second account is made.
+    public function test_an_existing_client_who_signs_up_with_google_is_signed_in_with_the_password_they_already_had(): void
+    {
+        $client = User::factory()->create([
+            'role' => 'client',
+            'audience' => 'mobile',
+            'email' => self::EMAIL,
+            'password' => 'Original-Pass-1',
+            'email_verified_at' => now(),
+            'account_status' => 'Active',
+        ]);
+
+        $this->fakeGoogle();
+
+        $this->clientSignIn(agree: true, password: 'Another-Pass-999')
+            ->assertOk()
+            ->assertJsonPath('user.uuid', $client->uuid)
+            ->assertJsonStructure(['token']);
+
+        $this->assertSame(1, User::where('email', self::EMAIL)->where('role', 'client')->count());
+        $this->assertTrue(Hash::check('Original-Pass-1', $client->fresh()->password));
+    }
+
+    public function test_an_existing_owner_who_signs_up_with_google_is_signed_in_too(): void
+    {
+        $owner = User::factory()->create([
+            'role' => 'business_owner',
+            'email' => self::EMAIL,
+            'password' => 'Original-Pass-1',
+            'email_verified_at' => now(),
+            'account_status' => 'Active',
+        ]);
+
+        $this->fakeGoogle();
+
+        $this->signIn(agree: true, password: 'Another-Pass-999')->assertOk()->assertJsonPath('user.uuid', $owner->uuid);
+
+        $this->assertSame(1, User::where('email', self::EMAIL)->count());
+        $this->assertTrue(Hash::check('Original-Pass-1', $owner->fresh()->password));
+    }
+
+    public function test_an_unverified_client_password_is_discarded_when_google_proves_the_email(): void
+    {
+        $client = User::factory()->create([
+            'role' => 'client',
+            'audience' => 'mobile',
+            'email' => self::EMAIL,
+            'password' => 'Typed-By-Someone-1',
+            'email_verified_at' => null,
+            'account_status' => 'Pending',
+        ]);
+
+        $this->fakeGoogle();
+
+        $this->clientSignIn()->assertOk()->assertJsonPath('user.uuid', $client->uuid);
+
+        $client->refresh();
+        $this->assertNotNull($client->email_verified_at);
+        $this->assertFalse(Hash::check('Typed-By-Someone-1', $client->password));
+    }
+
     public function test_an_unknown_email_is_not_created_from_the_sign_in_page(): void
     {
         $this->fakeGoogle();

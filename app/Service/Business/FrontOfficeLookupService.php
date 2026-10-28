@@ -160,7 +160,8 @@ class FrontOfficeLookupService
     {
         $variant = $serviceVariantUuid ? ServiceVariant::where('uuid', $serviceVariantUuid)->first() : null;
         $branchIds = $this->branchIds($user);
-        $rooms = $this->facilityRepository->listAvailableForBranches($branchIds, $variant?->service_id);
+        // The whole room list (no service, no time asked): the floor, which shows rooms under maintenance too.
+        $rooms = $this->facilityRepository->listAvailableForBranches($branchIds, $variant?->service_id, withMaintenance: ! $variant && ! $date && ! $time);
 
         if ($date && $time) {
             $duration = $variant?->duration_minutes ?? 30;

@@ -7,6 +7,7 @@ use App\Support\ClientProfile;
 use App\Support\StaffGender;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use App\Rules\NoEmoji;
 
 // Validates POST /client/appointments (mobile self-booking). Deliberately
 // narrower than the front-desk AppointmentRequest: no discount, quantity,
@@ -43,14 +44,14 @@ class ClientAppointmentRequest extends FormRequest
 
             // Home service (HomeServiceRules checks the place and the area).
             'service_location' => 'sometimes|in:In Spa,Home Service',
-            'home_address' => 'nullable|required_if:service_location,Home Service|string|max:500',
+            'home_address' => ['nullable', 'required_if:service_location,Home Service', 'string', 'max:500', new NoEmoji()],
             'home_address_notes' => 'nullable|string|max:500',
             'home_latitude' => 'nullable|required_if:service_location,Home Service|numeric|between:-90,90',
             'home_longitude' => 'nullable|required_if:service_location,Home Service|numeric|between:-180,180',
             'client' => 'required|array',
-            'client.first_name' => 'required|string|max:100',
-            'client.last_name' => 'required|string|max:100',
-            'client.phone_number' => 'required|string|max:20',
+            'client.first_name' => ['required', 'string', 'max:100', new NoEmoji()],
+            'client.last_name' => ['required', 'string', 'max:100', new NoEmoji()],
+            'client.phone_number' => ['required', 'string', 'max:20', new NoEmoji()],
             // Asked once: an account that already said has nothing to add.
             // Age is optional (App\Support\ClientProfile).
             'client.gender' => [

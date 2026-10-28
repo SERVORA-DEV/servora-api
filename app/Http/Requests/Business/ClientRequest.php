@@ -6,6 +6,7 @@ use App\Models\Client;
 use App\Support\ClientProfile;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use App\Rules\NoEmoji;
 
 // Validates POST/PATCH /business/client (register/update a client). Also
 // reused as the shape of the nested "client" object inside AppointmentRequest
@@ -28,10 +29,10 @@ class ClientRequest extends FormRequest
         $isCreate = $this->isMethod('post');
 
         return [
-            'first_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100'],
-            'last_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100'],
-            'phone_number' => 'nullable|string|max:20',
-            'email' => 'nullable|email|max:255',
+            'first_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji()],
+            'last_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji()],
+            'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji()],
+            'email' => ['nullable', 'email', 'max:255', new NoEmoji()],
             'notes' => 'nullable|string',
             'gender' => [$isCreate && Client::hasProfile() ? 'required' : 'nullable', Rule::in(ClientProfile::GENDERS)],
             'age' => 'nullable|integer|min:0|max:' . ClientProfile::OLDEST,

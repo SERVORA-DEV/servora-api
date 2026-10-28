@@ -35,6 +35,8 @@ class PublicTherapistAvailabilityRequest extends FormRequest
             'service_variant_uuids' => 'nullable|array|max:20',
             'service_variant_uuids.*' => 'uuid',
             'package_uuid' => 'nullable|uuid',
+            // A home service visit: only the staff who take home service are offered.
+            'home_service' => 'nullable|boolean',
         ];
     }
 

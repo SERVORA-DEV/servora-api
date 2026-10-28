@@ -228,6 +228,7 @@ class ClientBookingService
                 $duration,
                 $staffIds->isNotEmpty() ? Staff::find($staffIds->first()) : null,
                 $appointment->id,
+                $appointment->isHomeService(),
             );
             if ($slotProblem) {
                 return response()->json(['message' => $slotProblem], 422);

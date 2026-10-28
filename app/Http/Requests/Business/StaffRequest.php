@@ -4,6 +4,7 @@ namespace App\Http\Requests\Business;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use App\Rules\NoEmoji;
 
 // Validates POST/PATCH /business/staff. email/phone_number are optional —
 // only required once this staff member is granted a login account (see
@@ -22,15 +23,15 @@ class StaffRequest extends FormRequest
         $isCreate = $this->isMethod('post');
 
         return [
-            'employee_number' => ['nullable', 'string', 'max:50', Rule::unique('staff', 'employee_number')->where(fn ($q) => $q->where('spa_branch_id', $this->resolvedBranchId()))->ignore($this->route('staff'), 'uuid')],
+            'employee_number' => ['nullable', 'string', 'max:50', Rule::unique('staff', 'employee_number')->where(fn ($q) => $q->where('spa_branch_id', $this->resolvedBranchId()))->ignore($this->route('staff'), 'uuid'), new NoEmoji()],
 
-            'first_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100'],
-            'last_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100'],
-            'middle_name' => 'nullable|string|max:100',
-            'suffix' => 'nullable|string|max:20',
+            'first_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji()],
+            'last_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji()],
+            'middle_name' => ['nullable', 'string', 'max:100', new NoEmoji()],
+            'suffix' => ['nullable', 'string', 'max:20', new NoEmoji()],
 
-            'email' => 'nullable|email|max:255',
-            'phone_number' => 'nullable|string|max:20',
+            'email' => ['nullable', 'email', 'max:255', new NoEmoji()],
+            'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji()],
 
             // Both are asked for when someone is added, and can't be emptied later.
             'gender' => [$isCreate ? 'required' : 'sometimes', 'required', Rule::in(['Male', 'Female', 'Other'])],
@@ -43,6 +44,9 @@ class StaffRequest extends FormRequest
             // one. StaffService settles it against the role.
             'specialties' => ['sometimes', 'array', 'max:' . count(\App\Support\StaffSpecialty::ALL)],
             'specialties.*' => ['string', 'distinct', Rule::in(\App\Support\StaffSpecialty::ALL)],
+            // Whether they can be sent to a client's home (HomeServiceRules).
+            // Only kept for the people who perform services.
+            'home_service_available' => 'sometimes|boolean',
             // Their own commission — the same kind as the standard one in
             // Staff Policies; null or left out: the standard. StaffService
             // settles it against the role and the kind (CommissionShare::clean).
@@ -53,7 +57,7 @@ class StaffRequest extends FormRequest
             'status' => ['sometimes', Rule::in(['active', 'inactive', 'on-leave', 'terminated'])],
 
             'emergency_contact_name' => 'nullable|string|max:150',
-            'emergency_contact_number' => 'nullable|string|max:20',
+            'emergency_contact_number' => ['nullable', 'string', 'max:20', new NoEmoji()],
             'notes' => 'nullable|string',
 
             'spa_branch_uuid' => [$isCreate ? 'required' : 'sometimes', 'uuid', 'exists:spa_branches,uuid'],

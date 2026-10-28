@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Auth;
 
 use Illuminate\Foundation\Http\FormRequest;
+use App\Rules\NoEmoji;
 
 class ResendRegistrationOtpRequest extends FormRequest
 {
@@ -17,6 +18,7 @@ class ResendRegistrationOtpRequest extends FormRequest
             'email' => [
                 'required',
                 'email',
+                new NoEmoji(),
             ],
         ];
     }

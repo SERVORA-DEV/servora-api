@@ -47,6 +47,9 @@ class Staff extends Model
         // What they do (App\Support\StaffSpecialty): a list, the first being
         // their main one. Only for the people who perform services.
         'specialties',
+        // Whether the owner lets them be sent to a client's home
+        // (HomeServiceRules). Off until turned on.
+        'home_service_available',
         // Their own commission rate — the same kind as the standard one in
         // Staff Policies. Null: the standard (App\Support\CommissionShare).
         'commission_rate',
@@ -66,6 +69,7 @@ class Staff extends Model
         'birth_date' => 'date:Y-m-d',
         'hire_date' => 'date:Y-m-d',
         'specialties' => 'array',
+        'home_service_available' => 'boolean',
     ];
 
     /**
@@ -84,6 +88,43 @@ class Staff extends Model
         $ready ? Cache::forever('schema:staff_specialties', true) : Cache::put('schema:staff_specialties', false, 60);
 
         return $ready;
+    }
+
+    /**
+     * Whether staff can be marked "available for home service" yet (the
+     * migration has been run). Until then nobody is held back from a home
+     * visit: the setting is neither saved, shown nor enforced.
+     */
+    public static function hasHomeService(): bool
+    {
+        $known = Cache::get('schema:staff_home_service');
+        if (is_bool($known)) {
+            return $known;
+        }
+        $ready = Schema::hasColumn('staff', 'home_service_available');
+        $ready ? Cache::forever('schema:staff_home_service', true) : Cache::put('schema:staff_home_service', false, 60);
+
+        return $ready;
+    }
+
+    /**
+     * Whether this person may be sent to a client's home: someone who
+     * performs services, with the owner's tick on. True for all of them
+     * until the setting exists.
+     */
+    public function takesHomeService(): bool
+    {
+        if ($this->role !== StaffSpecialty::ROLE) {
+            return false;
+        }
+
+        return ! self::hasHomeService() || (bool) $this->home_service_available;
+    }
+
+    /** Narrows a staff query to those who may be sent to a client's home (everyone until the setting exists). */
+    public function scopeForHomeService($query)
+    {
+        return self::hasHomeService() ? $query->where('home_service_available', true) : $query;
     }
 
     /**

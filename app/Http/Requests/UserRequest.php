@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Rules\NoEmoji;
 use Illuminate\Validation\Rules\Password;
 
 use Illuminate\Foundation\Http\FormRequest;
@@ -37,13 +38,14 @@ class UserRequest extends FormRequest
                 $isCreate ? 'required' : 'sometimes',
                 'string',
                 'max:50',
+                new NoEmoji(),
                 Rule::unique('users', 'username')->ignore($userUuid, 'uuid'),
             ],
 
-            'first_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100'],
-            'middle_name' => 'nullable|string|max:100',
-            'last_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100'],
-            'suffix' => 'nullable|string|max:20',
+            'first_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji()],
+            'middle_name' => ['nullable', 'string', 'max:100', new NoEmoji()],
+            'last_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji()],
+            'suffix' => ['nullable', 'string', 'max:20', new NoEmoji()],
 
             'gender' => [$isCreate ? 'required' : 'sometimes', Rule::in(['Male', 'Female'])],
             'birth_date' => [$isCreate ? 'required' : 'sometimes', 'date', 'before:today'],
@@ -51,6 +53,7 @@ class UserRequest extends FormRequest
             'phone_number' => [
                 $isCreate ? 'required' : 'sometimes',
                 'string',
+                new NoEmoji(),
                 'regex:/^\+[1-9]\d{6,14}$/',
                 Rule::unique('users', 'phone_number')->ignore($userUuid, 'uuid'),
             ],
@@ -58,6 +61,7 @@ class UserRequest extends FormRequest
             'email' => [
                 $isCreate ? 'required' : 'sometimes',
                 'email',
+                new NoEmoji(),
                 Rule::unique('users', 'email')
                     ->where('audience', 'web')
                     ->ignore($userUuid, 'uuid'),
@@ -66,6 +70,7 @@ class UserRequest extends FormRequest
             'password' => [
                 $isCreate ? 'required' : 'nullable',
                 'string',
+                new NoEmoji(),
                 Password::defaults(),
             ],
 

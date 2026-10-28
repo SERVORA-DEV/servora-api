@@ -92,6 +92,10 @@ class AppointmentAvailabilityService
 
             $shiftStart = Carbon::parse("{$date} {$schedule->start_time}");
             $shiftEnd = Carbon::parse("{$date} {$schedule->end_time}");
+            // Ending at or before it starts (9 AM – 12 AM, or 10 PM – 2 AM): ends the next day.
+            if ($shiftEnd->lte($shiftStart)) {
+                $shiftEnd->addDay();
+            }
 
             if ($start->lt($shiftStart) || $end->gt($shiftEnd)) {
                 continue;
@@ -114,13 +118,12 @@ class AppointmentAvailabilityService
         ];
     }
 
-    // The dates in [$from, $to] on which staffMatchesSchedule() above would
-    // reject *every* start time — so the client booking calendar can grey
-    // them out instead of letting a client pick one and be told afterwards.
-    // It has to agree with that method exactly: same day_of_week and
-    // effective_from/until filtering, and a day is only "off" when rows
-    // exist for it and none of them is a usable shift. No rows at all stays
-    // available, the same opt-in-if-configured stance.
+    // The dates in [$from, $to] on which this therapist can't be booked — so
+    // the client booking calendar can grey them out instead of letting a client
+    // pick one and be told afterwards. Same day_of_week and effective_from/until
+    // filtering as the slots (BookingSlotService), and a day is "off" unless it
+    // has a usable shift: a day with no shift set is off too, and a therapist
+    // with no schedule at all is off every day.
     //
     // Loads the staff member's rows once and walks the dates in PHP, rather
     // than one query per day across a two-month calendar.
@@ -129,10 +132,6 @@ class AppointmentAvailabilityService
     public function staffDaysOff(int $staffId, string $from, string $to): array
     {
         $rows = StaffSchedule::where('staff_id', $staffId)->get();
-
-        if ($rows->isEmpty()) {
-            return [];
-        }
 
         $daysOff = [];
         $cursor = Carbon::parse($from)->startOfDay();
@@ -145,10 +144,6 @@ class AppointmentAvailabilityService
             $schedules = $rows->filter(fn ($row) => $row->day_of_week === $dayOfWeek
                 && (! $row->effective_from || Carbon::parse($row->effective_from)->toDateString() <= $date)
                 && (! $row->effective_until || Carbon::parse($row->effective_until)->toDateString() >= $date));
-
-            if ($schedules->isEmpty()) {
-                continue;
-            }
 
             $hasShift = $schedules->contains(
                 fn ($row) => ! $row->is_day_off && $row->start_time && $row->end_time
@@ -544,6 +539,31 @@ class AppointmentAvailabilityService
         }
 
         return ['ok' => true, 'reason' => null];
+    }
+
+    /**
+     * Why a facility can't be used for a visit, or null. A room under maintenance (or off
+     * the books) takes nobody new — but whoever is in service in it keeps it until they are
+     * done, and the same visit's next service in that sitting may stay with them.
+     */
+    public function facilityOutOfUse(int $facilityId, ?int $appointmentId = null): ?string
+    {
+        $facility = \App\Models\Facility::find($facilityId, ['id', 'name', 'status', 'is_available']);
+        if (! $facility || ($facility->is_available && $facility->status !== 'Maintenance')) {
+            return null;
+        }
+
+        $herePresently = $appointmentId && TherapistAssignment::where('facility_id', $facilityId)
+            ->where('assignment_status', 'In Progress')
+            ->whereHas('appointmentService', fn ($q) => $q->where('appointment_id', $appointmentId))
+            ->exists();
+        if ($herePresently) {
+            return null;
+        }
+
+        return $facility->is_available
+            ? "{$facility->name} is under maintenance, so nobody new can use it. Pick another facility."
+            : "{$facility->name} is not in use. Pick another facility.";
     }
 
     public function suggestTherapists(int $branchId, int $serviceId, string $date, string $startTime, int $durationMinutes): Collection

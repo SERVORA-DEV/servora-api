@@ -259,6 +259,7 @@ class StaffService
         if (! is_array($payload)) {
             return $payload;
         }
+        $payload = $this->withHomeService($payload, null);
         $payload = $this->withCommission($payload, null, $business, $user);
         if (! is_array($payload)) {
             return $payload;
@@ -362,6 +363,7 @@ class StaffService
         if (! is_array($payload)) {
             return $payload;
         }
+        $payload = $this->withHomeService($payload, $existing);
         $payload = $this->withCommission($payload, $existing, $business, $user);
         if (! is_array($payload)) {
             return $payload;
@@ -433,6 +435,25 @@ class StaffService
         }
 
         $payload['specialties'] = \App\Support\StaffSpecialty::forRole($role, $payload['specialties'] ?? null, $existing?->specialties) ?: null;
+
+        return $payload;
+    }
+
+    // The home-service tick (Staff::takesHomeService) on its way to the
+    // database: left out until the column exists, and only for people who
+    // perform services — a manager or the front desk is never sent out.
+    private function withHomeService(array $payload, ?Staff $existing): array
+    {
+        if (! Staff::hasHomeService()) {
+            unset($payload['home_service_available']);
+
+            return $payload;
+        }
+
+        $role = $payload['role'] ?? $existing?->role;
+        if ($role !== \App\Support\StaffSpecialty::ROLE && (array_key_exists('home_service_available', $payload) || array_key_exists('role', $payload))) {
+            $payload['home_service_available'] = false;
+        }
 
         return $payload;
     }

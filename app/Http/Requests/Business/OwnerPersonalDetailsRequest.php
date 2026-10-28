@@ -4,6 +4,7 @@ namespace App\Http\Requests\Business;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use App\Rules\NoEmoji;
 
 class OwnerPersonalDetailsRequest extends FormRequest
 {
@@ -26,10 +27,10 @@ class OwnerPersonalDetailsRequest extends FormRequest
         $userId = $this->user()->id;
 
         return [
-            'first_name' => 'required|string|max:100',
-            'middle_name' => 'nullable|string|max:100',
-            'last_name' => 'required|string|max:100',
-            'suffix' => 'nullable|string|max:20',
+            'first_name' => ['required', 'string', 'max:100', new NoEmoji()],
+            'middle_name' => ['nullable', 'string', 'max:100', new NoEmoji()],
+            'last_name' => ['required', 'string', 'max:100', new NoEmoji()],
+            'suffix' => ['nullable', 'string', 'max:20', new NoEmoji()],
 
             'gender' => ['required', Rule::in(['Male', 'Female', 'Prefer not to say'])],
             'birth_date' => 'required|date|before:today',
@@ -40,6 +41,7 @@ class OwnerPersonalDetailsRequest extends FormRequest
                 'string',
                 'regex:/^\+[1-9]\d{6,14}$/',
                 Rule::unique('users', 'phone_number')->ignore($userId),
+                new NoEmoji(),
             ],
 
             'profile_photo' => 'nullable|string',

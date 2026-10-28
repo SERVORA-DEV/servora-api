@@ -170,7 +170,11 @@ class SpaBranchRepository
         return Staff::where('spa_branch_id', $branchId)
             ->where('role', 'therapist')
             ->where('status', 'active')
-            ->get(array_merge(['id', 'uuid', 'first_name', 'last_name', 'role'], Staff::hasSpecialties() ? ['specialties'] : []));
+            ->get(array_merge(
+                ['id', 'uuid', 'first_name', 'last_name', 'role'],
+                Staff::hasSpecialties() ? ['specialties'] : [],
+                Staff::hasHomeService() ? ['home_service_available'] : [],
+            ));
     }
 
     // Scoped listing for the owner's own "Branches" page — paginate() above

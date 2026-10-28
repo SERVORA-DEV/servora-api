@@ -4,6 +4,7 @@ namespace App\Http\Requests\Client;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use App\Rules\NoEmoji;
 
 // Validates PATCH /client/profile — the mobile onboarding step where a client
 // fills in the name and phone number that registration never collects (see
@@ -22,8 +23,8 @@ class ClientProfileRequest extends FormRequest
         $userId = $this->user()->id;
 
         return [
-            'first_name' => ['required', 'string', 'max:100'],
-            'last_name' => ['required', 'string', 'max:100'],
+            'first_name' => ['required', 'string', 'max:100', new NoEmoji()],
+            'last_name' => ['required', 'string', 'max:100', new NoEmoji()],
             // users.phone_number carries a unique index. The whereNull on
             // deleted_at matters: the table is soft-deleting and Rule::unique
             // queries it raw, so without it a deleted account's number stays
@@ -35,6 +36,7 @@ class ClientProfileRequest extends FormRequest
                 Rule::unique('users', 'phone_number')
                     ->ignore($userId)
                     ->whereNull('deleted_at'),
+                    new NoEmoji(),
             ],
             'email' => [
                 'nullable',
@@ -44,6 +46,7 @@ class ClientProfileRequest extends FormRequest
                     ->where('audience', 'mobile')
                     ->ignore($userId)
                     ->whereNull('deleted_at'),
+                    new NoEmoji(),
             ],
             // Optional — only used for birthday-month vouchers.
             'birth_date' => ['sometimes', 'nullable', 'date', 'before:today', 'after:1900-01-01'],

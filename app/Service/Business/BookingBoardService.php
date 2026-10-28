@@ -44,7 +44,10 @@ class BookingBoardService
     ) {
     }
 
-    public function board(User $user, string $date, int $duration, ?int $step = null, ?string $excludeAppointmentUuid = null)
+    // $home: the visit is a home service, so only the therapists the owner
+    // marked "Available for home service" can take it (the others are shown
+    // as not for home service).
+    public function board(User $user, string $date, int $duration, ?int $step = null, ?string $excludeAppointmentUuid = null, bool $home = false)
     {
         $step = in_array($step, self::STEPS, true) ? $step : self::STEP_MINUTES;
         // The branch the front desk is working in (the web sends it).
@@ -65,13 +68,14 @@ class BookingBoardService
             'hours' => [],
             // The notice a booking needs (minutes; 0 = none), for saying why near times are closed.
             'lead_minutes' => 0,
+            'home_service' => $home,
         ];
 
         $therapists = Staff::where('spa_branch_id', $branchId)
             ->where('role', 'therapist')
             ->where('status', 'active')
             ->orderBy('first_name')->orderBy('last_name')
-            ->get(['id', 'uuid', 'first_name', 'last_name']);
+            ->get(array_merge(['id', 'uuid', 'first_name', 'last_name', 'role'], Staff::hasHomeService() ? ['home_service_available'] : []));
         $names = $therapists->mapWithKeys(fn (Staff $s) => [$s->uuid => trim("{$s->first_name} {$s->last_name}")]);
 
         $day = $this->dayWindow($branchId, $date);
@@ -83,9 +87,13 @@ class BookingBoardService
 
         // The booking being moved (a reschedule) is not counted against itself,
         // in the therapists' busy times or in the hour's count.
-        $excludeId = $excludeAppointmentUuid
-            ? Appointment::where('uuid', $excludeAppointmentUuid)->where('spa_branch_id', $branchId)->value('id')
+        $moving = $excludeAppointmentUuid
+            ? Appointment::where('uuid', $excludeAppointmentUuid)->where('spa_branch_id', $branchId)->first(['id', 'service_location'])
             : null;
+        $excludeId = $moving?->id;
+        // Moving a home visit is still a home visit, whatever the page asked.
+        $home = $home || (bool) $moving?->isHomeService();
+        $result['home_service'] = $home;
 
         // The spa's reservations-per-hour limit and what is already taken.
         $hourLimit = HourlyCapacity::limitFor(SpaBranch::findOrFail($branchId));
@@ -107,6 +115,7 @@ class BookingBoardService
             $hourLimit,
             $hourLimit > 0 ? HourlyCapacity::bookedByHour($branchId, $date, $excludeId) : [],
             $soonBefore,
+            $home,
         );
 
         $result['open'] = BookingBoard::clock($day['open']);
@@ -183,12 +192,17 @@ class BookingBoardService
                 'uuid' => $staff->uuid,
                 'on_leave' => in_array($staff->id, $onLeave, true),
                 'has_schedule' => $rows->isNotEmpty(),
+                'home_service' => $staff->takesHomeService(),
                 'shifts' => $rows
                     ->filter(fn ($row) => ! $row->is_day_off && $row->start_time && $row->end_time)
-                    ->map(fn ($row) => [
-                        'start' => BookingBoard::minutes($row->start_time),
-                        'end' => BookingBoard::minutes($row->end_time),
-                    ])
+                    ->map(function ($row) {
+                        $start = BookingBoard::minutes($row->start_time);
+                        $end = BookingBoard::minutes($row->end_time);
+
+                        // A shift ending at or before it starts (9 AM – 12 AM, or 10 PM – 2 AM)
+                        // ends the next day; as written (end 00:00) it never fit anywhere.
+                        return ['start' => $start, 'end' => $end <= $start ? $end + 1440 : $end];
+                    })
                     ->values()->all(),
             ];
         })->values()->all();
@@ -219,6 +233,7 @@ class BookingBoardService
                     'start' => $start,
                     'end' => $start + max($this->availabilityService->estimatedDurationMinutes($a), 30),
                     'staff' => array_map('intval', $staff),
+                    'home' => $a->isHomeService(),
                 ];
             })
             ->values()->all();

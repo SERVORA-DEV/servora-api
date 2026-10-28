@@ -227,6 +227,8 @@ class BranchDetailResource extends JsonResource
                 'specialties' => $staff->specialtyList(),
                 // For the app's preferred-gender filter (App\Support\StaffGender).
                 'gender' => $staff->gender,
+                // Whether they can be sent to a client's home (HomeServiceRules).
+                'home_service_available' => $staff->takesHomeService(),
             ])->values(),
         ];
     }

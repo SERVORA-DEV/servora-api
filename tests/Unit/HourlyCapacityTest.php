@@ -71,7 +71,7 @@ class HourlyCapacityTest extends TestCase
     private function board(int $limit, array $counts, int $step = 5): array
     {
         $day = ['open' => 1140, 'close' => 1320, 'closures' => []];   // 7 PM – 10 PM
-        $therapist = ['id' => 1, 'uuid' => 't-1', 'on_leave' => false, 'has_schedule' => false, 'shifts' => []];
+        $therapist = ['id' => 1, 'uuid' => 't-1', 'on_leave' => false, 'has_schedule' => true, 'shifts' => [['start' => 0, 'end' => 1440]]];
 
         return BookingBoard::build($day, [$therapist], [], 30, $step, null, $limit, $counts);
     }
@@ -132,7 +132,7 @@ class HourlyCapacityTest extends TestCase
         $this->assertSame('free', $any['20:30']['state']);
         $this->assertSame('free', BookingBoard::build($day, [], [], 30, 5)['slots'][0]['state']);
 
-        $therapist = ['id' => 1, 'uuid' => 't-1', 'on_leave' => false, 'has_schedule' => false, 'shifts' => []];
+        $therapist = ['id' => 1, 'uuid' => 't-1', 'on_leave' => false, 'has_schedule' => true, 'shifts' => [['start' => 0, 'end' => 1440]]];
         $mine = array_column(BookingBoard::build($day, [$therapist], [], 30, 5, null, 0, [], 1230)['therapists'][0]['slots'], 'state', 'time');
         $this->assertSame('too_soon', $mine['20:25']);
         $this->assertSame('free', $mine['20:30']);

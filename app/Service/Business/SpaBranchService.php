@@ -206,6 +206,11 @@ class SpaBranchService
             ? $this->spaBranchRepository->publicTherapistsForBranch($branch->id)
             : collect();
 
+        // A home visit goes to staff the owner marked for home service only.
+        if (! empty($query['home_service'])) {
+            $therapists = $therapists->filter(fn ($staff) => $staff->takesHomeService())->values();
+        }
+
         $serviceIds = $this->therapistServiceIds($query);
         if ($serviceIds->isNotEmpty()) {
             $qualifications = app(\App\Repository\Business\StaffServiceRepository::class);
@@ -306,11 +311,15 @@ class SpaBranchService
         }
 
         $excludeId = null;
+        // Moving a home visit stays a home visit, whatever the app sent.
+        $home = ! empty($query['home_service']);
         if (! empty($query['exclude_appointment_uuid']) && $user) {
-            $excludeId = \App\Models\Appointment::where('uuid', $query['exclude_appointment_uuid'])
+            $own = \App\Models\Appointment::where('uuid', $query['exclude_appointment_uuid'])
                 ->where('spa_branch_id', $branch->id)
                 ->whereHas('client', fn ($q) => $q->where('user_id', $user->id))
-                ->value('id');
+                ->first(['id', 'service_location']);
+            $excludeId = $own?->id;
+            $home = $home || (bool) $own?->isHomeService();
         }
 
         return ['data' => app(\App\Service\Client\BookingSlotService::class)->slots(
@@ -319,6 +328,7 @@ class SpaBranchService
             (int) $query['duration_minutes'],
             $therapist,
             $excludeId,
+            $home,
         )];
     }
 

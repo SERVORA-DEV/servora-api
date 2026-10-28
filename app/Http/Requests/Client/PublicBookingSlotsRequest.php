@@ -23,6 +23,8 @@ class PublicBookingSlotsRequest extends FormRequest
             'duration_minutes' => 'required|integer|min:1|max:600',
             'therapist_uuid' => 'nullable|uuid',
             'exclude_appointment_uuid' => 'nullable|uuid',
+            // A home service visit: only the staff who take home service count.
+            'home_service' => 'nullable|boolean',
         ];
     }
 

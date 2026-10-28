@@ -5,6 +5,7 @@ namespace App\Http\Requests\Auth;
 use Illuminate\Validation\Rules\Password;
 
 use Illuminate\Foundation\Http\FormRequest;
+use App\Rules\NoEmoji;
 
 class ResetPasswordRequest extends FormRequest
 {
@@ -19,6 +20,7 @@ class ResetPasswordRequest extends FormRequest
             'email' => [
                 'required',
                 'email',
+                new NoEmoji(),
             ],
 
             'audience' => ['sometimes', 'in:web,mobile'],
@@ -32,6 +34,7 @@ class ResetPasswordRequest extends FormRequest
                 'required',
                 'confirmed',
                 Password::defaults(),
+                new NoEmoji(),
             ],
         ];
     }

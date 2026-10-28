@@ -253,6 +253,11 @@ class AppointmentService
                 if (! $home['ok']) {
                     return response()->json(['message' => $home['reason']], 422);
                 }
+                if (! empty($payload['requested_therapist_uuid'])
+                    && ($asked = $this->resolveStaffForBranch($payload['requested_therapist_uuid'], $branch->id))
+                    && ($refusal = HomeServiceRules::staffRefusal($asked))) {
+                    return response()->json(['message' => $refusal], 422);
+                }
             }
 
             $scheduleCheck = $this->availabilityService->branchIsOpen(
@@ -588,6 +593,7 @@ class AppointmentService
                 max($this->availabilityService->estimatedDurationMinutes($appointment), 30),
                 $requestedStaff,
                 $appointment->id,
+                (bool) $home,
             );
             abort_if($slotProblem !== null, 422, (string) $slotProblem);
 
@@ -614,13 +620,13 @@ class AppointmentService
                 }
             }
 
-            // No therapist asked for: each service someone performs gets a
-            // qualified therapist who is working and free then — the client's
-            // staff-gender preference respected. Nobody free: it is left for the
-            // front desk, as it always was.
-            if (empty($payload['requested_therapist_uuid'])) {
-                $this->autoAssignTherapists($appointment, $branch->id, $serviceItems, $payload['appointment_date'], $payload['appointment_time']);
-            }
+            // No therapist asked for ("any"): nobody is picked here. The booking
+            // still takes one of the free therapists in the slot count
+            // (BookingSlotService), and the front desk assigns or reserves staff
+            // for the client from the visit page — before they arrive or at
+            // check-in — with the client's staff-gender preference in view.
+            // (Picking someone at booking time used to hold whoever came first,
+            // also staff with no shift that day.)
 
             $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
 
@@ -705,6 +711,11 @@ class AppointmentService
         }
 
         $appointment->load('services.serviceVariant.service');
+
+        // A home visit needs someone the owner has marked for home service.
+        if ($appointment->isHomeService() && ($refusal = HomeServiceRules::staffRefusal($staff))) {
+            abort(422, $refusal);
+        }
 
         // They have to be able to perform what is booked (a client can't be
         // given someone the owner has not qualified for it).
@@ -1988,7 +1999,10 @@ class AppointmentService
         $appointment->loadMissing('branch.business.settings');
         $grace = AttendanceStatusCalculator::graceMinutesFor($appointment->branch?->business);
 
-        $options = $therapists->map(function (Staff $staff) use ($attendanceByStaffId, $date, $time, $duration, $branchSchedule, $serviceId, $rotationByStaffId, $grace) {
+        // A home visit can only go to staff marked "Available for home service".
+        $isHome = $appointment->isHomeService();
+
+        $options = $therapists->map(function (Staff $staff) use ($attendanceByStaffId, $date, $time, $duration, $branchSchedule, $serviceId, $rotationByStaffId, $grace, $isHome) {
             $attendance = $attendanceByStaffId->get($staff->id);
             $resolved = $this->attendanceStatusCalculator->resolve($staff, $attendance, $date, $staff->schedules, $branchSchedule, graceMinutes: $grace);
             $scheduleCheck = $this->availabilityService->staffMatchesSchedule($staff->id, $date, $time, $duration);
@@ -2000,6 +2014,7 @@ class AppointmentService
             $qualified = $serviceId === null
                 || $this->availabilityService->isStaffQualified($staff->id, $serviceId)['ok'];
 
+            $homeOk = ! $isHome || $staff->takesHomeService();
             $checkedIn = (bool) $attendance?->check_in_at;
             $matchesWindow = $scheduleCheck['ok'];
 
@@ -2023,6 +2038,9 @@ class AppointmentService
                 'gender' => $staff->gender,
                 'state' => $state,
                 'qualified' => $qualified,
+                // False when this is a home visit and they aren't marked
+                // "Available for home service" (always true for a visit in the spa).
+                'home_service_ok' => $homeOk,
                 // Turn order — see TherapistQueueCalculator. Null position
                 // means they aren't on the floor (never timed in, or already
                 // timed out), which is a different thing from being last.
@@ -2039,7 +2057,7 @@ class AppointmentService
                 // skips the schedule check entirely once checked in while
                 // always running the qualification check, matching this
                 // exactly.
-                'pickable' => $checkedIn && $qualified,
+                'pickable' => $checkedIn && $qualified && $homeOk,
                 'checked_in_at' => $attendance?->check_in_at?->format('H:i'),
                 'is_day_off' => $resolved['is_day_off'],
                 'scheduled_start' => $resolved['scheduled_start'],
@@ -2051,6 +2069,7 @@ class AppointmentService
             // the unqualified last. Nobody is dropped — the front desk should
             // be able to see why someone isn't an option.
             ->sortBy([
+                fn (array $a, array $b) => ($b['home_service_ok'] <=> $a['home_service_ok']),
                 fn (array $a, array $b) => ($b['qualified'] <=> $a['qualified']),
                 fn (array $a, array $b) => ($b['in_queue'] <=> $a['in_queue']),
                 fn (array $a, array $b) => ($a['queue_position'] ?? PHP_INT_MAX) <=> ($b['queue_position'] ?? PHP_INT_MAX),
@@ -2066,6 +2085,7 @@ class AppointmentService
         // the front desk down a dead end.
         $nextUpIndex = $options->search(fn (array $row) => RotationTurn::canTakeNext($row['in_queue'], $row['rotation_status'])
             && $row['qualified']
+            && $row['home_service_ok']
             && ! in_array($row['uuid'], $alreadyOnThisServiceUuids, true));
 
         if ($nextUpIndex !== false) {
@@ -2624,6 +2644,11 @@ class AppointmentService
             }
 
             if ($assignment->facility_id) {
+                // Put under maintenance after it was picked: not started in (the
+                // client in it now, if any, is left to finish).
+                if ($outOfUse = $this->availabilityService->facilityOutOfUse($assignment->facility_id, $service->appointment_id)) {
+                    return ['ok' => false, 'reason' => $outOfUse];
+                }
                 // In use by ANOTHER client's service — this visit's own service
                 // in the room is the "run together" case allowed just above.
                 $occupied = $this->availabilityService->isFacilityCurrentlyOccupied($assignment->facility_id, $assignment->id, $service->appointment_id);
@@ -3222,33 +3247,6 @@ class AppointmentService
         }
     }
 
-    // Gives each service someone performs the first therapist who is
-    // qualified, working and free at the visit's start (the same checks the
-    // app's therapist list is built from). A failed assignment is not an error.
-    private function autoAssignTherapists(Appointment $appointment, int $branchId, array $serviceItems, string $date, string $time): void
-    {
-        foreach ($serviceItems as $service) {
-            $service->load('serviceVariant.service');
-            if (! ServiceKind::needsTherapist($this->kindOf($service))) {
-                continue;
-            }
-
-            $candidates = $this->availabilityService->suggestTherapists(
-                $branchId,
-                $service->serviceVariant->service_id,
-                $date,
-                $time,
-                max($service->lengthMinutes() ?? 30, 30),
-            )->filter(fn (Staff $staff) => StaffGender::matches($staff->gender, $appointment->preferred_staff_gender));
-
-            foreach ($candidates as $staff) {
-                if ($this->assignTherapistInternal($service, $appointment, $staff)['ok']) {
-                    break;
-                }
-            }
-        }
-    }
-
     // The booking asked for this therapist by name: kept on the appointment
     // (Appointment::requestedStaff), whether or not they could be assigned.
     private function rememberRequestedTherapist(Appointment $appointment, int $branchId, ?string $staffUuid): void
@@ -3357,6 +3355,11 @@ class AppointmentService
         }
         if (! ServiceKind::needsTherapist($this->kindOf($service))) {
             return ['ok' => false, 'reason' => 'This service needs no staff.', 'assignment' => null];
+        }
+        // A home visit goes to staff the owner has marked for home service —
+        // never bypassed, like qualification.
+        if ($appointment->isHomeService() && ($refusal = HomeServiceRules::staffRefusal($staff))) {
+            return ['ok' => false, 'reason' => $refusal, 'assignment' => null];
         }
 
         $duration = $service->lengthMinutes() ?? 30;
@@ -3472,6 +3475,11 @@ class AppointmentService
         $serviceId = $service->serviceVariant?->service_id;
         if (! $theirs && $serviceId && $facility->services()->exists() && ! $facility->services()->where('services.id', $serviceId)->exists()) {
             return ['ok' => false, 'reason' => 'This facility does not support the selected service.'];
+        }
+
+        // Under maintenance: nobody new (whoever is in it now finishes first).
+        if ($outOfUse = $this->availabilityService->facilityOutOfUse($facility->id, $appointment->id)) {
+            return ['ok' => false, 'reason' => $outOfUse];
         }
 
         $duration = $service->lengthMinutes() ?? 30;

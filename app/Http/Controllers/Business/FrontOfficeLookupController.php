@@ -94,8 +94,10 @@ class FrontOfficeLookupController extends Controller
             'step' => 'nullable|integer|in:5,10,15,30,60',
             // Rescheduling: the booking being moved doesn't count against itself.
             'exclude_appointment_uuid' => 'nullable|uuid',
+            // A home service visit: only the staff available for home service can take it.
+            'home_service' => 'nullable|boolean',
         ]);
 
-        return $bookingBoardService->board($request->user(), $data['date'], (int) ($data['duration'] ?? 60), isset($data['step']) ? (int) $data['step'] : null, $data['exclude_appointment_uuid'] ?? null);
+        return $bookingBoardService->board($request->user(), $data['date'], (int) ($data['duration'] ?? 60), isset($data['step']) ? (int) $data['step'] : null, $data['exclude_appointment_uuid'] ?? null, (bool) ($data['home_service'] ?? false));
     }
 }

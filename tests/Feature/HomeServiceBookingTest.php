@@ -39,6 +39,7 @@ class HomeServiceBookingTest extends TestCase
     private SpaBranch $branch;
     private Service $service;
     private ServiceVariant $variant;
+    private Staff $staff;
 
     protected function setUp(): void
     {
@@ -54,7 +55,8 @@ class HomeServiceBookingTest extends TestCase
             'latitude' => self::BRANCH[0],
             'longitude' => self::BRANCH[1],
         ]);
-        Staff::factory()->create(['spa_branch_id' => $this->branch->id, 'role' => 'therapist', 'status' => 'active']);
+        // Someone the owner has made available for home service.
+        $this->staff = Staff::factory()->create(['spa_branch_id' => $this->branch->id, 'role' => 'therapist', 'status' => 'active', 'home_service_available' => true]);
 
         $this->service = Service::factory()->create(['spa_business_id' => $this->business->id, 'name' => 'Swedish Massage', 'home_service_available' => true]);
         $this->variant = ServiceVariant::factory()->create(['service_id' => $this->service->id, 'duration_minutes' => 60, 'price' => 700]);
@@ -191,6 +193,31 @@ class HomeServiceBookingTest extends TestCase
         ])->assertSuccessful();
 
         $this->assertSame(1, Appointment::count());
+    }
+
+    // The owner's "Available for home service" tick on each staff member.
+    public function test_a_branch_where_nobody_goes_out_does_not_offer_home_service(): void
+    {
+        $this->staff->update(['home_service_available' => false]);
+        $this->offerHomeService();
+
+        $this->getJson("/api/spas/{$this->branch->uuid}")
+            ->assertOk()
+            ->assertJsonPath('data.home_service.enabled', false)
+            ->assertJsonPath('data.home_service.staff_available', false);
+        $this->bookHome()->assertStatus(422)->assertJsonPath('message', "{$this->branch->branch_name} has no one available for home service right now.");
+        $this->assertSame(0, Appointment::count());
+    }
+
+    public function test_a_requested_therapist_who_does_not_go_out_is_refused(): void
+    {
+        $other = Staff::factory()->create(['spa_branch_id' => $this->branch->id, 'role' => 'therapist', 'status' => 'active', 'home_service_available' => false]);
+        $this->offerHomeService();
+
+        $this->bookHome(self::NEAR, ['requested_therapist_uuid' => $other->uuid])
+            ->assertStatus(422)
+            ->assertJsonPath('message', "{$other->first_name} {$other->last_name} isn't available for home service. Please choose someone who is.");
+        $this->assertSame(0, Appointment::count());
     }
 
     public function test_the_branch_page_tells_the_app_what_is_offered(): void

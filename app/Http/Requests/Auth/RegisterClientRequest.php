@@ -6,6 +6,7 @@ use Illuminate\Validation\Rules\Password;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use App\Rules\NoEmoji;
 
 class RegisterClientRequest extends FormRequest
 {
@@ -34,12 +35,14 @@ class RegisterClientRequest extends FormRequest
                         ->where('audience', 'mobile')
                         ->whereNotNull('email_verified_at')
                 ),
+                new NoEmoji(),
             ],
 
             'password' => [
                 'required',
                 'confirmed',
                 Password::defaults(),
+                new NoEmoji(),
             ],
 
             // "I agree to the Terms of Service and Privacy Policy" — the

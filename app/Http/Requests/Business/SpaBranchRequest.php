@@ -5,6 +5,7 @@ namespace App\Http\Requests\Business;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use App\Rules\NoEmoji;
 
 class SpaBranchRequest extends FormRequest
 {
@@ -46,8 +47,8 @@ class SpaBranchRequest extends FormRequest
                     ->whereNull('deleted_at'),
             ],
 
-            'email' => 'nullable|email|max:255',
-            'phone_number' => 'nullable|string|max:20',
+            'email' => ['nullable', 'email', 'max:255', new NoEmoji()],
+            'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji()],
 
             'description' => 'nullable|string',
 

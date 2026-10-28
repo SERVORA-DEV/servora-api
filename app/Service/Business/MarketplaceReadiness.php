@@ -189,16 +189,15 @@ class MarketplaceReadiness
             ->whereNotNull('closing_time');
     }
 
-    // A therapist with no schedule entered works whenever the branch is open
-    // (BookingSlotService's convention); one whose rows are all days off
-    // can't take anyone.
+    // A therapist counts once they have a shift entered (BookingSlotService's
+    // convention): one with no schedule, or whose rows are all days off, can't
+    // take anyone.
     private static function workingTherapists($query)
     {
         return $query
             ->where('role', 'therapist')
             ->where('status', 'active')
-            ->where(fn ($q) => $q
-                ->whereDoesntHave('schedules')
-                ->orWhereHas('schedules', fn ($s) => $s->where('is_day_off', false)));
+            ->whereHas('schedules', fn ($s) => $s->where('is_day_off', false)
+                ->whereNotNull('start_time')->whereNotNull('end_time'));
     }
 }

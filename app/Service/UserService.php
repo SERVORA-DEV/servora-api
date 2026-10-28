@@ -91,7 +91,7 @@ class UserService
     {
         if (empty($payload->email) || empty($payload->password)) {
             return response()->json([
-                'message' => 'Email or username, and password, are required'
+                'message' => 'Enter your email or username, and your password.'
             ], 400);
         }
 

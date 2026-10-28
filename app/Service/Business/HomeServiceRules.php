@@ -4,6 +4,7 @@ namespace App\Service\Business;
 
 use App\Models\Appointment;
 use App\Models\SpaBranch;
+use App\Models\Staff;
 use App\Service\Client\BookingPolicy;
 
 // Home service — the therapist goes to the client. One place for the rules,
@@ -16,6 +17,9 @@ use App\Service\Client\BookingPolicy;
 //     service area (straight-line distance from the branch's own pin);
 //   • every service on the booking is one the owner marked "Available for
 //     home service";
+//   • whoever does the visit is staff the owner marked "Available for home
+//     service" (Staff::takesHomeService) — and the branch offers it only
+//     while it has someone like that;
 //   • the services add up to at least the branch's minimum, when it has one
 //     (the client app is refused; the front desk is only warned).
 //
@@ -39,10 +43,14 @@ class HomeServiceRules
     {
         $policy = BookingPolicy::for($branch);
         $hasPin = $branch->latitude !== null && $branch->longitude !== null;
+        // No pin on the branch = no way to measure the area.
+        $on = $policy['home_service_enabled'] && $hasPin;
+        // Switched on, but nobody can be sent out: not bookable (nothing to ask when it is off).
+        $hasStaff = ! $on || self::hasStaff($branch);
 
         return [
-            // No pin on the branch = no way to measure the area.
-            'enabled' => $policy['home_service_enabled'] && $hasPin,
+            'enabled' => $on && $hasStaff,
+            'staff_available' => $hasStaff,
             'fee' => (float) $policy['home_service_fee'],
             'radius_km' => (int) $policy['home_service_radius_km'],
             'min_minutes' => (int) $policy['home_service_min_minutes'],
@@ -60,7 +68,9 @@ class HomeServiceRules
         $fail = fn (string $reason) => ['ok' => false, 'reason' => $reason, 'distance_km' => null, 'fee' => 0.0];
 
         if (! $offer['enabled']) {
-            return $fail("{$branch->branch_name} doesn't offer home service.");
+            return $fail($offer['staff_available']
+                ? "{$branch->branch_name} doesn't offer home service."
+                : "{$branch->branch_name} has no one available for home service right now.");
         }
 
         if (trim((string) ($payload['home_address'] ?? '')) === '') {
@@ -83,6 +93,29 @@ class HomeServiceRules
         }
 
         return ['ok' => true, 'reason' => null, 'distance_km' => round($distance, 2), 'fee' => $offer['fee']];
+    }
+
+    // Whether anyone at the branch can be sent to a client's home: an active
+    // staff member with "Available for home service" on.
+    public static function hasStaff(SpaBranch $branch): bool
+    {
+        return Staff::where('spa_branch_id', $branch->id)
+            ->where('role', 'therapist')
+            ->where('status', 'active')
+            ->forHomeService()
+            ->exists();
+    }
+
+    // Why this person can't do a home visit, or null when they can.
+    public static function staffRefusal(Staff $staff): ?string
+    {
+        if ($staff->takesHomeService()) {
+            return null;
+        }
+
+        $name = trim("{$staff->first_name} {$staff->last_name}") ?: 'This staff member';
+
+        return "{$name} isn't available for home service. Please choose someone who is.";
     }
 
     // Why a home booking of $minutes is too short for this branch, or null

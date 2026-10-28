@@ -19,6 +19,8 @@ class LookupTherapistResource extends JsonResource
             'specialties' => $this->resource->specialtyList(),
             // For the preferred-gender filter (App\Support\StaffGender).
             'gender' => $this->gender,
+            // Whether they can be sent to a client's home (HomeServiceRules), for the home-visit pickers.
+            'home_service_available' => $this->resource->takesHomeService(),
 
             // Which services this therapist may perform, so the new-appointment
             // modal can flag an ineligible "Requested Therapist" while the

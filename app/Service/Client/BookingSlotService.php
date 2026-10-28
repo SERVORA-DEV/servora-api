@@ -9,6 +9,7 @@ use App\Models\SpaBranch;
 use App\Models\Staff;
 use App\Models\StaffSchedule;
 use App\Service\Business\AppointmentAvailabilityService;
+use App\Service\Business\HomeServiceRules;
 use App\Support\BranchClosures;
 use App\Support\HourlyCapacity;
 use Carbon\Carbon;
@@ -32,9 +33,14 @@ use Illuminate\Support\Collection;
 //
 // Everything for the day is loaded once (a handful of queries) and checked
 // in memory, so listing a whole day of slots costs the same as one check.
-// Same "not configured = open" stance as AppointmentAvailabilityService: a
-// branch with no therapists on record isn't capacity-limited, and a
-// therapist with no schedule rows works whenever the branch is open.
+// A shift is what makes a therapist bookable: one with no shift set for the day
+// (not set, or a day off) is not free then. A branch with no therapists on
+// record at all isn't capacity-limited.
+//
+// A home service visit ($home) is only for staff the owner marked "Available
+// for home service": the others are left out of the count, so "any therapist"
+// means the home-service staff alone, and asking for one of the others is
+// refused. In-spa bookings still waiting for someone take the other staff first.
 class BookingSlotService
 {
     // A start every five minutes: a client may book 8:35, not only 8:00 and 8:30.
@@ -49,7 +55,7 @@ class BookingSlotService
     }
 
     // @return array{date: string, duration_minutes: int, closed_reason: ?string, slots: list<array{time: string, available: bool, reason: ?string}>, hours: list<array{hour: string, booked: int, limit: int, full: bool}>}
-    public function slots(SpaBranch $branch, string $date, int $duration, ?Staff $therapist = null, ?int $excludeAppointmentId = null): array
+    public function slots(SpaBranch $branch, string $date, int $duration, ?Staff $therapist = null, ?int $excludeAppointmentId = null, bool $home = false): array
     {
         $duration = max($duration, 1);
         $policy = BookingPolicy::for($branch);
@@ -69,7 +75,7 @@ class BookingSlotService
             return $result;
         }
 
-        $ctx = $this->loadDay($branch, $date, $excludeAppointmentId);
+        $ctx = $this->loadDay($branch, $date, $excludeAppointmentId, $home);
         $hourLimit = HourlyCapacity::limitFor($branch);
         $hourCounts = $hourLimit > 0 ? HourlyCapacity::bookedByHour($branch->id, $date, $excludeAppointmentId) : [];
         $hours = [];
@@ -102,7 +108,7 @@ class BookingSlotService
 
     // Why this exact booking can't be made, or null. Booking and reschedule
     // call this after the policy checks.
-    public function bookingProblem(SpaBranch $branch, string $date, string $time, int $duration, ?Staff $therapist = null, ?int $excludeAppointmentId = null): ?string
+    public function bookingProblem(SpaBranch $branch, string $date, string $time, int $duration, ?Staff $therapist = null, ?int $excludeAppointmentId = null, bool $home = false): ?string
     {
         $duration = max($duration, 1);
         $day = $this->dayWindow($branch->id, $date);
@@ -129,10 +135,11 @@ class BookingSlotService
             return $hourProblem;
         }
 
-        $problem = $this->capacityProblem($this->loadDay($branch, $date, $excludeAppointmentId), $date, $start, $end, $therapist);
+        $problem = $this->capacityProblem($this->loadDay($branch, $date, $excludeAppointmentId, $home), $date, $start, $end, $therapist);
 
         return match ($problem) {
             null => null,
+            'therapist_not_home' => HomeServiceRules::staffRefusal($therapist),
             'therapist_unavailable' => "{$this->nameOf($therapist)} isn't free at that time. Please pick another time or therapist.",
             default => 'That time just filled up. Please pick another time.',
         };
@@ -292,13 +299,17 @@ class BookingSlotService
 
     // Therapists, their shifts and leave, and the day's bookings as busy
     // windows (each tagged with the therapists assigned to it, if any).
-    private function loadDay(SpaBranch $branch, string $date, ?int $excludeAppointmentId): array
+    private function loadDay(SpaBranch $branch, string $date, ?int $excludeAppointmentId, bool $home = false): array
     {
-        $therapists = Staff::where('spa_branch_id', $branch->id)
+        $all = Staff::where('spa_branch_id', $branch->id)
             ->where('role', 'therapist')
             ->where('status', 'active')
-            ->get(['id', 'uuid', 'first_name', 'last_name']);
-        $ids = $therapists->pluck('id')->all();
+            ->get(array_merge(['id', 'uuid', 'first_name', 'last_name', 'role'], Staff::hasHomeService() ? ['home_service_available'] : []));
+        // For a home visit only the staff who go out are counted; the rest
+        // are kept apart, as they still take the in-spa bookings.
+        $therapists = $home ? $all->filter(fn (Staff $s) => $s->takesHomeService())->values() : $all;
+        $others = $home ? $all->reject(fn (Staff $s) => $s->takesHomeService())->values() : collect();
+        $ids = $all->pluck('id')->all();
 
         $dayOfWeek = Carbon::parse($date)->format('l');
         $schedules = StaffSchedule::whereIn('staff_id', $ids)
@@ -326,17 +337,19 @@ class BookingSlotService
                 return [
                     'start' => $start,
                     'end' => $start->copy()->addMinutes(max($this->availabilityService->estimatedDurationMinutes($a), 30)),
+                    'home' => $a->isHomeService(),
                     'staff' => $a->services
                         ->flatMap(fn ($s) => $s->therapistAssignments->whereIn('assignment_status', ['Assigned', 'In Progress'])->pluck('staff_id'))
                         ->unique()->values()->all(),
                 ];
             });
 
-        return ['therapists' => $therapists, 'schedules' => $schedules, 'onLeave' => $onLeave, 'busy' => $busy];
+        return ['therapists' => $therapists, 'others' => $others, 'home' => $home, 'schedules' => $schedules, 'onLeave' => $onLeave, 'busy' => $busy];
     }
 
     // null = bookable; 'full' = no therapist left; 'therapist_unavailable'
-    // = the requested therapist is off, on leave or already booked.
+    // = the requested therapist is off, on leave or already booked;
+    // 'therapist_not_home' = a home visit, and they aren't marked for it.
     private function capacityProblem(array $ctx, string $date, Carbon $start, Carbon $end, ?Staff $therapist): ?string
     {
         /** @var Collection $therapists */
@@ -347,13 +360,17 @@ class BookingSlotService
         $unassigned = $overlapping->filter(fn ($b) => empty($b['staff']))->count();
 
         if ($therapist) {
+            if ($ctx['home'] && ! $therapist->takesHomeService()) {
+                return 'therapist_not_home';
+            }
             if (! $this->onShift($ctx, $therapist->id, $date, $start, $end) || in_array($therapist->id, $takenStaff, true)) {
                 return 'therapist_unavailable';
             }
         }
 
-        // No therapists on record: not capacity-limited (nothing to count).
-        if ($therapists->isEmpty()) {
+        // No therapists on record: not capacity-limited (nothing to count). A
+        // home visit with staff on record but none who go out has no one left.
+        if ($therapists->isEmpty() && ! ($ctx['home'] && $ctx['others']->isNotEmpty())) {
             return null;
         }
 
@@ -362,8 +379,19 @@ class BookingSlotService
             ->count();
 
         // Unassigned overlapping bookings each still need one of the free
-        // therapists; this booking needs one more.
-        return $free > $unassigned ? null : 'full';
+        // therapists; this booking needs one more. For a home visit, the ones
+        // in the spa go to the other staff first, and only what is left over
+        // takes someone from the home-service staff.
+        $needed = $unassigned;
+        if ($ctx['home']) {
+            $homeWaiting = $overlapping->filter(fn ($b) => empty($b['staff']) && $b['home'])->count();
+            $othersFree = $ctx['others']
+                ->filter(fn ($t) => $this->onShift($ctx, $t->id, $date, $start, $end) && ! in_array($t->id, $takenStaff, true))
+                ->count();
+            $needed = $homeWaiting + max(($unassigned - $homeWaiting) - $othersFree, 0);
+        }
+
+        return $free > $needed ? null : 'full';
     }
 
     private function onShift(array $ctx, int $staffId, string $date, Carbon $start, Carbon $end): bool
@@ -374,7 +402,7 @@ class BookingSlotService
 
         $rows = $ctx['schedules']->get($staffId);
         if (! $rows || $rows->isEmpty()) {
-            return true; // no schedule entered — works whenever the branch is open
+            return false; // no shift set for the day
         }
 
         foreach ($rows as $row) {
@@ -383,6 +411,10 @@ class BookingSlotService
             }
             $shiftStart = Carbon::parse("{$date} {$row->start_time}");
             $shiftEnd = Carbon::parse("{$date} {$row->end_time}");
+            // Ending at or before it starts (9 AM – 12 AM, or 10 PM – 2 AM): ends the next day.
+            if ($shiftEnd->lte($shiftStart)) {
+                $shiftEnd->addDay();
+            }
             if ($start->lt($shiftStart) || $end->gt($shiftEnd)) {
                 continue;
             }

@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\System;
 
+use App\Rules\NoEmoji;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -22,6 +23,7 @@ class PersonalEmailRequest extends FormRequest
                 // email — this is a separate recovery/verification contact,
                 // not a duplicate of the account email.
                 'different:email',
+                new NoEmoji(),
                 Rule::unique('users', 'personal_email')->ignore($this->user()->uuid, 'uuid'),
             ],
         ];

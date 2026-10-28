@@ -29,6 +29,8 @@ class StaffResource extends JsonResource
             'role' => $this->role,
             // What they do, main one first (App\Support\StaffSpecialty).
             'specialties' => $this->resource->specialtyList(),
+            // Whether the owner lets them be sent to a client's home (HomeServiceRules).
+            'home_service_available' => $this->resource->role === \App\Support\StaffSpecialty::ROLE && $this->resource->takesHomeService(),
             // Their own commission rate; null: the standard one (which comes
             // beside the list, as `commission` — StaffService). What someone
             // is paid is for the owner and managers only.

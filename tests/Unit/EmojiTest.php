@@ -21,7 +21,7 @@ class EmojiTest extends TestCase
         }
     }
 
-    public function test_the_fields_holding_them_are_named_and_the_promo_banner_is_allowed(): void
+    public function test_the_fields_holding_them_are_named_the_promo_banner_is_allowed_and_the_old_password_is_not_looked_at(): void
     {
         $input = [
             'name' => 'Spa 😀',
@@ -29,8 +29,9 @@ class EmojiTest extends TestCase
             'password' => 'pa55😀word',
             'branch' => ['notes' => ['fine', 'not fine 💆']],
             'phone' => '0917',
+            'current_password' => 'old😀pass',
         ];
 
-        $this->assertSame(['name', 'branch.notes.1'], Emoji::fieldsIn($input));
+        $this->assertSame(['name', 'password', 'branch.notes.1'], Emoji::fieldsIn($input));
     }
 }
