@@ -104,6 +104,10 @@ Route::get('/active-subscription-plans', [SubscriptionPlanController::class, 'di
 // for what's exposed here).
 Route::get('/business/{uuid}/public', [SpaBusinessController::class, 'publicShow']);
 
+// Public: the newest mobile app version and the oldest still accepted, so an installed app can
+// offer (or require) the update. Published with `php artisan mobile:release`.
+Route::get('/app/release', [\App\Http\Controllers\MobileReleaseController::class, 'show'])->middleware('throttle:60,1');
+
 // Public, unauthenticated "spas near me" lookup for the client mobile app's
 // Home screen — see NearbySpaResource for what's exposed here.
 Route::get('/spas/nearby', [SpaBranchController::class, 'nearby']);
