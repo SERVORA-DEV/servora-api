@@ -97,6 +97,38 @@ class ClientService
         return new ClientResource($client);
     }
 
+    /**
+     * Takes the client's profile picture down at this spa: it shows as the
+     * default avatar from now on. The picture itself stays on the client's
+     * account (it is theirs, shared with every spa and their app); only this
+     * very picture is hidden here, a newer upload shows again. Scoped like
+     * updateClient (client_update).
+     */
+    public function dismissPhoto(User $user, string $uuid)
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+
+        if (! $business) {
+            return response()->json(['message' => 'No spa business found for this account.'], 422);
+        }
+
+        $client = $this->clientRepository->findByUuidForBusiness($uuid, $business->id, $this->branchScope($user));
+
+        if (! Client::hasPhotoDismissal()) {
+            return response()->json(['message' => 'Hiding a profile picture is not available yet.'], 422);
+        }
+
+        $photo = $client->user?->profile_photo;
+        if (blank($photo) || $client->dismissed_photo === $photo) {
+            return response()->json(['message' => 'No profile picture to remove.'], 422);
+        }
+
+        $client->update(['dismissed_photo' => $photo, 'photo_dismissed_at' => now()]);
+        $this->preferences->attach([$client]);
+
+        return new ClientResource($client);
+    }
+
     // Manager and front_officer both reach this (client_therapist_manage),
     // independent of client_update — see config/permission.php. Scoped
     // business-wide (via the staff's branch->spa_business_id), not to the

@@ -148,7 +148,7 @@ class ClientAppointmentResource extends JsonResource
             'business' => $business ? [
                 'uuid' => $business->uuid,
                 'name' => $business->business_name,
-                'logo_url' => ImageUploadService::url($business->business_logo),
+                'logo_url' => ImageUploadService::logoUrl($business->business_logo),
             ] : null,
 
             // A cancelled or missed booking still lists what was booked;

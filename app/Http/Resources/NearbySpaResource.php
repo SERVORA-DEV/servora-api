@@ -53,7 +53,7 @@ class NearbySpaResource extends JsonResource
                     'business_name' => $this->business->business_name,
                     // See SpaBusinessResource for why both keys are here.
                     'business_logo' => $this->business->business_logo,
-                    'business_logo_url' => ImageUploadService::url($this->business->business_logo),
+                    'business_logo_url' => ImageUploadService::logoUrl($this->business->business_logo),
                 ];
             }),
         ];

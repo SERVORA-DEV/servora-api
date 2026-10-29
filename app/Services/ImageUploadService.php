@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use Cloudinary\Cloudinary;
+use Cloudinary\Transformation\Background;
+use Cloudinary\Transformation\Resize;
 use Illuminate\Http\UploadedFile;
 use InvalidArgumentException;
 
@@ -79,6 +81,23 @@ class ImageUploadService
     public static function url(?string $publicId): ?string
     {
         return $publicId ? (string) app(Cloudinary::class)->image($publicId)->toUrl() : null;
+    }
+
+    /**
+     * A logo for a round or square slot: the same public address, delivered as a
+     * $size x $size square with the whole image fitted inside it (transparent
+     * padding), so a portrait or wide logo is never cut off. Fixes logos that were
+     * uploaded before the app cropped them.
+     */
+    public static function logoUrl(?string $publicId, int $size = 200): ?string
+    {
+        if (! $publicId) {
+            return null;
+        }
+
+        return (string) app(Cloudinary::class)->image($publicId)
+            ->resize(Resize::pad($size, $size)->background(Background::color('transparent')))
+            ->toUrl();
     }
 
     /**

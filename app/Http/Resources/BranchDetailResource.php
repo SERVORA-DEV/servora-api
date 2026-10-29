@@ -84,7 +84,7 @@ class BranchDetailResource extends JsonResource
             'business' => [
                 'uuid' => $this->business->uuid,
                 'business_name' => $this->business->business_name,
-                'business_logo_url' => ImageUploadService::url($this->business->business_logo),
+                'business_logo_url' => ImageUploadService::logoUrl($this->business->business_logo),
                 'description' => $this->business->business_description,
                 // The line under the name, the "Verified business" chip and
                 // "N other locations" — shown on the app's branch page the

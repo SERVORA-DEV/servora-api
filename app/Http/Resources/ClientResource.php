@@ -42,7 +42,9 @@ class ClientResource extends JsonResource
                     'suffix' => $this->user->suffix,
                     'gender' => $this->user->gender,
                     'birth_date' => optional($this->user->birth_date)->format('Y-m-d'),
-                    'avatar' => $this->user->avatar,
+                    // The client's own picture (users.profile_photo), unless this
+                    // spa's staff took it down (Client::dismissed_photo).
+                    'avatar' => \App\Support\ProfilePhoto::forSpa($this->user->profile_photo, \App\Models\Client::hasPhotoDismissal() ? $this->dismissed_photo : null),
                 ]
             ),
 

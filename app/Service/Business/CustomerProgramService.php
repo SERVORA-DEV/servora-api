@@ -47,6 +47,7 @@ class CustomerProgramService
         private ProgramRewardService $rewards,
         private BusinessSettingsService $settingsService,
         private ManagerChangeNotifier $managerChanges,
+        private StaffNotifier $staffNotifier,
     ) {
     }
 
@@ -372,6 +373,19 @@ class CustomerProgramService
         ]);
         $this->rewards->issueMembershipVouchers($membership);
         $this->rewards->notifyClient($client, "Welcome to {$program->name}", 'Your membership is active until ' . $membership->ends_at->format('M j, Y') . ', and your member vouchers are now in your wallet.');
+
+        // A payment was taken, so the branch's managers and the owner are told, as they are for a
+        // visit's bill (not the person who took it). No reference: a click opens Billing & Payments.
+        if ($billing) {
+            $this->staffNotifier->branch(
+                $branch,
+                'Membership payment',
+                '₱' . number_format($price, 2) . " received for {$program->name} from " . (trim("{$client->first_name} {$client->last_name}") ?: 'a client') . '.',
+                type: 'Payment',
+                roles: ['manager'],
+                exceptUserId: $user->id,
+            );
+        }
 
         return response()->json(['data' => $this->membershipRow($membership->load(['client', 'program', 'branch'])) + [
             'billing_number' => $billing?->billing_number,

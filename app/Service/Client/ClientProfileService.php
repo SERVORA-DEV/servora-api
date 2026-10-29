@@ -5,15 +5,21 @@ namespace App\Service\Client;
 use App\Http\Resources\UserResource;
 use App\Models\User;
 use App\Repository\UserRepository;
+use App\Services\ImageUploadService;
+use App\Support\ProfilePhoto;
 use Illuminate\Database\QueryException;
+use Illuminate\Http\UploadedFile;
 
 class ClientProfileService
 {
     private UserRepository $userRepository;
 
-    public function __construct(UserRepository $userRepository)
+    private ImageUploadService $images;
+
+    public function __construct(UserRepository $userRepository, ImageUploadService $images)
     {
         $this->userRepository = $userRepository;
+        $this->images = $images;
     }
 
     /**
@@ -78,6 +84,35 @@ class ClientProfileService
             }
 
             throw $e;
+        }
+
+        return new UserResource($user->fresh());
+    }
+
+    /**
+     * Sets the client's profile picture. The new file is stored first and the
+     * old one only removed afterwards (ImageUploadService::replace), so a failed
+     * upload never costs them the picture they have. An older picture that is a
+     * data URL or a link has no file of ours to delete.
+     */
+    public function setPhoto(User $user, UploadedFile $file)
+    {
+        $old = $user->profile_photo;
+        $keep = ProfilePhoto::isExternal($old) ? null : $old;
+        $path = $this->images->replace($keep, $file, "clients/{$user->uuid}/profile");
+
+        $user = $this->userRepository->update($user, ['profile_photo' => $path]);
+
+        return new UserResource($user->fresh());
+    }
+
+    /** Takes the client's own picture down: back to the default avatar. */
+    public function removePhoto(User $user)
+    {
+        $old = $user->profile_photo;
+        $user = $this->userRepository->update($user, ['profile_photo' => null]);
+        if ($old && ! ProfilePhoto::isExternal($old)) {
+            $this->images->delete($old);
         }
 
         return new UserResource($user->fresh());

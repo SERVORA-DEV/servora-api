@@ -24,7 +24,7 @@ class PublicSpaBusinessResource extends JsonResource
             // URL; the raw id stays for now so existing web/mobile
             // consumers of this key don't break.
             'business_logo' => $this->business_logo,
-            'business_logo_url' => ImageUploadService::url($this->business_logo),
+            'business_logo_url' => ImageUploadService::logoUrl($this->business_logo),
         ];
     }
 }

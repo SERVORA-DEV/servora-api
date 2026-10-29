@@ -13,6 +13,8 @@ use App\Repository\AuditLogRepository;
 use App\Repository\Business\AttendanceRepository;
 use App\Repository\Business\StaffRepository;
 use App\Repository\SpaBusinessRepository;
+use App\Service\Business\StaffNotifier;
+use App\Support\AttendanceNotice;
 use App\Support\CheckOutRules;
 use Carbon\Carbon;
 use Carbon\CarbonPeriod;
@@ -26,6 +28,7 @@ class AttendanceService
     private AttendanceStatusCalculator $statusCalculator;
     private AuditLogRepository $auditLogRepository;
     private ServingNow $servingNow;
+    private StaffNotifier $staffNotifier;
 
     private const AUDIT_FIELDS = ['status', 'check_in_at', 'check_out_at', 'remarks'];
 
@@ -36,6 +39,7 @@ class AttendanceService
         AttendanceStatusCalculator $statusCalculator,
         AuditLogRepository $auditLogRepository,
         ServingNow $servingNow,
+        StaffNotifier $staffNotifier,
     ) {
         $this->attendanceRepository = $attendanceRepository;
         $this->staffRepository = $staffRepository;
@@ -43,6 +47,7 @@ class AttendanceService
         $this->statusCalculator = $statusCalculator;
         $this->auditLogRepository = $auditLogRepository;
         $this->servingNow = $servingNow;
+        $this->staffNotifier = $staffNotifier;
     }
 
     // A therapist performing a service right now stays checked in
@@ -132,6 +137,7 @@ class AttendanceService
         ]);
 
         $this->logAttendanceChange($user, $model, $existing ? 'Update' : 'Create', $oldValues, $request);
+        $this->tellManagers($user, $staff, $date, $existing ? $oldValues : null, $model->only(self::AUDIT_FIELDS));
 
         return new AttendanceResource($model);
     }
@@ -546,6 +552,7 @@ class AttendanceService
 
         $model = $this->attendanceRepository->updateByUuid($uuid, $updates);
         $this->logAttendanceChange($user, $model, 'Update', $oldValues, $request);
+        $this->tellManagers($user, $attendance->staff, $date, $oldValues, $model->only(self::AUDIT_FIELDS));
 
         return $this->showDetail($user, $uuid);
     }
@@ -570,7 +577,29 @@ class AttendanceService
         $this->auditLogRepository->record($user->id, 'attendances', $attendance->id, 'Delete', $oldValues, null, $request);
 
         $this->attendanceRepository->delete($uuid);
+        $this->tellManagers($user, $attendance->staff, $attendance->attendance_date->format('Y-m-d'), $oldValues, null);
         return true;
+    }
+
+    // A record marked, corrected or cleared on the Management page: the branch's other managers
+    // and the owner are told (not the person who did it). Never fails the change itself.
+    private function tellManagers(User $user, ?Staff $staff, string $date, ?array $old, ?array $new): void
+    {
+        try {
+            $staff?->loadMissing('branch');
+            if (! $staff?->branch) {
+                return;
+            }
+            $name = trim("{$staff->first_name} {$staff->last_name}") ?: 'A staff member';
+            $text = AttendanceNotice::describe($user->displayName(), $name, $date, $old, $new);
+            if (! $text) {
+                return;
+            }
+            // About the staff member, so a click opens their attendance.
+            $this->staffNotifier->branch($staff->branch, $text[0], $text[1], type: 'Attendance', roles: ['manager'], exceptUserId: $user->id, reference: $staff->uuid);
+        } catch (\Throwable $e) {
+            report($e);
+        }
     }
 
     private function logAttendanceChange(User $user, Attendance $model, string $action, ?array $oldValues, ?Request $request): void

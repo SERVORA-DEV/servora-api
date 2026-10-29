@@ -40,16 +40,35 @@ class Client extends Model
         'lifetime_points',
         'is_active',
         'notes',
+        'dismissed_photo',
+        'photo_dismissed_at',
     ];
 
     protected function casts(): array
     {
         return [
+            'photo_dismissed_at' => 'datetime',
             'is_active' => 'boolean',
             'current_points' => 'integer',
             'lifetime_points' => 'integer',
             'birth_year' => 'integer',
         ];
+    }
+
+    /**
+     * Whether a spa can hide a client's profile picture yet (the migration has
+     * been run). Remembered the same way as hasProfile().
+     */
+    public static function hasPhotoDismissal(): bool
+    {
+        $known = Cache::get('schema:client_photo_dismissal');
+        if (is_bool($known)) {
+            return $known;
+        }
+        $ready = Schema::hasColumn('clients', 'dismissed_photo');
+        $ready ? Cache::forever('schema:client_photo_dismissal', true) : Cache::put('schema:client_photo_dismissal', false, 60);
+
+        return $ready;
     }
 
     /**

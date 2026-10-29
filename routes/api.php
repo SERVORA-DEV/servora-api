@@ -167,6 +167,9 @@ Route::middleware('auth:sanctum')->group(function () {
         ->middleware('role:client')
         ->group(function () {
             Route::patch('profile', [ClientProfileController::class, 'update']);
+            // The client's own picture (shown to the spas they book with).
+            Route::post('profile/photo', [ClientProfileController::class, 'setPhoto'])->middleware('throttle:20,1');
+            Route::delete('profile/photo', [ClientProfileController::class, 'removePhoto']);
             Route::post('change-password', [ClientAccountController::class, 'changePassword']);
             // Password-confirmed; anonymizes the login (see ClientAccountService).
             Route::delete('account', [ClientAccountController::class, 'deleteAccount'])->middleware('throttle:5,1');
@@ -548,6 +551,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('client', [ClientController::class, 'store'])->middleware('permission:client_create');
                 Route::get('client/{uuid}', [ClientController::class, 'show'])->middleware('permission:client_view');
                 Route::patch('client/{uuid}', [ClientController::class, 'update'])->middleware('permission:client_update');
+                // Takes the client's picture down at this spa (their account keeps it).
+                Route::delete('client/{uuid}/photo', [ClientController::class, 'dismissPhoto'])->middleware('permission:client_update');
 
                 // Standing preferred-therapist preference — gated separately
                 // from client_update so manager can manage this one field

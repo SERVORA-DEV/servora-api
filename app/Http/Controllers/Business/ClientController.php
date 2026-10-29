@@ -37,6 +37,11 @@ class ClientController extends Controller
         return $this->clientService->updateClient($request->user(), $uuid, $request->validated());
     }
 
+    public function dismissPhoto(Request $request, string $uuid)
+    {
+        return $this->clientService->dismissPhoto($request->user(), $uuid);
+    }
+
     public function setPreferredTherapist(ClientPreferredTherapistRequest $request, string $uuid)
     {
         return $this->clientService->setPreferredTherapist($request->user(), $uuid, $request->validated()['staff_uuid'] ?? null);

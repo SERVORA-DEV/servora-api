@@ -132,6 +132,10 @@ class UserResource extends JsonResource
             }
         }
 
+        // A picture uploaded from the app is kept as a Cloudinary id: hand out
+        // the address to show (older data URLs and links pass through).
+        $data['profile_photo'] = \App\Support\ProfilePhoto::url($this->profile_photo);
+
         return $data;
     }
 }
