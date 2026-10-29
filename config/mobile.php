@@ -18,4 +18,7 @@ return [
     // Where the APK can be downloaded.
     'apk_url' => env('MOBILE_APK_URL'),
 
+    // How big the download is, as shown on the website's download button, e.g. "60 MB". Optional.
+    'apk_size' => env('MOBILE_APK_SIZE'),
+
 ];

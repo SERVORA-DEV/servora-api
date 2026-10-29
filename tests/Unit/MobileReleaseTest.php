@@ -13,7 +13,7 @@ class MobileReleaseTest extends TestCase
 {
     private function set(array $values): array
     {
-        config(['mobile' => $values + ['latest_version' => null, 'latest_build' => 0, 'min_build' => 0, 'apk_url' => null]]);
+        config(['mobile' => $values + ['latest_version' => null, 'latest_build' => 0, 'min_build' => 0, 'apk_url' => null, 'apk_size' => null]]);
 
         return (new MobileRelease())->current();
     }
@@ -46,6 +46,12 @@ class MobileReleaseTest extends TestCase
     public function test_the_minimum_can_never_pass_the_newest_build(): void
     {
         $this->assertSame(4, $this->set(['latest_build' => 4, 'min_build' => 99])['min_build']);
+    }
+
+    public function test_the_download_size_is_passed_on_for_the_website(): void
+    {
+        $this->assertSame('60 MB', $this->set(['apk_size' => '60 MB'])['apk_size']);
+        $this->assertNull($this->set([])['apk_size']);
     }
 
     public function test_an_empty_link_is_no_link(): void
