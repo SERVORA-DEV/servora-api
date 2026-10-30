@@ -75,6 +75,10 @@ class AppointmentResource extends JsonResource
                 fn () => app(AppointmentAvailabilityService::class)->remainingDurationMinutes($this->resource)
             ),
 
+            // On leave, absent, late or on a day off: the assigned staff the desk should look at
+            // (AssignmentWarningService; read from a list's preload when there is one).
+            'assignment_warnings' => \App\Service\Business\AssignmentWarningService::instance()->for($this->resource),
+
             // The therapist the booking asked for by name, if it named one
             // (see Appointment::requestedStaff). Not who is assigned: that is
             // on each service.

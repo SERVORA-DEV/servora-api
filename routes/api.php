@@ -585,8 +585,15 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('appointment/{uuid}/additional-services', [AppointmentServiceController::class, 'addAdditionalService'])->middleware('permission:appointment_update');
                 Route::post('appointment/{uuid}/billing', [AppointmentController::class, 'proceedToBilling'])->middleware('permission:billing_create');
 
-                Route::get('appointment-service/{uuid}/therapist-options', [AppointmentServiceController::class, 'therapistOptions'])->middleware('permission:appointment_view');
-                Route::post('appointment-service/{uuid}/assignments', [AppointmentServiceController::class, 'assignTherapist'])->middleware('permission:appointment_update');
+                // The whole booking at once for the Assign drawer: every therapist and facility against every
+                // service still to do, and the saving of all of it together (all or nothing).
+                Route::get('appointment/{uuid}/assignment-options', [AppointmentServiceController::class, 'assignmentOptions'])->middleware('permission:appointment_view');
+                Route::post('appointment/{uuid}/auto-assign', [AppointmentServiceController::class, 'autoAssign'])->middleware('permission:appointment_update');
+                Route::post('appointment/{uuid}/assignments/batch', [AppointmentServiceController::class, 'assignBatch'])->middleware('permission:appointment_update');
+                Route::get('appointment-service/{uuid}/therapist-options',[AppointmentServiceController::class, 'therapistOptions'])->middleware('permission:appointment_view');
+                // Every facility with why it can't take this service (booked, maintenance, not set up).
+                Route::get('appointment-service/{uuid}/facility-options', [AppointmentServiceController::class, 'facilityOptions'])->middleware('permission:appointment_view');
+                Route::post('appointment-service/{uuid}/assignments',[AppointmentServiceController::class, 'assignTherapist'])->middleware('permission:appointment_update');
                 Route::delete('assignment/{uuid}', [AppointmentServiceController::class, 'cancelAssignment'])->middleware('permission:appointment_update');
                 Route::patch('assignment/{uuid}/room', [AppointmentServiceController::class, 'assignRoom'])->middleware('permission:appointment_update');
                 // Clears just the room, keeping the therapist on the assignment.
@@ -693,7 +700,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 // attendance + completed assignments, no state of its own.
                 // Role-gated only, like its sibling lookups above.
                 Route::get('frontoffice/therapist-queue', [FrontOfficeLookupController::class, 'therapistQueue'])->middleware('permission:appointment_view');
-                Route::get('frontoffice/facilities', [FrontOfficeLookupController::class, 'facilities'])->middleware('permission:appointment_view');
+                Route::get('frontoffice/availability-check', [FrontOfficeLookupController::class, 'availabilityCheck'])->middleware('permission:appointment_view');
+                Route::get('frontoffice/facilities',[FrontOfficeLookupController::class, 'facilities'])->middleware('permission:appointment_view');
                 Route::get('frontoffice/services', [FrontOfficeLookupController::class, 'services'])->middleware('permission:appointment_view');
                 Route::get('frontoffice/packages', [FrontOfficeLookupController::class, 'packages'])->middleware('permission:appointment_view');
                 Route::get('frontoffice/addons', [FrontOfficeLookupController::class, 'addons'])->middleware('permission:appointment_view');

@@ -32,6 +32,9 @@ class LookupServiceResource extends JsonResource
             'description' => $this->serviceVariant->service?->description,
             'duration_minutes' => $this->serviceVariant->duration_minutes,
             'price' => (float) ($this->custom_price ?? $this->serviceVariant->price),
+            // The vouchers and discounts that cover this service (set by FrontOfficeLookupService
+            // for the front desk's menu; empty anywhere else).
+            'promotions' => $this->resource->getAttribute('promotions') ?? [],
         ];
     }
 }

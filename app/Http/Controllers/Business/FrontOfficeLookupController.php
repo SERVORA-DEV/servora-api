@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
+use App\Service\Business\AvailabilityCheckService;
 use App\Service\Business\BookingBoardService;
 use App\Service\Business\FrontOfficeLookupService;
 use Illuminate\Http\Request;
@@ -34,6 +35,18 @@ class FrontOfficeLookupController extends Controller
     public function therapistQueue(Request $request)
     {
         return $this->frontOfficeLookupService->therapistQueue($request->user(), $request->query('date'));
+    }
+
+    // Who and what can do one service at a date and time (Appointments → Availability).
+    public function availabilityCheck(Request $request, AvailabilityCheckService $check)
+    {
+        $data = $request->validate([
+            'service_variant_uuid' => ['required', 'uuid'],
+            'date' => ['required', 'date_format:Y-m-d'],
+            'time' => ['required', 'date_format:H:i'],
+        ]);
+
+        return $check->check($request->user(), $data['service_variant_uuid'], $data['date'], $data['time']);
     }
 
     public function facilities(Request $request)

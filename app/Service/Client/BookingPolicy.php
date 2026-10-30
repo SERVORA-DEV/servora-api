@@ -40,6 +40,9 @@ class BookingPolicy
         'no_show_suspend_after',
         // How long after its time a reservation is held (App\Support\ReservationHold).
         'reservation_grace_minutes',
+        // A reservation with no staff asked for is given staff and a facility when it is made
+        // (AppointmentService::autoAssign).
+        'auto_assign_staff',
         'queue_enabled',
         'max_queue_size',
         'queue_number_format',

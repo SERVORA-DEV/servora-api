@@ -582,20 +582,123 @@ class AppointmentAvailabilityService
 
     private function overlapsAppointment(TherapistAssignment $assignment, string $date, Carbon $start, Carbon $end): bool
     {
+        return $this->overlappedAppointment($assignment, $date, $start, $end) !== null;
+    }
+
+    // The other appointment this assignment belongs to, when it runs over the window; else null.
+    private function overlappedAppointment(TherapistAssignment $assignment, string $date, Carbon $start, Carbon $end): ?Appointment
+    {
         $appointment = $assignment->appointmentService?->appointment;
 
         if (! $appointment || $appointment->appointment_date->format('Y-m-d') !== $date) {
-            return false;
+            return null;
         }
 
         if (in_array($appointment->status, [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW, Appointment::STATUS_COMPLETED], true)) {
-            return false;
+            return null;
         }
 
         $otherStart = Carbon::parse($appointment->appointment_date->format('Y-m-d') . ' ' . $appointment->appointment_time);
         $otherEnd = (clone $otherStart)->addMinutes($this->estimatedDurationMinutes($appointment));
 
-        return $start->lt($otherEnd) && $end->gt($otherStart);
+        return $start->lt($otherEnd) && $end->gt($otherStart) ? $appointment : null;
+    }
+
+    /**
+     * Who of these staff is already booked over a window, and with whom: staff id => a line for the
+     * desk ("Booked with Ana Cruz at 3:00 PM"). The same overlap test as isStaffAvailable(), asked
+     * once for everyone (one query), for the picker that shows who can take a booking without
+     * clashing. $excludeAppointmentId is the booking being filled in: its own services don't count.
+     *
+     * $includeRunning false leaves out services under way right now: for "who is free now", where someone mid-service
+     * is shown as busy until a time rather than as booked, and only the reservations still ahead count.
+     *
+     * @param  array<int, int>  $staffIds
+     * @return array<int, string>
+     */
+    public function staffConflicts(array $staffIds, string $date, string $startTime, int $durationMinutes, ?int $excludeAppointmentId = null, bool $includeRunning = true): array
+    {
+        if (! $staffIds) {
+            return [];
+        }
+
+        return $this->conflictsOn('staff_id', $staffIds, $date, $startTime, $durationMinutes, $excludeAppointmentId, $includeRunning ? ['Assigned', 'In Progress'] : ['Assigned']);
+    }
+
+    /**
+     * The same for rooms: facility id => "Booked for Ana Cruz at 3:00 PM", the clash
+     * isFacilityAvailable() refuses.
+     *
+     * @param  array<int, int>  $facilityIds
+     * @return array<int, string>
+     */
+    public function facilityConflicts(array $facilityIds, string $date, string $startTime, int $durationMinutes, ?int $excludeAppointmentId = null): array
+    {
+        if (! $facilityIds) {
+            return [];
+        }
+
+        return $this->conflictsOn('facility_id', $facilityIds, $date, $startTime, $durationMinutes, $excludeAppointmentId);
+    }
+
+    /**
+     * Why each facility can't take a service over a window, or null when it can (facility id =>
+     * reason): out of rotation, under maintenance, not set up for the service, or already booked
+     * then. The rules assignRoom() enforces, asked once for the whole list. `$facilities` carry
+     * their `services` (id, uuid); `$ownRoomIds` are rooms the visit being filled in already uses,
+     * which count as fine whatever they are set up for.
+     *
+     * @param  Collection<int, \App\Models\Facility>  $facilities
+     * @param  array<int, int>  $ownRoomIds
+     * @return array<int, string|null>
+     */
+    public function facilityReasons(Collection $facilities, ?int $serviceId, string $date, string $startTime, int $durationMinutes, ?int $excludeAppointmentId = null, array $ownRoomIds = []): array
+    {
+        $conflicts = $this->facilityConflicts($facilities->pluck('id')->all(), $date, $startTime, $durationMinutes, $excludeAppointmentId);
+
+        $reasons = [];
+        foreach ($facilities as $facility) {
+            $reasons[$facility->id] = match (true) {
+                ! $facility->is_available => 'Not in rotation',
+                $facility->status === 'Maintenance' => 'Under maintenance',
+                ! in_array($facility->id, $ownRoomIds, true) && $serviceId && $facility->services->isNotEmpty() && ! $facility->services->contains('id', $serviceId) => 'Not set up for this service',
+                default => $conflicts[$facility->id] ?? null,
+            };
+        }
+
+        return $reasons;
+    }
+
+    /** @return array<int, string> */
+    private function conflictsOn(string $column, array $ids, string $date, string $startTime, int $durationMinutes, ?int $excludeAppointmentId, array $statuses = ['Assigned', 'In Progress']): array
+    {
+        $start = Carbon::parse("{$date} {$startTime}");
+        $end = (clone $start)->addMinutes($durationMinutes);
+
+        $assignments = TherapistAssignment::with('appointmentService.appointment.client', 'appointmentService.appointment.services.serviceVariant')
+            ->whereIn($column, $ids)
+            ->whereIn('assignment_status', $statuses)
+            ->whereHas('appointmentService.appointment', fn ($q) => $q
+                ->whereDate('appointment_date', $date)
+                ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW, Appointment::STATUS_COMPLETED]))
+            ->get();
+
+        $found = [];
+        foreach ($assignments as $assignment) {
+            $id = $assignment->{$column};
+            if (isset($found[$id])) {
+                continue;
+            }
+            $other = $this->overlappedAppointment($assignment, $date, $start, $end);
+            if (! $other || ($excludeAppointmentId && $other->id === $excludeAppointmentId)) {
+                continue;
+            }
+            $client = trim(($other->client?->first_name ?? '') . ' ' . ($other->client?->last_name ?? '')) ?: 'another client';
+            $at = Carbon::parse($other->appointment_date->format('Y-m-d') . ' ' . $other->appointment_time)->format('g:i A');
+            $found[$id] = ($column === 'staff_id' ? 'Booked with ' : 'Booked for ') . "{$client} at {$at}";
+        }
+
+        return $found;
     }
 
     // Sum of duration_minutes across this appointment's non-cancelled

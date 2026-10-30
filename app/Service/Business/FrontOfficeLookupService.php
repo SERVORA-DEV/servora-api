@@ -8,6 +8,7 @@ use App\Http\Resources\LookupPackageResource;
 use App\Http\Resources\LookupServiceResource;
 use App\Http\Resources\LookupTherapistResource;
 use App\Http\Resources\StaffScheduleResource;
+use App\Models\CustomerProgram;
 use App\Models\ServiceVariant;
 use App\Models\SpaBranch;
 use App\Models\Staff;
@@ -19,6 +20,9 @@ use App\Repository\Business\FacilityRepository;
 use App\Repository\Business\StaffRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Service\Client\BookingPolicy;
+use App\Support\ProgramChannel;
+use App\Support\ServicePromotions;
+use App\Support\VoucherTarget;
 
 // Narrow, read-only projections backing the front-office
 // therapist/room/service pickers. front_officer has no
@@ -176,7 +180,60 @@ class FrontOfficeLookupService
 
     public function services(User $user)
     {
-        return LookupServiceResource::collection($this->branchServiceRepository->listBookableForBranches($this->branchIds($user)));
+        $branchIds = $this->branchIds($user);
+        $rows = $this->branchServiceRepository->listBookableForBranches($branchIds);
+
+        // Each service carries the vouchers and discounts that cover it (a small mark on the
+        // menu; the Programs page has the details).
+        $promos = $this->promotions($user, $branchIds);
+        foreach ($rows as $row) {
+            $service = $row->serviceVariant?->service;
+            $row->setAttribute('promotions', ServicePromotions::forService($promos, $service?->uuid, $service?->category, $service?->name));
+        }
+
+        return LookupServiceResource::collection($rows);
+    }
+
+    /**
+     * The active vouchers and discounts offered at these branches at the front desk, as plain
+     * arrays for ServicePromotions. Empty when customer programs are switched off or not in the plan.
+     *
+     * @param  array<int, int>  $branchIds
+     * @return array<int, array<string, mixed>>
+     */
+    private function promotions(User $user, array $branchIds): array
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+        if (! $business || ! app(ProgramRewardService::class)->enabledFor($business->id)) {
+            return [];
+        }
+
+        $programs = app(CustomerProgramService::class);
+
+        return CustomerProgram::where('spa_business_id', $business->id)
+            ->where('is_active', true)
+            ->whereIn('type', ['voucher', 'discount'])
+            ->whereHas('branches', fn ($q) => $q->whereIn('spa_branches.id', $branchIds))
+            ->orderBy('created_at')
+            ->get()
+            ->filter(fn (CustomerProgram $p) => ProgramChannel::allows(ProgramChannel::of($p), ProgramChannel::DESK))
+            ->map(function (CustomerProgram $p) use ($programs) {
+                $members = $p->audience === 'members';
+
+                if ($p->type === 'discount') {
+                    return ['type' => 'discount', 'name' => $p->name, 'label' => $programs->discountText($p), 'applies_to' => (string) $p->value('appliesTo', 'All services'), 'members_only' => $members];
+                }
+
+                $target = VoucherTarget::of($p->values, 'usable');
+                $freeNamed = $p->value('dealType') === 'Free service' && VoucherTarget::isAll($target) ? (string) $p->value('usableOn', '') : '';
+
+                return [
+                    'type' => 'voucher', 'name' => $p->name, 'label' => $programs->dealText($p), 'target' => $target,
+                    'free_named' => preg_match('/^(all|any)\b/i', $freeNamed) ? '' : $freeNamed, 'members_only' => $members,
+                ];
+            })
+            ->values()
+            ->all();
     }
 
     // The business's add-ons that are switched on — what the visit page

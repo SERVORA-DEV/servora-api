@@ -53,6 +53,7 @@ use App\Support\ServiceStartRules;
 use App\Support\ServiceVoidRules;
 use App\Support\StaleVisit;
 use App\Support\Suspension;
+use App\Support\AutoAssignment;
 use App\Support\StaffGender;
 use Illuminate\Support\Facades\DB;
 
@@ -136,6 +137,9 @@ class AppointmentService
         }
 
         $collection = $this->appointmentRepository->paginateForBranches($this->branchIds($user), $filters, $perPage);
+        // The assigned staff's leave / absence / lateness for the whole page at once.
+        AssignmentWarningService::instance()->preload($collection->items());
+
         return AppointmentResource::collection($collection);
     }
 
@@ -366,6 +370,13 @@ class AppointmentService
             }
 
             $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
+
+            // A reservation with no staff asked for: staff and a facility are picked for it now (autoAssign),
+            // and what could not be placed comes back as warnings for the desk. A walk-in is assigned when
+            // it is started; a named therapist keeps the request handled above.
+            if (! $isWalkIn && empty($payload['requested_therapist_uuid']) && ($policy['auto_assign_staff'] ?? true)) {
+                $warnings = array_merge($warnings, $this->autoAssign($appointment));
+            }
 
             if ($isWalkIn) {
                 $this->addToQueueInternal($appointment);
@@ -620,13 +631,17 @@ class AppointmentService
                 }
             }
 
-            // No therapist asked for ("any"): nobody is picked here. The booking
-            // still takes one of the free therapists in the slot count
-            // (BookingSlotService), and the front desk assigns or reserves staff
-            // for the client from the visit page — before they arrive or at
-            // check-in — with the client's staff-gender preference in view.
-            // (Picking someone at booking time used to hold whoever came first,
-            // also staff with no shift that day.)
+            // No therapist asked for ("any"): the booking takes one of the free therapists in the slot
+            // count (BookingSlotService), and staff and a facility are picked for it now (autoAssign): one
+            // person for the whole visit when someone can do it, else the best fit per service, among those
+            // on shift that day, qualified, not on leave and not already booked, with the client's
+            // staff-gender preference in view. (Picking whoever came first used to hold also staff with no
+            // shift that day; that is what the availability checks there rule out.) What could not be placed
+            // is left for the front desk, which sees it in the Assignments list. The client is told nothing
+            // about it: the warnings are for the desk.
+            elseif ($policy['auto_assign_staff'] ?? true) {
+                $this->autoAssign($appointment);
+            }
 
             $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
 
@@ -2002,7 +2017,10 @@ class AppointmentService
         // A home visit can only go to staff marked "Available for home service".
         $isHome = $appointment->isHomeService();
 
-        $options = $therapists->map(function (Staff $staff) use ($attendanceByStaffId, $date, $time, $duration, $branchSchedule, $serviceId, $rotationByStaffId, $grace, $isHome) {
+        // Who is already booked over this time, and with whom (one query for everyone).
+        $conflicts = $this->availabilityService->staffConflicts($therapists->pluck('id')->all(), $date, $time, $duration, $appointment->id);
+
+        $options = $therapists->map(function (Staff $staff) use ($attendanceByStaffId, $date, $time, $duration, $branchSchedule, $serviceId, $rotationByStaffId, $grace, $isHome, $conflicts) {
             $attendance = $attendanceByStaffId->get($staff->id);
             $resolved = $this->attendanceStatusCalculator->resolve($staff, $attendance, $date, $staff->schedules, $branchSchedule, graceMinutes: $grace);
             $scheduleCheck = $this->availabilityService->staffMatchesSchedule($staff->id, $date, $time, $duration);
@@ -2062,6 +2080,10 @@ class AppointmentService
                 'is_day_off' => $resolved['is_day_off'],
                 'scheduled_start' => $resolved['scheduled_start'],
                 'scheduled_end' => $resolved['scheduled_end'],
+                // Already booked over this booking's time, and with whom; null when nothing
+                // clashes. Advisory like the rest of staff booking (see the availability
+                // service's class note): assigning is still allowed, the desk is told.
+                'conflict' => $conflicts[$staff->id] ?? null,
             ];
         })
             // Turn order, with everyone who can't take this booking pushed
@@ -2091,6 +2113,60 @@ class AppointmentService
         if ($nextUpIndex !== false) {
             $options = $options->replace([$nextUpIndex => array_merge($options[$nextUpIndex], ['is_next_up' => true])]);
         }
+
+        return response()->json(['data' => $options->values()]);
+    }
+
+    // Every facility of the branch for one booked service, each with why it can't take it (null
+    // when it can): out of rotation or under maintenance, not set up for this service, or already
+    // booked over this booking's time. The same rules assignRoom() enforces
+    // (checkRoomEligibility), so what the picker offers is what the server accepts.
+    public function facilityOptions(User $user, string $appointmentServiceUuid)
+    {
+        $branchIds = $this->branchIds($user);
+
+        $service = AppointmentServiceItem::whereHas('appointment', fn ($q) => $q->whereIn('spa_branch_id', $branchIds))
+            ->where('uuid', $appointmentServiceUuid)
+            ->with('serviceVariant', 'appointment')
+            ->firstOrFail();
+
+        $appointment = $service->appointment;
+        $date = $appointment->appointment_date->format('Y-m-d');
+        $serviceId = $service->serviceVariant?->service_id;
+
+        $facilities = Facility::with('services:id,uuid')
+            ->where('spa_branch_id', $appointment->spa_branch_id)
+            ->orderBy('name')
+            ->get();
+
+        // A room the client's own other services already use is fine whatever it is set up for.
+        $theirRooms = TherapistAssignment::whereIn('assignment_status', ['Assigned', 'In Progress'])
+            ->whereNotNull('facility_id')
+            ->whereHas('appointmentService', fn ($q) => $q->where('appointment_id', $appointment->id)->where('id', '!=', $service->id))
+            ->pluck('facility_id')
+            ->all();
+
+        $reasons = $this->availabilityService->facilityReasons(
+            $facilities,
+            $serviceId,
+            $date,
+            $appointment->appointment_time,
+            $service->lengthMinutes() ?? 30,
+            $appointment->id,
+            $theirRooms,
+        );
+
+        $options = $facilities->map(function (Facility $facility) use ($reasons) {
+            $reason = $reasons[$facility->id];
+
+            return [
+                'uuid' => $facility->uuid,
+                'name' => $facility->name,
+                'category' => $facility->category,
+                'available' => $reason === null,
+                'reason' => $reason,
+            ];
+        });
 
         return response()->json(['data' => $options->values()]);
     }
@@ -2157,6 +2233,200 @@ class AppointmentService
             }
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($service->appointment->uuid));
+        });
+    }
+
+    // ── Automatic staff and facility ─────────────────────────────────────
+
+    // Gives a booking the staff and facility it still lacks: for a reservation with "any staff" as it is
+    // made (createAppointment / createClientAppointment), and from the Assign drawer's Auto-assign button.
+    // AssignmentPlanner supplies the facts (who is qualified, on shift, not on leave, not already booked;
+    // which rooms are set up and free), AutoAssignment decides (one person for the whole visit when someone
+    // can do it, else the best fit for each service; one room when one fits), and the assignment itself goes
+    // through the same internals as a hand assignment, so every rule still holds. It never fails a booking:
+    // what could not be placed stays for the desk, and comes back as warnings.
+    //
+    // $mode 'missing' fills only what is empty; 'replace_unavailable' also replaces staff who are on leave,
+    // absent or on a day off (the desk's one-tap replacement).
+    //
+    // @return array<int, string> warnings for the desk
+    public function autoAssign(Appointment $appointment, string $mode = 'missing'): array
+    {
+        $plan = app(AssignmentPlanner::class)->plan($appointment);
+        if (! $plan['services']) {
+            return [];
+        }
+
+        $replace = $mode === 'replace_unavailable';
+        $staffByUuid = collect($plan['staff'])->keyBy('uuid');
+        $unavailableKinds = ['on_leave', 'absent', 'day_off'];
+
+        $services = array_map(function (array $s) use ($replace, $staffByUuid, $unavailableKinds) {
+            $current = $s['staff']['uuid'] ?? null;
+            $gone = $replace && $current && in_array($staffByUuid[$current]['warning']['kind'] ?? null, $unavailableKinds, true);
+
+            return [
+                'uuid' => $s['uuid'], 'name' => $s['name'],
+                'needs_staff' => $s['needs_staff'], 'needs_facility' => $s['needs_facility'],
+                'has_staff' => $current !== null && ! $gone, 'has_facility' => $s['facility'] !== null,
+            ];
+        }, $plan['services']);
+
+        $staff = array_map(fn (array $p) => [
+            'uuid' => $p['uuid'], 'name' => $p['name'], 'gender' => $p['gender'] ?? null,
+            'workload' => $p['workload'] ?? 0, 'position' => $p['queue_position'] ?? null,
+            'warning' => ($p['warning']['kind'] ?? null) === 'late',
+            // A client who is here is given someone free now before someone mid-service.
+            'busy' => ($plan['mode'] ?? 'reserve') === 'now' && ($p['state'] ?? '') === 'busy',
+            'can' => array_map(fn ($c) => (bool) $c['ok'], $p['can']),
+        ], $plan['staff']);
+
+        $facilities = array_map(fn (array $f) => [
+            'uuid' => $f['uuid'], 'name' => $f['name'],
+            'can' => array_map(fn ($c) => (bool) $c['ok'], $f['can']),
+        ], $plan['facilities']);
+
+        $decision = AutoAssignment::decide($services, $staff, $facilities, $appointment->preferred_staff_gender ?? null);
+        $warnings = $decision['warnings'];
+
+        $items = $appointment->services->keyBy('uuid');
+        foreach ($services as $row) {
+            $item = $items->get($row['uuid']);
+            $staffUuid = $decision['staff'][$row['uuid']] ?? null;
+            $roomUuid = $decision['facility'][$row['uuid']] ?? null;
+            if (! $item || (! $staffUuid && ! $roomUuid)) {
+                continue;
+            }
+
+            $assignment = null;
+            if ($staffUuid) {
+                $person = $this->resolveStaffForBranch($staffUuid, $appointment->spa_branch_id);
+                $result = $person ? $this->assignTherapistInternal($item, $appointment, $person) : ['ok' => false, 'reason' => 'Staff member not found.', 'assignment' => null];
+                if ($result['ok']) {
+                    $assignment = $result['assignment'];
+                } else {
+                    $warnings[] = ($row['name'] ?: 'A service') . ': ' . $result['reason'];
+                }
+            }
+
+            if ($roomUuid) {
+                $assignment ??= $item->therapistAssignments()->where('assignment_status', 'Assigned')->whereNotNull('staff_id')->first();
+                $placed = $assignment
+                    ? $this->assignRoomInternal($assignment, $appointment, $item, $roomUuid)
+                    : $this->assignRoomOnlyInternal($item, $appointment, $roomUuid);
+                if (! $placed['ok']) {
+                    $warnings[] = ($row['name'] ?: 'A service') . ': ' . $placed['reason'];
+                }
+            }
+        }
+
+        return array_values(array_unique($warnings));
+    }
+
+    // The Assign drawer's Auto-assign: the same, for a booking that already exists.
+    public function autoAssignAppointment(User $user, string $appointmentUuid, string $mode = 'missing')
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+        if (! $business) {
+            return response()->json(['message' => 'No spa business found for this account.'], 422);
+        }
+
+        $branchIds = $this->branchIds($user);
+
+        return DB::transaction(function () use ($branchIds, $appointmentUuid, $mode) {
+            $appointment = Appointment::whereIn('spa_branch_id', $branchIds)->where('uuid', $appointmentUuid)->lockForUpdate()->firstOrFail();
+
+            if ($stale = self::staleRefusal($appointment)) {
+                return $stale;
+            }
+
+            $warnings = $this->autoAssign($appointment, $mode);
+            $resource = new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));
+
+            return $warnings ? $resource->additional(['warnings' => $warnings]) : $resource;
+        });
+    }
+
+    // Several services of one booking given their staff and facility together (the Assign Staff &
+    // Facility drawer's Confirm). Each line goes through the same rules as assignTherapist() and
+    // assignRoom(); unlike separate calls, it is all or nothing: if any service can't take what was
+    // chosen, nothing at all is saved and the message names that service.
+    //
+    // $items: [{service_uuid, staff_uuid?, facility_uuid?}]. A facility alone goes on the row that
+    // already carries the service's staff, else it is held for the service until someone is picked.
+    public function assignBatch(User $user, string $appointmentUuid, array $items)
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+        if (! $business) {
+            return response()->json(['message' => 'No spa business found for this account.'], 422);
+        }
+
+        $branchIds = $this->branchIds($user);
+
+        return DB::transaction(function () use ($branchIds, $appointmentUuid, $items) {
+            $appointment = Appointment::whereIn('spa_branch_id', $branchIds)
+                ->where('uuid', $appointmentUuid)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($stale = self::staleRefusal($appointment)) {
+                return $stale;
+            }
+
+            // Thrown, not returned: leaving the transaction is what undoes the lines already saved.
+            $fail = fn (string $message) => throw new \Illuminate\Http\Exceptions\HttpResponseException(response()->json(['message' => $message], 422));
+
+            foreach ($items as $item) {
+                $service = AppointmentServiceItem::where('appointment_id', $appointment->id)
+                    ->where('uuid', $item['service_uuid'])
+                    ->lockForUpdate()
+                    ->with('serviceVariant', 'appointment')
+                    ->first();
+                if (! $service) {
+                    $fail("That service isn't on this booking.");
+                }
+                $name = $service->displayName() ?: 'This service';
+
+                if (in_array($service->status, ['Cancelled', 'Completed', 'In Progress'], true)) {
+                    $fail("{$name} has already started or finished, so its staff and facility can't be changed here.");
+                }
+                if ($service->isAddon()) {
+                    $fail("An add-on shares its staff and facility with its main service.");
+                }
+
+                $staffUuid = $item['staff_uuid'] ?? null;
+                $facilityUuid = $item['facility_uuid'] ?? null;
+
+                if ($staffUuid) {
+                    $staff = $this->resolveStaffForBranch($staffUuid, $appointment->spa_branch_id);
+                    if (! $staff) {
+                        $fail("{$name}: that staff member wasn't found or isn't active at this branch.");
+                    }
+                    $result = $this->assignTherapistInternal($service, $appointment, $staff);
+                    if (! $result['ok']) {
+                        $fail("{$name}: {$result['reason']}");
+                    }
+                    if ($facilityUuid) {
+                        $room = $this->assignRoomInternal($result['assignment'], $appointment, $service, $facilityUuid);
+                        if (! $room['ok']) {
+                            $fail("{$name}: {$room['reason']}");
+                        }
+                    }
+                } elseif ($facilityUuid) {
+                    $carrier = $service->therapistAssignments()
+                        ->where('assignment_status', 'Assigned')
+                        ->whereNotNull('staff_id')
+                        ->first();
+                    $room = $carrier
+                        ? $this->assignRoomInternal($carrier, $appointment, $service, $facilityUuid)
+                        : $this->assignRoomOnlyInternal($service, $appointment, $facilityUuid);
+                    if (! $room['ok']) {
+                        $fail("{$name}: {$room['reason']}");
+                    }
+                }
+            }
+
+            return new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));
         });
     }
 
@@ -3483,8 +3753,10 @@ class AppointmentService
         }
 
         $duration = $service->lengthMinutes() ?? 30;
-        $date = $appointment->appointment_date->format('Y-m-d');
+        // Judged for the booked time while it is a reservation, for now once the client is here (the same window the
+        // Assign drawer offered rooms for).
+        $window = AssignmentPlanner::window($appointment);
 
-        return $this->availabilityService->isFacilityAvailable($facility->id, $date, $appointment->appointment_time, $duration, $excludeAssignmentId, $appointment->id);
+        return $this->availabilityService->isFacilityAvailable($facility->id, $window['date'], $window['time'], $duration, $excludeAssignmentId, $appointment->id);
     }
 }

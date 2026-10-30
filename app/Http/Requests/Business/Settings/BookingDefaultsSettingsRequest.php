@@ -52,6 +52,7 @@ class BookingDefaultsSettingsRequest extends FormRequest
 
             'queue_enabled' => 'sometimes|boolean',
             'auto_assign_queue' => 'sometimes|boolean',
+            'auto_assign_staff' => 'sometimes|boolean',
             'max_queue_size' => 'sometimes|required|integer|min:1|max:500',
             'queue_number_format' => 'sometimes|required|in:numeric,alpha-numeric',
             'walk_ins_first_priority' => 'sometimes|boolean',

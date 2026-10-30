@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Business\AppointmentServiceRequest;
+use App\Http\Requests\Business\BatchAssignmentRequest;
+use App\Service\Business\AssignmentPlanner;
 use App\Http\Requests\Business\FacilityAssignmentRequest;
 use App\Http\Requests\Business\TherapistAssignmentRequest;
 use App\Service\Business\AppointmentService;
@@ -25,6 +27,32 @@ class AppointmentServiceController extends Controller
     public function therapistOptions(Request $request, string $uuid)
     {
         return $this->appointmentService->therapistOptions($request->user(), $uuid);
+    }
+
+    // Every therapist and facility against every service still to be done on one booking (the Assign drawer).
+    public function assignmentOptions(Request $request, string $uuid, AssignmentPlanner $planner)
+    {
+        return $planner->options($request->user(), $uuid);
+    }
+
+    // Gives the booking the staff and facility it lacks (the Assign drawer's Auto-assign); with
+    // mode=replace_unavailable also replaces staff on leave, absent or on a day off.
+    public function autoAssign(Request $request, string $uuid)
+    {
+        $mode = $request->validate(['mode' => 'nullable|in:missing,replace_unavailable'])['mode'] ?? 'missing';
+
+        return $this->appointmentService->autoAssignAppointment($request->user(), $uuid, $mode);
+    }
+
+    // Several of the booking's services given staff and facility together, all or nothing.
+    public function assignBatch(BatchAssignmentRequest $request, string $uuid)
+    {
+        return $this->appointmentService->assignBatch($request->user(), $uuid, $request->validated()['assignments']);
+    }
+
+    public function facilityOptions(Request $request, string $uuid)
+    {
+        return $this->appointmentService->facilityOptions($request->user(), $uuid);
     }
 
     public function assignTherapist(TherapistAssignmentRequest $request, string $uuid)

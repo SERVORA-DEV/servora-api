@@ -113,6 +113,8 @@ class SpaBusinessSetting extends Model
             // anyone else, and arriving in time keeps the booked place in the
             // line. Arriving later puts the client at the back.
             'reservation_grace_minutes' => 15,
+            // A reservation with "any staff" is given staff and a facility when it is made.
+            'auto_assign_staff' => true,
 
 
             'queue_enabled' => true,
