@@ -228,8 +228,12 @@ class RecordBusinessActivity
             }
         }
 
+        // A staff login's header only counts for one of its own branches (a cookie left by
+        // another account on the same browser can name any branch of the business).
         if ($picked = $request->header('X-Branch')) {
-            $id = SpaBranch::where('spa_business_id', $businessId)->where('uuid', $picked)->value('id');
+            $id = $user->role === 'business_owner'
+                ? SpaBranch::where('spa_business_id', $businessId)->where('uuid', $picked)->value('id')
+                : AccountScope::allBranches($user)->firstWhere('uuid', $picked)?->id;
             if ($id) {
                 return (int) $id;
             }

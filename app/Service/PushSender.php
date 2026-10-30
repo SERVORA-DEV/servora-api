@@ -25,6 +25,14 @@ use Minishlink\WebPush\WebPush;
 // are set.
 class PushSender
 {
+    // What happened to each device on the last send, for `php artisan push:test`.
+    private array $results = [];
+
+    public function results(): array
+    {
+        return $this->results;
+    }
+
     public function queue(Notification $notification): void
     {
         if (! $this->webReady() && ! $this->fcmReady()) {
@@ -36,6 +44,7 @@ class PushSender
 
     public function send(int $notificationId): void
     {
+        $this->results = [];
         try {
             // Gone if it was written inside a transaction that rolled back.
             $notification = Notification::with('user:id,role')->find($notificationId);
@@ -44,6 +53,8 @@ class PushSender
             }
             $subscriptions = PushSubscription::where('user_id', $notification->user_id)->get();
             if ($subscriptions->isEmpty()) {
+                $this->results[] = 'No browser or phone has pop-ups on for this account.';
+
                 return;
             }
 
@@ -56,6 +67,7 @@ class PushSender
                 $this->sendFcm($notification, $fcm);
             }
         } catch (\Throwable $e) {
+            $this->results[] = 'Failed: '.$e->getMessage();
             Log::warning('Push for notification '.$notificationId.' failed: '.$e->getMessage());
         }
     }
@@ -99,13 +111,18 @@ class PushSender
         }
 
         foreach ($webPush->flush() as $report) {
+            $host = parse_url($report->getEndpoint(), PHP_URL_HOST);
             if ($report->isSuccess()) {
+                $this->results[] = "Browser ({$host}): accepted";
+
                 continue;
             }
             // The browser dropped it (site data cleared, permission revoked).
             if ($report->isSubscriptionExpired()) {
                 PushSubscription::where('endpoint_hash', PushSubscription::hashOf($report->getEndpoint()))->delete();
+                $this->results[] = "Browser ({$host}): gone, removed";
             } else {
+                $this->results[] = "Browser ({$host}): failed — ".$report->getReason();
                 Log::warning('Web push failed: '.$report->getReason());
             }
         }
@@ -163,13 +180,17 @@ class PushSender
             ]]);
 
             if ($response->successful()) {
+                $this->results[] = "Phone #{$sub->id} (since {$sub->created_at}): accepted by Firebase";
+
                 continue;
             }
             $status = $response->json('error.status');
             // The app was uninstalled or its token replaced.
             if ($response->status() === 404 || $status === 'UNREGISTERED' || $status === 'INVALID_ARGUMENT') {
                 $sub->delete();
+                $this->results[] = "Phone #{$sub->id}: no longer installed or signed in there, removed";
             } else {
+                $this->results[] = "Phone #{$sub->id}: failed — ".$response->status().' '.$response->json('error.message');
                 Log::warning('FCM push failed: '.$response->status().' '.$response->body());
             }
         }
