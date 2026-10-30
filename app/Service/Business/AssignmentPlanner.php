@@ -163,6 +163,8 @@ class AssignmentPlanner
             'minutes' => $service->lengthMinutes() ?? 30,
             'needs_staff' => ServiceKind::needsTherapist($service->kind()),
             'needs_facility' => ! $isHome && $service->needsFacility(),
+            // A home visit is held at the client's home, never in a room, even an optional one.
+            'takes_facility' => ! $isHome,
             'staff' => $staffed?->staff ? ['uuid' => $staffed->staff->uuid, 'name' => $staffed->staff->first_name . ' ' . $staffed->staff->last_name] : null,
             'facility' => $roomed?->facility ? ['uuid' => $roomed->facility->uuid, 'name' => $roomed->facility->name] : null,
             'assigned' => $current !== null,

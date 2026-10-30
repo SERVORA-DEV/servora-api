@@ -120,13 +120,20 @@ class OwnerVerificationService
      * resolveIdentityIfComplete), so the owner always has to walk through
      * ID → face scan on resubmission, never just one or the other.
      */
-    public function saveIdentityDocument(User $user, array $fields, UploadedFile $frontFile, UploadedFile $backFile, ?Request $request = null)
+    public function saveIdentityDocument(User $user, array $fields, UploadedFile $frontFile, ?UploadedFile $backFile, ?Request $request = null)
     {
         $identity = $this->ownerVerificationRepository->findOrCreateIdentity($user);
 
         if (! in_array($identity->status, ['Unregistered', 'Rejected'], true)) {
             return response()->json([
                 'message' => 'Identity verification is already submitted or verified.',
+            ], 422);
+        }
+
+        // The request already asks for it; this keeps any other caller honest.
+        if (! $backFile && OwnerIdentityVerification::backRequired($fields['id_type'])) {
+            return response()->json([
+                'message' => 'Upload the back of your ID too. Only a passport is a single photo.',
             ], 422);
         }
 
@@ -138,11 +145,17 @@ class OwnerVerificationService
             "verification/identity/{$user->uuid}/id/front"
         );
 
-        $backPath = $this->documentUploadService->replace(
-            $identity->id_document_back_path,
-            $backFile,
-            "verification/identity/{$user->uuid}/id/back"
-        );
+        if ($backFile) {
+            $backPath = $this->documentUploadService->replace(
+                $identity->id_document_back_path,
+                $backFile,
+                "verification/identity/{$user->uuid}/id/back"
+            );
+        } else {
+            // A passport has no back: let go of one left from another ID type.
+            $this->documentUploadService->delete($identity->id_document_back_path);
+            $backPath = null;
+        }
 
         $identity = $this->ownerVerificationRepository->updateIdentity($user, [
             'id_type' => $fields['id_type'],
@@ -230,8 +243,7 @@ class OwnerVerificationService
             return;
         }
 
-        $complete = $identity->id_document_front_path
-            && $identity->id_document_back_path
+        $complete = $identity->hasIdDocuments()
             && ! empty($identity->face_scan_paths)
             && $identity->liveness_result === 'Passed';
 
@@ -362,7 +374,7 @@ class OwnerVerificationService
             ], 422);
         }
 
-        if (! $identity->id_document_front_path || ! $identity->id_document_back_path || empty($identity->face_scan_paths) || $identity->liveness_result !== 'Passed') {
+        if (! $identity->hasIdDocuments() || empty($identity->face_scan_paths) || $identity->liveness_result !== 'Passed') {
             return response()->json([
                 'message' => 'Please complete your government ID upload and live face scan before submitting.',
             ], 422);

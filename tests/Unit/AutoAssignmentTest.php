@@ -201,12 +201,51 @@ class AutoAssignmentTest extends TestCase
         ]);
         $this->assertSame(['facial' => 'r2', 'nails' => 'r2'], $r['facility']);
 
-        // Where nails doesn't fit it gets no room of its own.
+        // Where nails doesn't fit and no other room does, it is left without one, and that is no warning.
         $r = AutoAssignment::decide($services, [], [$this->room('r1', ['facial' => true, 'nails' => false])]);
         $this->assertSame(['facial' => 'r1'], $r['facility']);
+        $this->assertSame([], $r['warnings']);
+    }
 
-        // Nothing needs a room: nothing is assigned.
-        $r = AutoAssignment::decide([$this->svc('nails', ['needs_staff' => false])], [], [$this->room('r2', ['nails' => true])]);
+    public function test_a_service_whose_facility_is_optional_is_given_a_free_room_too(): void
+    {
+        // Nothing needs a room, but one is free and fits: it is given (a bridal makeup in a room).
+        $r = AutoAssignment::decide([$this->svc('makeup', ['needs_staff' => false])], [], [$this->room('r2', ['makeup' => true])]);
+        $this->assertSame(['makeup' => 'r2'], $r['facility']);
+
+        // None is free: left as it is, no warning.
+        $r = AutoAssignment::decide([$this->svc('makeup', ['needs_staff' => false])], [], [$this->room('r2', ['makeup' => false])]);
+        $this->assertSame([], $r['facility']);
+        $this->assertSame([], $r['warnings']);
+
+        // Where the required service's room doesn't suit it, another room that does is used.
+        $r = AutoAssignment::decide(
+            [$this->roomSvc('facial'), $this->svc('makeup', ['needs_staff' => false])],
+            [],
+            [$this->room('r1', ['facial' => true, 'makeup' => false]), $this->room('r2', ['facial' => false, 'makeup' => true])],
+        );
+        $this->assertSame(['facial' => 'r1', 'makeup' => 'r2'], $r['facility']);
+
+        // A room the visit already uses is preferred.
+        $r = AutoAssignment::decide(
+            [$this->roomSvc('facial'), $this->svc('a', ['needs_staff' => false]), $this->svc('b', ['needs_staff' => false])],
+            [],
+            [
+                $this->room('r0', ['facial' => false, 'a' => true, 'b' => true]),
+                $this->room('r1', ['facial' => true, 'a' => false, 'b' => true]),
+            ],
+        );
+        $this->assertSame(['facial' => 'r1', 'b' => 'r1', 'a' => 'r0'], $r['facility']);
+    }
+
+    public function test_a_home_visit_is_given_no_room(): void
+    {
+        $r = AutoAssignment::decide(
+            [$this->svc('massage', ['needs_staff' => false, 'takes_facility' => false])],
+            [],
+            [$this->room('r1', ['massage' => true])],
+        );
+
         $this->assertSame([], $r['facility']);
     }
 

@@ -39,6 +39,26 @@ class OwnerIdentityVerification extends Model
         ];
     }
 
+    /**
+     * ID types that are one photo, not two: a passport's data page is the
+     * whole identification, so it has no back to photograph.
+     */
+    public const SINGLE_SIDED_ID_TYPES = ['Passport'];
+
+    public static function backRequired(?string $idType): bool
+    {
+        return ! in_array($idType, self::SINGLE_SIDED_ID_TYPES, true);
+    }
+
+    /**
+     * Whether every photo of the ID this type needs is on file.
+     */
+    public function hasIdDocuments(): bool
+    {
+        return (bool) $this->id_document_front_path
+            && (! self::backRequired($this->id_type) || (bool) $this->id_document_back_path);
+    }
+
     public function uniqueIds()
     {
         return ['uuid'];

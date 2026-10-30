@@ -371,11 +371,12 @@ class AppointmentService
 
             $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
 
-            // A reservation with no staff asked for: staff and a facility are picked for it now (autoAssign),
-            // and what could not be placed comes back as warnings for the desk. A walk-in is assigned when
-            // it is started; a named therapist keeps the request handled above.
-            if (! $isWalkIn && empty($payload['requested_therapist_uuid']) && ($policy['auto_assign_staff'] ?? true)) {
-                $warnings = array_merge($warnings, $this->autoAssign($appointment));
+            // A reservation: its facility is picked now (autoAssign), and its staff too when none was asked for.
+            // What could not be placed comes back as warnings for the desk. A named therapist keeps the request
+            // handled above and only gets a room. A walk-in is assigned when it is started.
+            if (! $isWalkIn) {
+                $autoStaff = empty($payload['requested_therapist_uuid']) && ($policy['auto_assign_staff'] ?? true);
+                $warnings = array_merge($warnings, $this->autoAssign($appointment, $autoStaff ? 'missing' : 'facility_only'));
             }
 
             if ($isWalkIn) {
@@ -639,9 +640,8 @@ class AppointmentService
             // shift that day; that is what the availability checks there rule out.) What could not be placed
             // is left for the front desk, which sees it in the Assignments list. The client is told nothing
             // about it: the warnings are for the desk.
-            elseif ($policy['auto_assign_staff'] ?? true) {
-                $this->autoAssign($appointment);
-            }
+            // The facility is picked either way: a named therapist (or automatic staff turned off) still gets a room.
+            $this->autoAssign($appointment, empty($payload['requested_therapist_uuid']) && ($policy['auto_assign_staff'] ?? true) ? 'missing' : 'facility_only');
 
             $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
 
@@ -2247,27 +2247,35 @@ class AppointmentService
     // what could not be placed stays for the desk, and comes back as warnings.
     //
     // $mode 'missing' fills only what is empty; 'replace_unavailable' also replaces staff who are on leave,
-    // absent or on a day off (the desk's one-tap replacement).
+    // absent or on a day off (the desk's one-tap replacement); 'facility_only' leaves staff alone (the client
+    // named a therapist, or automatic staff is off) and still gives each service its room.
     //
     // @return array<int, string> warnings for the desk
     public function autoAssign(Appointment $appointment, string $mode = 'missing'): array
     {
+        // A home visit is held at the client's home: with staff left alone there is nothing to place.
+        if ($mode === 'facility_only' && $appointment->isHomeService()) {
+            return [];
+        }
+
         $plan = app(AssignmentPlanner::class)->plan($appointment);
         if (! $plan['services']) {
             return [];
         }
 
         $replace = $mode === 'replace_unavailable';
+        $facilityOnly = $mode === 'facility_only';
         $staffByUuid = collect($plan['staff'])->keyBy('uuid');
         $unavailableKinds = ['on_leave', 'absent', 'day_off'];
 
-        $services = array_map(function (array $s) use ($replace, $staffByUuid, $unavailableKinds) {
+        $services = array_map(function (array $s) use ($replace, $facilityOnly, $staffByUuid, $unavailableKinds) {
             $current = $s['staff']['uuid'] ?? null;
             $gone = $replace && $current && in_array($staffByUuid[$current]['warning']['kind'] ?? null, $unavailableKinds, true);
 
             return [
                 'uuid' => $s['uuid'], 'name' => $s['name'],
-                'needs_staff' => $s['needs_staff'], 'needs_facility' => $s['needs_facility'],
+                'needs_staff' => $s['needs_staff'] && ! $facilityOnly, 'needs_facility' => $s['needs_facility'],
+                'takes_facility' => $s['takes_facility'] ?? true,
                 'has_staff' => $current !== null && ! $gone, 'has_facility' => $s['facility'] !== null,
             ];
         }, $plan['services']);

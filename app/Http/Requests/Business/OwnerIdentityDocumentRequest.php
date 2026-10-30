@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Models\OwnerIdentityVerification;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class OwnerIdentityDocumentRequest extends FormRequest
 {
@@ -16,10 +18,9 @@ class OwnerIdentityDocumentRequest extends FormRequest
      * document" flow — the same form is resubmitted either way (see
      * OwnerVerificationService::saveIdentityDocument), so fresh files are
      * always required rather than trying to make them conditionally
-     * optional. Both sides are required for every ID type, Passport
-     * included — keeps the rule simple and uniform rather than branching on
-     * id_type (a Passport's back is just its inside cover, but requiring it
-     * consistently avoids special-casing the validation and the review UI).
+     * optional. Both sides are required for every ID type except a Passport,
+     * which has no back (OwnerIdentityVerification::backRequired); one sent
+     * anyway is still checked and kept.
      *
      * @return array<string, mixed>
      */
@@ -30,7 +31,20 @@ class OwnerIdentityDocumentRequest extends FormRequest
         return [
             'id_type' => 'required|string|in:Philippine National ID,Passport,Drivers License,UMID,Other',
             'id_document_front' => "required|file|mimes:jpg,jpeg,png,webp|max:{$maxSizeKb}",
-            'id_document_back' => "required|file|mimes:jpg,jpeg,png,webp|max:{$maxSizeKb}",
+            'id_document_back' => [
+                Rule::requiredIf(fn () => OwnerIdentityVerification::backRequired($this->input('id_type'))),
+                'nullable',
+                'file',
+                'mimes:jpg,jpeg,png,webp',
+                "max:{$maxSizeKb}",
+            ],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'id_document_back.required' => 'Upload the back of your ID too. Only a passport is a single photo.',
         ];
     }
 }
