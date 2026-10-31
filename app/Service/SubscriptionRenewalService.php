@@ -4,20 +4,22 @@ namespace App\Service;
 
 use App\Models\BusinessPaymentMethod;
 use App\Models\CheckoutSession;
+use App\Models\SpaBusiness;
 use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Repository\SpaBusinessRepository;
 use App\Repository\SubscriptionRepository;
+use App\Support\PlanTerms;
 use Illuminate\Support\Str;
 
 // Auto-renewal: when a subscription with auto-renew on is due, charge the
-// owner's saved card / GCash / Maya for the next term (CheckoutService does
+// owner's saved card / Maya for the next term (CheckoutService does
 // the charge and the bookkeeping). Runs from the hourly
 // subscriptions:auto-renew command.
 //
-//  - Due = within a day of expires_at, or already past it but still inside
+//  - Due = at or past expires_at, but still inside
 //    the grace period (so a failed charge is retried daily until access
 //    would end anyway).
 //  - The next term is on the plan the owner chose to move to (a scheduled
@@ -69,7 +71,7 @@ class SubscriptionRenewalService
                 ->whereColumn('spa_businesses.id', 'subscriptions.spa_business_id')
                 ->where('spa_businesses.verification_status', 'Suspended'))
             ->whereNotNull('expires_at')
-            ->where('expires_at', '<=', now()->addDay())
+            ->where('expires_at', '<=', now())
             ->where('expires_at', '>', now()->subDays($graceDays))
             ->where(fn ($q) => $q->whereNull('plan_change_status')->orWhere('plan_change_status', '!=', 'declined'))
             ->where(fn ($q) => $q->whereNull('last_renewal_attempt_at')->orWhere('last_renewal_attempt_at', '<', now()->subHours(20)))
@@ -84,7 +86,7 @@ class SubscriptionRenewalService
     public function attempt(Subscription $subscription): ?CheckoutSession
     {
         // Never charge a business Servora has suspended, whichever way this is reached.
-        if (\App\Models\SpaBusiness::whereKey($subscription->spa_business_id)->where('verification_status', 'Suspended')->exists()) {
+        if (SpaBusiness::whereKey($subscription->spa_business_id)->where('verification_status', 'Suspended')->exists()) {
             return null;
         }
 
@@ -92,6 +94,17 @@ class SubscriptionRenewalService
 
         [$plan, $cycle] = $this->renewalPlanFor($subscription);
         $method = $subscription->paymentMethod;
+        $extras = $subscription->scheduled_extras ?? $subscription->only(['extra_branches', 'extra_accounts']);
+        try {
+            if ($plan) {
+                $extras = PlanTerms::extras($plan, $extras);
+            }
+        } catch (\InvalidArgumentException $e) {
+            $this->fail($subscription, $e->getMessage());
+
+            return null;
+        }
+        $effective = $plan ? PlanTerms::effective($plan, $extras) : null;
 
         $problem = match (true) {
             ! $plan => 'Your plan is no longer offered. Choose a new plan to keep your access.',
@@ -104,12 +117,12 @@ class SubscriptionRenewalService
         // to keep that is still valid today (PlanFitService). Without the
         // hold columns (migration not run) it is refused, as before.
         $keep = $this->fit->ready() ? $subscription->scheduled_keep : null;
-        if (! $problem && ($over = $this->planSwitch->overLimits($subscription->business, $plan))) {
-            $problems = $this->fit->ready() ? $this->fit->problems($subscription->business, $plan, $keep) : $over;
+        if (! $problem && ($over = $this->planSwitch->overLimits($subscription->business, $effective))) {
+            $problems = $this->fit->ready() ? $this->fit->problems($subscription->business, $effective, $keep) : $over;
             if ($problems) {
                 $problem = $this->fit->ready()
-                    ? implode(' ', $over) . " Choose what to keep to renew on {$plan->name}: " . $problems[0]
-                    : implode(' ', $over) . ' Remove branches or accounts, or choose a bigger plan, to renew.';
+                    ? implode(' ', $over)." Choose what to keep to renew on {$plan->name}: ".$problems[0]
+                    : implode(' ', $over).' Remove branches or accounts, or choose a bigger plan, to renew.';
             }
         }
         if ($problem) {
@@ -118,7 +131,9 @@ class SubscriptionRenewalService
             return null;
         }
 
-        $amount = PlanSwitchService::price($plan, $cycle);
+        $baseAmount = PlanSwitchService::price($plan, $cycle);
+        $extrasAmount = PlanTerms::extraPrice($plan, $cycle, $extras);
+        $amount = $baseAmount + $extrasAmount;
         $session = CheckoutSession::create([
             'spa_business_id' => $subscription->spa_business_id,
             'purpose' => 'auto_renew',
@@ -128,9 +143,9 @@ class SubscriptionRenewalService
             'amount' => $amount,
             'vat_amount' => CheckoutService::vatOf($amount),
             'payment_method_id' => $method->id,
-            'reference_id' => 'SRV-RENEW-' . Str::uuid(),
+            'reference_id' => 'SRV-RENEW-'.Str::uuid(),
             // Applied when the new term starts (CheckoutService::startTerm).
-            'meta' => $keep ? ['keep' => $keep] : null,
+            'meta' => ['keep' => $keep, 'extras' => $extras, 'base_amount' => $baseAmount, 'extras_amount' => $extrasAmount],
         ]);
 
         $this->checkout->chargeSession($session, $method, "{$plan->name} Plan Renewal ({$cycle})");

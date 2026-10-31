@@ -1,9 +1,23 @@
 <?php
 
+use App\Http\Middleware\EnsureBusinessSubscribed;
+use App\Http\Middleware\EnsureBusinessVerified;
+use App\Http\Middleware\EnsurePermission;
+use App\Http\Middleware\EnsurePlanFeature;
+use App\Http\Middleware\FrontendOrigin;
+use App\Http\Middleware\RecordBusinessActivity;
+use App\Http\Middleware\RejectEmoji;
+use App\Http\Middleware\RequireAdminTwoFactor;
+use App\Http\Middleware\RestrictAdminIp;
+use App\Http\Middleware\RoleMiddleware;
+use App\Http\Middleware\SecurityHeaders;
+use App\Http\Middleware\ServerTime;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Request;
+use Illuminate\Routing\Exceptions\InvalidSignatureException;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -22,23 +36,23 @@ return Application::configure(basePath: dirname(__DIR__))
         // so trusting all hops is safe.
         $middleware->trustProxies(at: '*');
         $middleware->throttleApi();
-        $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
-        $middleware->append(\App\Http\Middleware\ServerTime::class);
+        $middleware->append(SecurityHeaders::class);
+        $middleware->append(ServerTime::class);
         // Plain text only: no emoji in anything that is kept (promo banner excepted).
-        $middleware->append(\App\Http\Middleware\RejectEmoji::class);
+        $middleware->append(RejectEmoji::class);
         // Links handed to the browser follow the address the site was opened
         // at (localhost, LAN, a forwarded port, the hosted domain).
-        $middleware->append(\App\Http\Middleware\FrontendOrigin::class);
+        $middleware->append(FrontendOrigin::class);
 
         $middleware->alias([
-            'role' => \App\Http\Middleware\RoleMiddleware::class,
-            'verified.business' => \App\Http\Middleware\EnsureBusinessVerified::class,
-            'subscribed.business' => \App\Http\Middleware\EnsureBusinessSubscribed::class,
-            'permission' => \App\Http\Middleware\EnsurePermission::class,
-            'plan.feature' => \App\Http\Middleware\EnsurePlanFeature::class,
-            'activity' => \App\Http\Middleware\RecordBusinessActivity::class,
-            'admin.ip' => \App\Http\Middleware\RestrictAdminIp::class,
-            'admin.2fa' => \App\Http\Middleware\RequireAdminTwoFactor::class,
+            'role' => RoleMiddleware::class,
+            'verified.business' => EnsureBusinessVerified::class,
+            'subscribed.business' => EnsureBusinessSubscribed::class,
+            'permission' => EnsurePermission::class,
+            'plan.feature' => EnsurePlanFeature::class,
+            'activity' => RecordBusinessActivity::class,
+            'admin.ip' => RestrictAdminIp::class,
+            'admin.2fa' => RequireAdminTwoFactor::class,
         ]);
     })
     // Requires a real OS cron / Windows Task Scheduler entry running
@@ -58,9 +72,14 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('programs:daily')->dailyAt('00:10')->withoutOverlapping();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        $exceptions->render(function (\Illuminate\Routing\Exceptions\InvalidSignatureException $e, \Illuminate\Http\Request $request) {
+        $exceptions->render(function (InvalidArgumentException $e, Request $request) {
+            if ($request->is('api/business/subscription/*') || $request->is('api/business/checkout*')) {
+                return response()->json(['message' => $e->getMessage()], 422);
+            }
+        });
+        $exceptions->render(function (InvalidSignatureException $e, Request $request) {
             if ($request->route() && $request->route()->named('verification.verify')) {
-                return redirect(config('app.frontend_url') . '/verify-email?status=invalid');
+                return redirect(config('app.frontend_url').'/verify-email?status=invalid');
             }
         });
     })->create();

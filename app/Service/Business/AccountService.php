@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Http\Resources\AccountResource;
 use App\Models\AccountBranch;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
@@ -10,9 +11,11 @@ use App\Models\User;
 use App\Repository\Business\AccountRepository;
 use App\Repository\Business\StaffRepository;
 use App\Repository\SpaBusinessRepository;
-use App\Http\Resources\AccountResource;
+use App\Service\PlanFitService;
 use App\Support\AccountScope;
+use App\Support\AppCache;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -29,8 +32,11 @@ use Illuminate\Support\Str;
 class AccountService
 {
     private AccountRepository $accountRepository;
+
     private StaffRepository $staffRepository;
+
     private SpaBusinessRepository $spaBusinessRepository;
+
     private BusinessSettingsService $businessSettingsService;
 
     public function __construct(
@@ -38,7 +44,7 @@ class AccountService
         StaffRepository $staffRepository,
         SpaBusinessRepository $spaBusinessRepository,
         BusinessSettingsService $businessSettingsService,
-        private \App\Service\PlanFitService $planFit,
+        private PlanFitService $planFit,
     ) {
         $this->accountRepository = $accountRepository;
         $this->staffRepository = $staffRepository;
@@ -55,10 +61,25 @@ class AccountService
         }
 
         $collection = $this->accountRepository->paginateForBusiness($business->id, $perPage);
+
         return AccountResource::collection($collection);
     }
 
     public function createAccount(User $user, array $payload)
+    {
+        $business = $this->spaBusinessRepository->findByOwnerId($user->id);
+        if (! $business) {
+            return response()->json(['message' => 'No spa business found.'], 422);
+        }
+
+        return DB::transaction(function () use ($user, $payload, $business) {
+            SpaBusiness::whereKey($business->id)->lockForUpdate()->first();
+
+            return $this->createAccountWithinCapacity($user, $payload);
+        });
+    }
+
+    private function createAccountWithinCapacity(User $user, array $payload)
     {
         $business = $this->spaBusinessRepository->findByOwnerId($user->id);
 
@@ -174,6 +195,7 @@ class AccountService
         }
 
         $account = $this->accountRepository->findAccountByUuidForBusiness($uuid, $business->id);
+
         return new AccountResource($account);
     }
 
@@ -217,13 +239,13 @@ class AccountService
                     $role = AccountBranch::roleFor(array_column($rows, 'level'));
                     if ($role !== $account->role) {
                         // The permissions the new role brings start at the owner's defaults.
-                        $gained = array_diff(config('permission.' . $role, []), config('permission.' . $account->role, []));
+                        $gained = array_diff(config('permission.'.$role, []), config('permission.'.$account->role, []));
                         $defaults = array_intersect_key($this->businessSettingsService->settingsFor($business)->rolePermissions($role), array_flip($gained));
                         $account->update(['role' => $role]);
                         if ($defaults && $account->permission) {
                             $account->permission()->update($defaults);
                         }
-                        \App\Support\AppCache::forget("user:{$account->id}:perm");
+                        AppCache::forget("user:{$account->id}:perm");
                     }
                     // Where it may work changed: sign it out everywhere.
                     $account->tokens()->delete();
@@ -234,6 +256,7 @@ class AccountService
         unset($payload['branches']);
 
         $account = $this->accountRepository->updateAccount($account, $payload);
+
         return new AccountResource($account);
     }
 
@@ -266,6 +289,7 @@ class AccountService
 
         $account = $this->accountRepository->findAccountByUuidForBusiness($uuid, $business->id);
         $this->accountRepository->revoke($account);
+
         return true;
     }
 
@@ -275,7 +299,7 @@ class AccountService
      * The branches sent, checked: at least one, all this business's own, no
      * branch twice, each at a known level.
      *
-     * @return \Illuminate\Support\Collection<int, array{branch: SpaBranch, level: string}>|JsonResponse
+     * @return Collection<int, array{branch: SpaBranch, level: string}>|JsonResponse
      */
     private function branchesFrom(SpaBusiness $business, array $sent)
     {
@@ -306,7 +330,7 @@ class AccountService
         }
 
         return response()->json([
-            'message' => "Your {$plan->name} plan allows " . ((int) $plan->max_user_accounts === 1 ? '1 staff login' : "{$plan->max_user_accounts} staff logins") . '. Upgrade to add another.',
+            'message' => "Your {$plan->name} plan allows ".((int) $plan->max_user_accounts === 1 ? '1 staff login' : "{$plan->max_user_accounts} staff logins").'. Upgrade to add another.',
             'code' => 'PLAN_LIMIT',
         ], 422);
     }

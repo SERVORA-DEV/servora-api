@@ -2,21 +2,22 @@
 
 namespace App\Service;
 
+use App\Http\Resources\BillingResource;
+use App\Http\Resources\SubscriptionResource;
 use App\Models\CheckoutSession;
+use App\Models\SpaBusiness;
 use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
 use App\Models\SystemSetting;
 use App\Models\User;
-use App\Repository\SubscriptionRepository;
-use App\Repository\SpaBusinessRepository;
 use App\Repository\BillingRepository;
-use App\Repository\PaymentRepository;
 use App\Repository\Business\AccountRepository;
+use App\Repository\PaymentRepository;
+use App\Repository\SpaBusinessRepository;
+use App\Repository\SubscriptionRepository;
 use App\Repository\System\AdminUsersRepository;
 use App\Repository\System\SubscriptionPlanRepository;
-use App\Http\Resources\SubscriptionResource;
-use App\Http\Resources\BillingResource;
-use App\Service\NotificationService;
+use App\Support\PlanTerms;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -39,13 +40,21 @@ class SubscriptionService
     private const PENDING_BUSINESS_CACHE_PREFIX = 'xendit_subscription_pending_business:';
 
     private SubscriptionRepository $subscriptionRepository;
+
     private SpaBusinessRepository $businessRepository;
+
     private SubscriptionPlanRepository $subscriptionPlanRepository;
+
     private BillingRepository $billingRepository;
+
     private PaymentRepository $paymentRepository;
+
     private AccountRepository $accountRepository;
+
     private XenditService $xenditService;
+
     private AdminUsersRepository $adminUsersRepository;
+
     private NotificationService $notificationService;
 
     public function __construct(
@@ -77,6 +86,7 @@ class SubscriptionService
     public function listSubscription(int $perPage = 15)
     {
         $collection = $this->subscriptionRepository->paginate($perPage);
+
         return SubscriptionResource::collection($collection);
     }
 
@@ -148,6 +158,7 @@ class SubscriptionService
         $graceDaysRemaining = $inGracePeriod ? max(0, $graceDays - $daysSinceExpiry) : null;
 
         return response()->json([
+            'entitlements' => app(PlanAccessService::class)->present($business->id),
             'has_subscription' => true,
             'subscription' => new SubscriptionResource($subscription),
             'trial' => $this->presentTrial($user, $business->id, $subscription),
@@ -156,8 +167,8 @@ class SubscriptionService
             // branches/accounts rather than stored on the subscription row,
             // so it stays correct as branches/staff are added or removed
             // mid-cycle.
-            'branches_used' => $business->branches()->count(),
-            'staff_used' => $this->accountRepository->countForBusiness($business->id),
+            'branches_used' => $this->planFitService->branches($business)->count(),
+            'staff_used' => $this->planFitService->accounts($business)->count(),
             'in_grace_period' => $inGracePeriod,
             'grace_days_remaining' => $graceDaysRemaining,
             // Admin updated this subscription's plan — the owner's
@@ -213,7 +224,7 @@ class SubscriptionService
 
         return Subscription::withTrashed()
             ->where('is_trial', true)
-            ->whereIn('spa_business_id', \App\Models\SpaBusiness::withTrashed()->where('owner_id', $owner->id)->select('id'))
+            ->whereIn('spa_business_id', SpaBusiness::withTrashed()->where('owner_id', $owner->id)->select('id'))
             ->exists();
     }
 
@@ -253,7 +264,7 @@ class SubscriptionService
 
         // Two clicks (or two tabs) must not create two trials — locked per
         // owner, since the limit is one trial per owner account.
-        return Cache::store('durable')->lock('start-trial:owner:' . $user->id, 15)->block(5, function () use ($user, $business, $plan) {
+        return Cache::store('durable')->lock('start-trial:owner:'.$user->id, 15)->block(5, function () use ($user, $business, $plan) {
             $user->refresh();
             if ($this->ownerHasUsedTrial($user)) {
                 return response()->json(['message' => 'You have already used your free trial. Choose a plan to continue.'], 422);
@@ -298,7 +309,7 @@ class SubscriptionService
         }
 
         $subscription = $this->subscriptionRepository->findLatestForBusiness($business->id);
-        $plan = $subscription?->plan;
+        $plan = $subscription?->plan ? PlanTerms::effective($subscription->plan, $subscription->only(['extra_branches', 'extra_accounts'])) : null;
 
         return response()->json([
             'has_subscription' => (bool) $subscription,
@@ -308,8 +319,8 @@ class SubscriptionService
                 'max_branches' => (int) $plan->max_branches,
                 'max_user_accounts' => (int) $plan->max_user_accounts,
             ] : null,
-            'branches_used' => $business->branches()->count(),
-            'accounts_used' => $this->accountRepository->countForBusiness($business->id),
+            'branches_used' => $this->planFitService->branches($business)->count(),
+            'accounts_used' => $this->planFitService->accounts($business)->count(),
         ]);
     }
 
@@ -324,7 +335,7 @@ class SubscriptionService
             return $error;
         }
 
-        return response()->json(['data' => $this->planSwitchService->quote($subscription, $plan, $payload['billing_cycle'])], 200);
+        return response()->json(['data' => $this->planSwitchService->quote($subscription, $plan, $payload['billing_cycle'], $payload)], 200);
     }
 
     // POST business/subscription/change — an upgrade starts a Xendit invoice
@@ -337,7 +348,9 @@ class SubscriptionService
             return $error;
         }
 
-        $quote = $this->planSwitchService->quote($subscription, $plan, $payload['billing_cycle']);
+        $extras = PlanTerms::extras($plan, $payload);
+        $effective = PlanTerms::effective($plan, $extras);
+        $quote = $this->planSwitchService->quote($subscription, $plan, $payload['billing_cycle'], $payload);
         if (! $quote['allowed']) {
             return response()->json(['message' => $quote['blocked_reason'], 'data' => $quote], 422);
         }
@@ -346,7 +359,7 @@ class SubscriptionService
             // Using more than the smaller plan allows: the owner has to say
             // what to keep, and that choice has to be a valid one.
             $keep = $payload['keep'] ?? null;
-            $problems = $this->planFitService->problems($subscription->business, $plan, $keep, $subscription->expires_at);
+            $problems = $this->planFitService->problems($subscription->business, $effective, $keep, $subscription->expires_at);
             if ($problems) {
                 return response()->json([
                     'message' => $problems[0],
@@ -357,7 +370,7 @@ class SubscriptionService
             }
             $needsChoice = (bool) ($quote['fit']['needs_choice'] ?? false);
 
-            $this->planSwitchService->scheduleDowngrade($subscription, $plan, $payload['billing_cycle'], $needsChoice ? $keep : null);
+            $this->planSwitchService->scheduleDowngrade($subscription, $plan, $payload['billing_cycle'], $needsChoice ? $keep : null, $extras);
 
             return response()->json([
                 'type' => 'downgrade',
@@ -372,7 +385,7 @@ class SubscriptionService
         return response()->json([
             'type' => 'upgrade',
             'amount_due' => $quote['amount_due'],
-            'checkout_url' => '/business/checkout?purpose=upgrade&plan=' . $plan->uuid . '&cycle=' . ($subscription->billing_cycle ?? 'Monthly'),
+            'checkout_url' => '/business/checkout?purpose=upgrade&plan='.$plan->uuid.'&cycle='.($subscription->billing_cycle ?? 'Monthly'),
         ], 200);
     }
 
@@ -428,7 +441,7 @@ class SubscriptionService
         // opened before this change can still be confirmed.
         return response()->json([
             'message' => 'Choose your plan and pay on the checkout page.',
-            'checkout_url' => '/business/checkout?purpose=subscribe&plan=' . $payload['subscription_plan_uuid'] . '&cycle=' . $payload['billing_cycle'],
+            'checkout_url' => '/business/checkout?purpose=subscribe&plan='.$payload['subscription_plan_uuid'].'&cycle='.$payload['billing_cycle'],
         ], 409);
     }
 
@@ -464,7 +477,7 @@ class SubscriptionService
         // be bought once the business fits inside its limits.
         if ($overLimits = $this->planSwitchService->overLimits($business, $plan)) {
             return response()->json([
-                'message' => implode(' ', $overLimits) . ' Remove branches or accounts first, or pick a bigger plan.',
+                'message' => implode(' ', $overLimits).' Remove branches or accounts first, or pick a bigger plan.',
                 'over_limits' => $overLimits,
             ], 422);
         }
@@ -478,21 +491,21 @@ class SubscriptionService
             ], 422);
         }
 
-        $referenceId = 'SUB-' . Str::uuid();
+        $referenceId = 'SUB-'.Str::uuid();
 
         // TTL must be >= the Xendit invoice's own validity window (24h,
         // since createInvoice() doesn't set invoice_duration) — otherwise a
         // customer who pays after the cache entry expires has their PAID
         // webhook arrive to find no intent to activate, and it silently
         // no-ops (see activateSubscriptionFromPayment's unknown_intent log).
-        Cache::store('durable')->put(self::PENDING_CACHE_PREFIX . $referenceId, [
+        Cache::store('durable')->put(self::PENDING_CACHE_PREFIX.$referenceId, [
             'spa_business_id' => $business->id,
             'subscription_plan_id' => $plan->id,
             'billing_cycle' => $billingCycle,
             'amount' => $amount,
         ], now()->addDay());
 
-        Cache::store('durable')->put(self::PENDING_BUSINESS_CACHE_PREFIX . $business->id, $referenceId, now()->addDay());
+        Cache::store('durable')->put(self::PENDING_BUSINESS_CACHE_PREFIX.$business->id, $referenceId, now()->addDay());
 
         $frontendUrl = config('app.frontend_url');
 
@@ -506,8 +519,8 @@ class SubscriptionService
             $referenceId,
             (float) $amount,
             "{$plan->name} Plan Subscription ({$billingCycle})",
-            $frontendUrl . '/payment/success?reference_id=' . $referenceId,
-            $frontendUrl . '/payment/failed',
+            $frontendUrl.'/payment/success?reference_id='.$referenceId,
+            $frontendUrl.'/payment/failed',
         );
 
         return response()->json([
@@ -533,7 +546,7 @@ class SubscriptionService
         // either clears it, and create two subscriptions and two billings.
         // The second delivery waits here, then finds the intent gone and
         // no-ops below.
-        return Cache::store('durable')->lock('activate-subscription:' . $referenceId, 30)
+        return Cache::store('durable')->lock('activate-subscription:'.$referenceId, 30)
             ->block(10, fn () => $this->activateSubscriptionFromPaymentLocked(
                 $referenceId, $invoiceId, $paymentMethod, $paymentChannel, $paidAmount,
             ));
@@ -546,10 +559,11 @@ class SubscriptionService
         ?string $paymentChannel,
         float $paidAmount
     ): bool {
-        $intent = Cache::store('durable')->get(self::PENDING_CACHE_PREFIX . $referenceId);
+        $intent = Cache::store('durable')->get(self::PENDING_CACHE_PREFIX.$referenceId);
 
         if (! $intent) {
             Log::warning('xendit.webhook.unknown_intent', ['reference_id' => $referenceId]);
+
             return false;
         }
 
@@ -579,7 +593,7 @@ class SubscriptionService
                 'paid_at' => now(),
                 // Kept on the invoice, since a later upgrade changes the
                 // subscription's plan (BillingResource::description).
-                'remarks' => (SubscriptionPlan::find($intent['subscription_plan_id'])?->name ?? 'Plan') . " Plan Subscription ({$intent['billing_cycle']})",
+                'remarks' => (SubscriptionPlan::find($intent['subscription_plan_id'])?->name ?? 'Plan')." Plan Subscription ({$intent['billing_cycle']})",
             ]);
 
             $this->paymentRepository->create([
@@ -597,8 +611,8 @@ class SubscriptionService
             return $subscription;
         });
 
-        Cache::store('durable')->forget(self::PENDING_CACHE_PREFIX . $referenceId);
-        Cache::store('durable')->forget(self::PENDING_BUSINESS_CACHE_PREFIX . $intent['spa_business_id']);
+        Cache::store('durable')->forget(self::PENDING_CACHE_PREFIX.$referenceId);
+        Cache::store('durable')->forget(self::PENDING_BUSINESS_CACHE_PREFIX.$intent['spa_business_id']);
 
         // Admin-facing notification for a real, webhook-confirmed payment:
         // one, saying who subscribed and what they paid.
@@ -635,7 +649,7 @@ class SubscriptionService
                 'status' => 'Paid',
                 'issued_at' => now(),
                 'paid_at' => now(),
-                'remarks' => 'Upgrade: ' . ($intent['from_plan_name'] ?? 'previous plan') . ' → ' . ($intent['to_plan_name'] ?? 'new plan'),
+                'remarks' => 'Upgrade: '.($intent['from_plan_name'] ?? 'previous plan').' → '.($intent['to_plan_name'] ?? 'new plan'),
             ]);
 
             $this->paymentRepository->create([
@@ -655,8 +669,8 @@ class SubscriptionService
             return $subscription;
         });
 
-        Cache::store('durable')->forget(self::PENDING_CACHE_PREFIX . $referenceId);
-        Cache::store('durable')->forget(self::PENDING_BUSINESS_CACHE_PREFIX . $intent['spa_business_id']);
+        Cache::store('durable')->forget(self::PENDING_CACHE_PREFIX.$referenceId);
+        Cache::store('durable')->forget(self::PENDING_BUSINESS_CACHE_PREFIX.$intent['spa_business_id']);
 
         if ($applied?->business) {
             $this->notificationService->paymentReceived($applied->business, $paidAmount, $this->adminUsersRepository->allAdministrators());
@@ -674,16 +688,17 @@ class SubscriptionService
     // call never fired (lost sessionStorage, closed tab, etc).
     private function resolvePendingPaymentForBusiness(int $businessId): void
     {
-        $referenceId = Cache::store('durable')->get(self::PENDING_BUSINESS_CACHE_PREFIX . $businessId);
+        $referenceId = Cache::store('durable')->get(self::PENDING_BUSINESS_CACHE_PREFIX.$businessId);
 
         if (! $referenceId) {
             return;
         }
 
-        $intent = Cache::store('durable')->get(self::PENDING_CACHE_PREFIX . $referenceId);
+        $intent = Cache::store('durable')->get(self::PENDING_CACHE_PREFIX.$referenceId);
 
         if (! $intent) {
-            Cache::store('durable')->forget(self::PENDING_BUSINESS_CACHE_PREFIX . $businessId);
+            Cache::store('durable')->forget(self::PENDING_BUSINESS_CACHE_PREFIX.$businessId);
+
             return;
         }
 
@@ -691,6 +706,7 @@ class SubscriptionService
             $invoice = $this->xenditService->getInvoiceByExternalId($referenceId);
         } catch (\Throwable $e) {
             Log::warning('xendit.pending_check.failed', ['reference_id' => $referenceId, 'error' => $e->getMessage()]);
+
             return;
         }
 
@@ -719,7 +735,7 @@ class SubscriptionService
     {
         Log::info('xendit.confirm.requested', ['reference_id' => $referenceId]);
 
-        $intent = Cache::store('durable')->get(self::PENDING_CACHE_PREFIX . $referenceId);
+        $intent = Cache::store('durable')->get(self::PENDING_CACHE_PREFIX.$referenceId);
 
         if (! $intent) {
             $business = $this->businessRepository->findByOwnerId($user->id);
@@ -792,30 +808,35 @@ class SubscriptionService
     public function getSubscription(string $uuid)
     {
         $model = $this->subscriptionRepository->findByUuid($uuid);
+
         return new SubscriptionResource($model);
     }
 
     public function getSubscriptionByField(string $field, $value)
     {
         $model = $this->subscriptionRepository->findByField($field, $value);
+
         return new SubscriptionResource($model);
     }
 
     public function updateSubscription(string $uuid, array $payload)
     {
         $model = $this->subscriptionRepository->update($uuid, $payload);
+
         return new SubscriptionResource($model);
     }
 
     public function deleteSubscription(string $uuid)
     {
         $this->subscriptionRepository->delete($uuid);
+
         return true;
     }
 
     public function restoreSubscription(string $uuid)
     {
         $model = $this->subscriptionRepository->restore($uuid);
+
         return new SubscriptionResource($model);
     }
 }

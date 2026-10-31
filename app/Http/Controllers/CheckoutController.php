@@ -22,13 +22,15 @@ class CheckoutController extends Controller
     public function quote(Request $request)
     {
         $data = $request->validate([
+            'extra_branches' => 'sometimes|integer|min:0|max:1000',
+            'extra_accounts' => 'sometimes|integer|min:0|max:1000',
             'purpose' => 'required|in:subscribe,renew,upgrade,save_method',
             'plan_uuid' => 'nullable|uuid',
             'billing_cycle' => 'nullable|in:Monthly,Yearly',
         ]);
 
         return response()->json(['data' => $this->checkout->quote(
-            $request->user(), $data['purpose'], $data['plan_uuid'] ?? null, $data['billing_cycle'] ?? null,
+            $request->user(), $data['purpose'], $data['plan_uuid'] ?? null, $data['billing_cycle'] ?? null, $data,
         )]);
     }
 

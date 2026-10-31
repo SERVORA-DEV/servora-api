@@ -10,6 +10,7 @@ use App\Models\Staff;
 use App\Models\StaffSchedule;
 use App\Service\Business\AppointmentAvailabilityService;
 use App\Service\Business\HomeServiceRules;
+use App\Service\PlanAccessService;
 use App\Support\BranchClosures;
 use App\Support\HourlyCapacity;
 use Carbon\Carbon;
@@ -48,11 +49,10 @@ class BookingSlotService
 
     // Used when the owner hasn't entered hours for that weekday.
     private const FALLBACK_OPEN = '09:00';
+
     private const FALLBACK_CLOSE = '21:00';
 
-    public function __construct(private AppointmentAvailabilityService $availabilityService)
-    {
-    }
+    public function __construct(private AppointmentAvailabilityService $availabilityService) {}
 
     // @return array{date: string, duration_minutes: int, closed_reason: ?string, slots: list<array{time: string, available: bool, reason: ?string}>, hours: list<array{hour: string, booked: int, limit: int, full: bool}>}
     public function slots(SpaBranch $branch, string $date, int $duration, ?Staff $therapist = null, ?int $excludeAppointmentId = null, bool $home = false): array
@@ -61,6 +61,14 @@ class BookingSlotService
         $policy = BookingPolicy::for($branch);
         $result = ['date' => $date, 'duration_minutes' => $duration, 'closed_reason' => null, 'slots' => [], 'hours' => []];
 
+        if ($excludeAppointmentId === null) {
+            $usage = app(PlanAccessService::class)->bookingUsage($branch->spa_business_id);
+            if ($usage['limit'] !== null && $usage['used'] >= $usage['limit']) {
+                $result['closed_reason'] = 'This spa has reached its app booking allowance for this month. Please contact the spa or try again next month.';
+
+                return $result;
+            }
+        }
         $day = $this->dayWindow($branch->id, $date);
         if ($day['closed']) {
             $result['closed_reason'] = $day['reason'] ?? 'The spa is closed on this day.';
@@ -126,7 +134,7 @@ class BookingSlotService
             return 'Your services would run past closing time. Please pick an earlier time.';
         }
         if ($closed = $this->closureProblem($day, $start, $end)) {
-            return $closed . ' Please pick another time.';
+            return $closed.' Please pick another time.';
         }
 
         // The hour's limit (and the 5-minute marks) — before the therapists,

@@ -20,6 +20,8 @@ class PlanSwitchRequest extends FormRequest
             'billing_cycle' => 'required|in:Monthly,Yearly',
             // Moving to a plan smaller than what they use: what to keep
             // (PlanFitService). Ignored when everything fits.
+            'extra_branches' => 'sometimes|integer|min:0|max:1000',
+            'extra_accounts' => 'sometimes|integer|min:0|max:1000',
             'keep' => 'sometimes|nullable|array',
             'keep.branch_uuids' => 'sometimes|array',
             'keep.branch_uuids.*' => 'uuid',

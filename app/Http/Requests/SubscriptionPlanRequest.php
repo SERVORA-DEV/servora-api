@@ -57,6 +57,11 @@ class SubscriptionPlanRequest extends FormRequest
 
             'mobile_app_access' => 'sometimes|boolean',
 
+            'app_booking_limit' => 'nullable|integer|min:1|max:1000000',
+            'export_mode' => 'nullable|in:none,csv,full',
+            'export_days' => 'nullable|integer|min:1|max:36500',
+            'extra_branch_price' => 'nullable|numeric|min:0.01|max:1000000',
+            'extra_account_price' => 'nullable|numeric|min:0.01|max:1000000',
             'is_active' => 'sometimes|boolean',
         ];
     }

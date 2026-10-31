@@ -2,39 +2,58 @@
 
 namespace App\Service\Business;
 
-use App\Models\SpaBranchPhoto;
-use App\Models\User;
-use App\Repository\ReviewRepository;
+use App\Http\Resources\BranchDetailResource;
 use App\Http\Resources\Client\PublicReviewResource;
+use App\Http\Resources\NearbySpaResource;
+use App\Http\Resources\PublicTherapistAvailabilityResource;
+use App\Http\Resources\SpaBranchResource;
+use App\Models\Appointment;
+use App\Models\Billing;
+use App\Models\Package;
+use App\Models\ServiceVariant;
+use App\Models\SpaBranch;
+use App\Models\SpaBranchPhoto;
+use App\Models\SpaBusiness;
+use App\Models\User;
+use App\Repository\AuditLogRepository;
 use App\Repository\Business\SpaBranchRepository;
+use App\Repository\Business\StaffServiceRepository;
+use App\Repository\ReviewRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Repository\System\AdminUsersRepository;
-use App\Repository\AuditLogRepository;
-use App\Http\Resources\SpaBranchResource;
-use App\Http\Resources\NearbySpaResource;
-use App\Http\Resources\BranchDetailResource;
-use App\Http\Resources\PublicTherapistAvailabilityResource;
 use App\Service\Client\BookingPolicy;
+use App\Service\Client\BookingSlotService;
+use App\Service\NotificationService;
+use App\Service\PlanFitService;
+use App\Services\DocumentUploadService;
+use App\Services\ImageUploadService;
 use App\Support\AppCache;
 use App\Support\BranchClosures;
 use App\Support\BranchHoursCalculator;
+use App\Support\ContactEmail;
+use App\Support\ServiceKind;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\DB;
-use App\Service\NotificationService;
-use App\Services\DocumentUploadService;
-use App\Services\ImageUploadService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class SpaBranchService
 {
     private SpaBranchRepository $spaBranchRepository;
+
     private SpaBusinessRepository $spaBusinessRepository;
+
     private AdminUsersRepository $adminUsersRepository;
+
     private AuditLogRepository $auditLogRepository;
+
     private NotificationService $notificationService;
+
     private ImageUploadService $imageUploadService;
+
     private DocumentUploadService $documentUploadService;
+
     private AppointmentAvailabilityService $availabilityService;
 
     public function __construct(
@@ -47,7 +66,7 @@ class SpaBranchService
         DocumentUploadService $documentUploadService,
         AppointmentAvailabilityService $availabilityService,
         private ManagerChangeNotifier $managerChanges,
-        private \App\Service\PlanFitService $planFit,
+        private PlanFitService $planFit,
     ) {
         $this->spaBranchRepository = $spaBranchRepository;
         $this->spaBusinessRepository = $spaBusinessRepository;
@@ -119,7 +138,7 @@ class SpaBranchService
             return null;
         }
 
-        $cached = AppCache::remember("spa:{$uuid}:v" . AppCache::businessVersion($businessId), 600, function () use ($uuid) {
+        $cached = AppCache::remember("spa:{$uuid}:v".AppCache::businessVersion($businessId), 600, function () use ($uuid) {
             $branch = $this->spaBranchRepository->publicFindByUuid($uuid);
             app(ReviewRepository::class)->attachRatings([$branch]);
 
@@ -191,7 +210,7 @@ class SpaBranchService
         // Who isn't free then, and when they next are that day.
         $busyIds = $rows->where('available', false)->map(fn ($row) => $row['staff']->id)->all();
         if ($busyIds) {
-            $next = app(\App\Service\Client\BookingSlotService::class)->nextFreeStarts($branch, $date, $time, $duration, $busyIds);
+            $next = app(BookingSlotService::class)->nextFreeStarts($branch, $date, $time, $duration, $busyIds);
             $rows = $rows->map(fn ($row) => $row['available'] ? $row : $row + ['next' => $next[$row['staff']->id] ?? null])->values();
         }
 
@@ -200,7 +219,7 @@ class SpaBranchService
 
     // The therapists a client may pick here (none when the spa doesn't let
     // clients choose), narrowed to those who can perform what is being booked.
-    private function choosableTherapists(\App\Models\SpaBranch $branch, array $query): \Illuminate\Support\Collection
+    private function choosableTherapists(SpaBranch $branch, array $query): Collection
     {
         $therapists = BookingPolicy::clientMayChooseTherapist($branch)
             ? $this->spaBranchRepository->publicTherapistsForBranch($branch->id)
@@ -213,7 +232,7 @@ class SpaBranchService
 
         $serviceIds = $this->therapistServiceIds($query);
         if ($serviceIds->isNotEmpty()) {
-            $qualifications = app(\App\Repository\Business\StaffServiceRepository::class);
+            $qualifications = app(StaffServiceRepository::class);
             $therapists = $therapists->filter(
                 fn ($staff) => $serviceIds->every(fn ($id) => $qualifications->isQualified($staff->id, $id))
             )->values();
@@ -233,12 +252,12 @@ class SpaBranchService
         $branch = $this->spaBranchRepository->publicFindByUuid($uuid, ['business', 'schedules']);
         $therapists = $this->choosableTherapists($branch, $query);
         $duration = (int) ($query['duration_minutes'] ?? 60);
-        $from = \Carbon\Carbon::parse($query['from'] ?? now()->toDateString());
+        $from = Carbon::parse($query['from'] ?? now()->toDateString());
         $days = (int) ($query['days'] ?? 7);
 
         $found = $therapists->mapWithKeys(fn ($staff) => [$staff->id => ['date' => null, 'windows' => []]])->all();
         if ($therapists->isNotEmpty() && MarketplaceReadiness::isBookable($branch)) {
-            $slots = app(\App\Service\Client\BookingSlotService::class);
+            $slots = app(BookingSlotService::class);
             $policy = BookingPolicy::for($branch);
             $left = $therapists->pluck('id')->all();
             for ($i = 0; $i < $days && $left; $i++) {
@@ -263,22 +282,22 @@ class SpaBranchService
     // The services (ids) a therapist has to be qualified for to take a booking
     // of these variants / this package — only those someone performs; a
     // facility-based one needs no therapist.
-    private function therapistServiceIds(array $query): \Illuminate\Support\Collection
+    private function therapistServiceIds(array $query): Collection
     {
         $services = collect();
 
         if (! empty($query['service_variant_uuids'])) {
-            \App\Models\ServiceVariant::with('service')->whereIn('uuid', $query['service_variant_uuids'])->get()
+            ServiceVariant::with('service')->whereIn('uuid', $query['service_variant_uuids'])->get()
                 ->each(fn ($variant) => $services->push($variant->service));
         }
         if (! empty($query['package_uuid'])) {
-            \App\Models\Package::where('uuid', $query['package_uuid'])->first()
+            Package::where('uuid', $query['package_uuid'])->first()
                 ?->packageServiceItems()->with('service')->get()
                 ->each(fn ($item) => $services->push($item->service));
         }
 
         return $services->filter()
-            ->filter(fn ($service) => \App\Support\ServiceKind::needsTherapist(\App\Support\ServiceKind::of($service->service_type)))
+            ->filter(fn ($service) => ServiceKind::needsTherapist(ServiceKind::of($service->service_type)))
             ->pluck('id')->unique()->values();
     }
 
@@ -314,7 +333,7 @@ class SpaBranchService
         // Moving a home visit stays a home visit, whatever the app sent.
         $home = ! empty($query['home_service']);
         if (! empty($query['exclude_appointment_uuid']) && $user) {
-            $own = \App\Models\Appointment::where('uuid', $query['exclude_appointment_uuid'])
+            $own = Appointment::where('uuid', $query['exclude_appointment_uuid'])
                 ->where('spa_branch_id', $branch->id)
                 ->whereHas('client', fn ($q) => $q->where('user_id', $user->id))
                 ->first(['id', 'service_location']);
@@ -322,7 +341,7 @@ class SpaBranchService
             $home = $home || (bool) $own?->isHomeService();
         }
 
-        return ['data' => app(\App\Service\Client\BookingSlotService::class)->slots(
+        return ['data' => app(BookingSlotService::class)->slots(
             $branch,
             $query['date'],
             (int) $query['duration_minutes'],
@@ -376,6 +395,7 @@ class SpaBranchService
 
         $branchIds = $this->spaBusinessRepository->branchIdsForUser($user);
         $collection = $this->spaBranchRepository->paginateForBranches($branchIds, $perPage);
+
         return SpaBranchResource::collection($collection);
     }
 
@@ -390,6 +410,20 @@ class SpaBranchService
     public function createSpaBranch(User $user, array $payload)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
+        if (! $business) {
+            return response()->json(['message' => 'No spa business found.'], 422);
+        }
+
+        return DB::transaction(function () use ($user, $payload, $business) {
+            SpaBusiness::whereKey($business->id)->lockForUpdate()->first();
+
+            return $this->createSpaBranchWithinCapacity($user, $payload);
+        });
+    }
+
+    private function createSpaBranchWithinCapacity(User $user, array $payload)
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
 
         if (! $business) {
             return response()->json([
@@ -402,7 +436,7 @@ class SpaBranchService
         $plan = $this->planFit->currentPlan($business);
         if (! $this->planFit->hasRoomForBranch($business, $plan)) {
             return response()->json([
-                'message' => "Your {$plan->name} plan allows " . ((int) $plan->max_branches === 1 ? '1 branch' : "{$plan->max_branches} branches") . '. Upgrade to add another.',
+                'message' => "Your {$plan->name} plan allows ".((int) $plan->max_branches === 1 ? '1 branch' : "{$plan->max_branches} branches").'. Upgrade to add another.',
                 'code' => 'PLAN_LIMIT',
             ], 422);
         }
@@ -429,7 +463,7 @@ class SpaBranchService
         // An email given with the branch is confirmed like one set later (the
         // registration itself no longer asks for it).
         if (! empty($payload['email'])) {
-            \App\Support\ContactEmail::afterSave($model, null);
+            ContactEmail::afterSave($model, null);
             $model->refresh();
         }
 
@@ -450,12 +484,14 @@ class SpaBranchService
 
         $branchIds = $this->spaBusinessRepository->branchIdsForUser($user);
         $model = $this->spaBranchRepository->findByUuidForBranches($uuid, $branchIds);
+
         return new SpaBranchResource($model);
     }
 
     public function getSpaBranchByField(string $field, $value)
     {
         $model = $this->spaBranchRepository->findByField($field, $value);
+
         return new SpaBranchResource($model);
     }
 
@@ -512,8 +548,8 @@ class SpaBranchService
         // A new email is confirmed by the button in the email Servora sends to it
         // (unless it is the owner's own sign-up address).
         if (array_key_exists('email', $payload)
-            && \App\Support\ContactEmail::normalize($payload['email']) !== \App\Support\ContactEmail::normalize($wasEmail)) {
-            \App\Support\ContactEmail::afterSave($model, $wasEmail);
+            && ContactEmail::normalize($payload['email']) !== ContactEmail::normalize($wasEmail)) {
+            ContactEmail::afterSave($model, $wasEmail);
             $model->refresh();
         }
 
@@ -561,30 +597,32 @@ class SpaBranchService
 
         // Deleting it takes its visits and bills out of reach: an unpaid bill could
         // never be collected. Settle those first, or switch the branch off instead.
-        $open = \App\Models\Appointment::where('spa_branch_id', $branch->id)
-            ->whereIn('status', [\App\Models\Appointment::STATUS_SCHEDULED, \App\Models\Appointment::STATUS_CHECKED_IN, \App\Models\Appointment::STATUS_IN_SERVICE])
+        $open = Appointment::where('spa_branch_id', $branch->id)
+            ->whereIn('status', [Appointment::STATUS_SCHEDULED, Appointment::STATUS_CHECKED_IN, Appointment::STATUS_IN_SERVICE])
             ->count();
-        $unpaid = \App\Models\Billing::where('spa_branch_id', $branch->id)
+        $unpaid = Billing::where('spa_branch_id', $branch->id)
             ->whereNotIn('status', ['Paid', 'Cancelled', 'Refunded'])
             ->count();
         if ($open > 0 || $unpaid > 0) {
             $parts = array_filter([
-                $open > 0 ? $open . ' open ' . ($open === 1 ? 'booking' : 'bookings') : null,
-                $unpaid > 0 ? $unpaid . ($unpaid === 1 ? ' unpaid bill' : ' unpaid bills') : null,
+                $open > 0 ? $open.' open '.($open === 1 ? 'booking' : 'bookings') : null,
+                $unpaid > 0 ? $unpaid.($unpaid === 1 ? ' unpaid bill' : ' unpaid bills') : null,
             ]);
 
             return response()->json([
-                'message' => "{$branch->branch_name} still has " . implode(' and ', $parts) . ". Finish or cancel them and collect the payments before deleting it, or switch the branch off instead.",
+                'message' => "{$branch->branch_name} still has ".implode(' and ', $parts).'. Finish or cancel them and collect the payments before deleting it, or switch the branch off instead.',
             ], 422);
         }
 
         $this->spaBranchRepository->delete($uuid);
+
         return true;
     }
 
     public function restoreSpaBranch(string $uuid)
     {
         $model = $this->spaBranchRepository->restore($uuid);
+
         return new SpaBranchResource($model);
     }
 
@@ -815,7 +853,7 @@ class SpaBranchService
         // Branch Settings → Marketplace → Reviews: hidden reviews come back as
         // an empty page (the app drops the section), and without the rating
         // badge the average isn't shared either.
-        if (! $display['show_reviews']) {
+        if (! $display['show_reviews'] || ! AppCache::planAllows($branch->spa_business_id, 'review_access')) {
             return response()->json(['data' => [], 'meta' => ['rating_avg' => null, 'rating_count' => 0, 'hidden' => true]]);
         }
 

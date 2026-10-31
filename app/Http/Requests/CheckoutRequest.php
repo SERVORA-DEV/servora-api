@@ -26,6 +26,8 @@ class CheckoutRequest extends FormRequest
 
             // Buying a plan smaller than what the business uses: what to keep
             // (PlanFitService). Ignored when everything fits.
+            'extra_branches' => 'sometimes|integer|min:0|max:1000',
+            'extra_accounts' => 'sometimes|integer|min:0|max:1000',
             'keep' => 'sometimes|nullable|array',
             'keep.branch_uuids' => 'sometimes|array',
             'keep.branch_uuids.*' => 'uuid',

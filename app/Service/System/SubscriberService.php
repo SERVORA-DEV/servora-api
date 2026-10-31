@@ -6,6 +6,7 @@ use App\Models\Billing;
 use App\Models\Subscription;
 use App\Models\SystemSetting;
 use App\Support\SubscriberState;
+use Illuminate\Support\Carbon;
 
 // The administrator's Subscribers list: every business that has ever had a
 // subscription, one row each, with where it stands right now (active, on
@@ -58,10 +59,12 @@ class SubscriberService
                 'uuid' => $s->uuid,
                 'business_uuid' => $s->business->uuid,
                 'business_name' => $s->business->business_name,
-                'owner_name' => trim(($owner?->first_name ?? '') . ' ' . ($owner?->last_name ?? '')) ?: null,
+                'owner_name' => trim(($owner?->first_name ?? '').' '.($owner?->last_name ?? '')) ?: null,
                 'owner_email' => $owner?->email,
                 'plan_name' => $s->plan?->name,
                 'plan_category' => $s->plan?->category,
+                'extra_branches' => (int) $s->extra_branches,
+                'extra_accounts' => (int) $s->extra_accounts,
                 'billing_cycle' => $s->is_trial ? null : $s->billing_cycle,
                 'is_trial' => (bool) $s->is_trial,
                 'state' => $standing['state'],
@@ -72,7 +75,7 @@ class SubscriberService
                 'payment_method' => $s->auto_renew ? $s->paymentMethod?->label : null,
                 'renewal_failure_reason' => $s->renewal_failure_reason,
                 // When they first paid for a plan, and what they have paid in all.
-                'subscribed_since' => $first ? \Illuminate\Support\Carbon::parse($first)->toIso8601String() : null,
+                'subscribed_since' => $first ? Carbon::parse($first)->toIso8601String() : null,
                 'total_paid' => (float) ($paid[$s->spa_business_id]->total ?? 0),
                 'payments' => (int) ($paid[$s->spa_business_id]->payments ?? 0),
             ];

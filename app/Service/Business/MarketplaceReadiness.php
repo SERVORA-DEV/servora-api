@@ -3,8 +3,10 @@
 namespace App\Service\Business;
 
 use App\Models\SpaBranch;
+use App\Models\SystemSetting;
 use App\Repository\Business\SpaBranchRepository;
 use App\Service\Client\BookingPolicy;
+use App\Support\AppCache;
 use App\Support\ListingPolicy;
 use Illuminate\Database\Eloquent\Builder;
 
@@ -26,10 +28,17 @@ use Illuminate\Database\Eloquent\Builder;
 class MarketplaceReadiness
 {
     public const NOT_BOOKABLE = "This spa isn't taking bookings right now.";
+
     public const NOT_CHANGEABLE = "This spa can't move bookings right now. Please contact them.";
 
     public static function scope(Builder $query): Builder
     {
+        $grace = SystemSetting::current()->subscription_grace_period_days;
+        $query->whereHas('business.subscriptions', function ($s) use ($grace) {
+            $s->where('status', 'Active')->whereHas('plan', fn ($p) => $p->where('mobile_app_access', true))
+                ->whereRaw('subscriptions.id = (select max(s2.id) from subscriptions s2 where s2.spa_business_id = subscriptions.spa_business_id and s2.deleted_at is null)')
+                ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now())->orWhere(fn ($q) => $q->where('is_trial', false)->where('expires_at', '>', now()->subDays($grace))->where(fn ($q) => $q->whereNull('plan_change_status')->orWhere('plan_change_status', '!=', 'declined'))));
+        });
         $query
             ->whereHas('business', fn ($q) => $q->where('verification_status', 'Verified'))
             ->where(fn ($q) => $q
@@ -151,6 +160,7 @@ class MarketplaceReadiness
         $polish = self::polish($branch, $hasOffer, $hasStaff);
 
         $items = [
+            ['key' => 'plan_listing', 'label' => 'Plan includes client app listing', 'done' => AppCache::planAllows($branch->spa_business_id, 'mobile_app_access')],
             ['key' => 'branch_verified', 'label' => 'Branch verified and active',
                 'done' => $branch->verification_status === 'Verified' && $branch->operating_status === 'Active'],
             ['key' => 'business_verified', 'label' => 'Business verified',

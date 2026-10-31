@@ -2,8 +2,9 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Seeder;
 use App\Models\SubscriptionPlan;
+use App\Service\System\SubscriptionPlanService;
+use Illuminate\Database\Seeder;
 
 class SubscriptionPlanSeeder extends Seeder
 {
@@ -49,7 +50,7 @@ class SubscriptionPlanSeeder extends Seeder
                 'billing_cycle' => 'Monthly',
 
                 'max_branches' => 1,
-                'max_user_accounts' => 2,
+                'max_user_accounts' => 3,
 
                 'package_access' => false,
                 'reward_access' => false,
@@ -71,8 +72,8 @@ class SubscriptionPlanSeeder extends Seeder
 
                 'billing_cycle' => 'Monthly',
 
-                'max_branches' => 5,
-                'max_user_accounts' => 20,
+                'max_branches' => 3,
+                'max_user_accounts' => 10,
 
                 'package_access' => true,
                 'reward_access' => true,
@@ -94,8 +95,8 @@ class SubscriptionPlanSeeder extends Seeder
 
                 'billing_cycle' => 'Monthly',
 
-                'max_branches' => 9999,
-                'max_user_accounts' => 9999,
+                'max_branches' => 15,
+                'max_user_accounts' => 30,
 
                 'package_access' => true,
                 'reward_access' => true,
@@ -115,10 +116,23 @@ class SubscriptionPlanSeeder extends Seeder
             // SubscriptionPlanService::updateSubscriptionPlan()), so
             // matching on category only could silently reactivate or
             // overwrite the wrong row.
-            SubscriptionPlan::updateOrCreate(
-                ['category' => $plan['category'], 'is_active' => true],
-                $plan
-            );
+            if ($plan['category'] === 'Trial') {
+                if (! SubscriptionPlan::where('category', 'Trial')->exists()) {
+                    SubscriptionPlan::create($plan);
+                }
+
+                continue;
+            }
+            $basic = $plan['category'] === 'Basic';
+            $plan = array_merge($plan, [
+                'billing_cycle' => 'Both', 'mobile_app_access' => true, 'report_export' => true,
+                'export_mode' => $basic ? 'csv' : 'full', 'export_days' => $basic ? 30 : null,
+                'app_booking_limit' => $basic ? 30 : null,
+                'extra_account_price' => 49, 'extra_branch_price' => $plan['category'] === 'Enterprise' ? 199 : null,
+            ]);
+            $current = SubscriptionPlan::where('category', $plan['category'])->where('is_active', true)->first();
+            $service = app(SubscriptionPlanService::class);
+            $current ? $service->updateSubscriptionPlan($current->uuid, $plan) : $service->createSubscriptionPlan($plan);
         }
     }
 }

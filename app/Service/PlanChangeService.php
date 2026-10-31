@@ -99,7 +99,7 @@ class PlanChangeService
         return response()->json([
             'message' => $decision === 'accept'
                 ? 'You\'ll move to the updated plan when you renew.'
-                : 'Your subscription will end on ' . $subscription->expires_at->format('F j, Y') . '.',
+                : 'Your subscription will end on '.$subscription->expires_at->format('F j, Y').'.',
             'plan_change' => $this->present($subscription),
         ], 200);
     }
@@ -160,7 +160,13 @@ class PlanChangeService
 
         foreach (self::FEATURES as $field => $label) {
             if ((bool) $from->{$field} !== (bool) $to->{$field}) {
-                $changes[] = $label . ': ' . ($to->{$field} ? 'added' : 'removed');
+                $changes[] = $label.': '.($to->{$field} ? 'added' : 'removed');
+            }
+        }
+
+        foreach (['app_booking_limit' => 'Monthly app bookings', 'export_mode' => 'Export formats', 'export_days' => 'Export history (days)', 'extra_branch_price' => 'Extra branch monthly price', 'extra_account_price' => 'Extra account monthly price'] as $field => $label) {
+            if ((string) $from->{$field} !== (string) $to->{$field}) {
+                $changes[] = $label.': '.($from->{$field} ?? 'No limit / not offered').' → '.($to->{$field} ?? 'No limit / not offered');
             }
         }
 
@@ -187,7 +193,7 @@ class PlanChangeService
 
     private function money($value): string
     {
-        return $value === null ? 'Not offered' : '₱' . number_format((float) $value, 2);
+        return $value === null ? 'Not offered' : '₱'.number_format((float) $value, 2);
     }
 
     private function limit($value): string

@@ -2,8 +2,8 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class SubscriptionPlan extends Model
@@ -31,12 +31,15 @@ class SubscriptionPlan extends Model
         'report_access',
         'report_export',
         'mobile_app_access',
-        'is_active'
+        'app_booking_limit', 'export_mode', 'export_days', 'extra_branch_price', 'extra_account_price',
+        'is_active',
     ];
 
     protected function casts(): array
     {
         return [
+            'app_booking_limit' => 'integer', 'export_days' => 'integer',
+            'extra_branch_price' => 'decimal:2', 'extra_account_price' => 'decimal:2',
             'monthly_price' => 'decimal:2',
             'yearly_price' => 'decimal:2',
 

@@ -3,7 +3,6 @@
 namespace App\Service;
 
 use App\Http\Resources\SubscriptionPlanResource;
-use App\Models\Billing;
 use App\Models\BusinessBillingAddress;
 use App\Models\BusinessPaymentMethod;
 use App\Models\CheckoutSession;
@@ -11,12 +10,14 @@ use App\Models\Payment;
 use App\Models\SpaBusiness;
 use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
+use App\Models\SystemSetting;
 use App\Models\User;
 use App\Repository\BillingRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Repository\SubscriptionRepository;
 use App\Repository\System\AdminUsersRepository;
 use App\Repository\System\SubscriptionPlanRepository;
+use App\Support\PlanTerms;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -65,16 +66,20 @@ class CheckoutService
      * What the owner is about to pay and whether they can — the checkout
      * page's right-hand summary, plus their saved methods and address.
      */
-    public function quote(User $owner, string $purpose, ?string $planUuid, ?string $cycle): array
+    public function quote(User $owner, string $purpose, ?string $planUuid, ?string $cycle, array $extraInput = []): array
     {
         $business = $this->businessOf($owner);
         $purpose = $this->buyingAs($business->id, $purpose);
-        [$plan, $cycle, $amount, $blocked, $lines] = $this->price($business, $purpose, $planUuid, $cycle);
+        [$plan, $cycle, $amount, $blocked, $lines] = $this->price($business, $purpose, $planUuid, $cycle, $extraInput);
+        $extras = $plan ? PlanTerms::extras($plan, $extraInput) : [];
+        $effective = $plan ? PlanTerms::effective($plan, $extras) : null;
         $live = $this->subscriptions->findActiveForBusiness($business->id);
         // The demo lock (XenditService): a key that isn't a test key.
         $blocked ??= $this->xendit->blockedReason();
 
         return [
+            'extra_branches' => $extras['extra_branches'] ?? 0,
+            'extra_accounts' => $extras['extra_accounts'] ?? 0,
             'purpose' => $purpose,
             'allowed' => $blocked === null,
             'blocked_reason' => $blocked,
@@ -95,7 +100,7 @@ class CheckoutService
             'trial_ends_at' => $purpose !== 'save_method' && $live?->is_trial && $live->expires_at?->isFuture() ? $live->expires_at : null,
             // Buying a plan smaller than what the business uses: what the
             // owner has to choose to keep before paying (PlanFitService).
-            'fit' => $plan && in_array($purpose, ['subscribe', 'renew'], true) ? $this->fit->fit($business, $plan, now()) : null,
+            'fit' => $plan && in_array($purpose, ['subscribe', 'renew'], true) ? $this->fit->fit($business, $effective, now()) : null,
             'auto_renew' => (bool) $live?->auto_renew,
             'payment_methods' => $this->methodsFor($business),
             'billing_address' => $this->addressFor($business),
@@ -116,7 +121,7 @@ class CheckoutService
     }
 
     // [plan, cycle, amount due, blocked reason or null, summary lines].
-    private function price(SpaBusiness $business, string $purpose, ?string $planUuid, ?string $cycle): array
+    private function price(SpaBusiness $business, string $purpose, ?string $planUuid, ?string $cycle, array $extraInput = []): array
     {
         if ($purpose === 'save_method') {
             return [null, null, 0.0, null, [['label' => 'Nothing is charged now', 'amount' => 0.0]]];
@@ -132,19 +137,22 @@ class CheckoutService
 
         // A free trial isn't a paid term: it can't be upgraded, and it doesn't
         // block buying a plan (which replaces it — see startTerm).
+        $extras = PlanTerms::extras($plan, $extraInput);
+        $effective = PlanTerms::effective($plan, $extras);
+        $extrasAmount = PlanTerms::extraPrice($plan, $cycle ?? 'Monthly', $extras);
         $live = $this->subscriptions->findPaidActiveForBusiness($business->id);
 
         if ($purpose === 'upgrade') {
             if (! $live) {
                 return [$plan, $cycle, 0.0, 'You have no active plan to upgrade. Choose a plan to subscribe.', []];
             }
-            $quote = $this->planSwitch->quote($live, $plan, $live->billing_cycle ?? 'Monthly');
+            $quote = $this->planSwitch->quote($live, $plan, $live->billing_cycle ?? 'Monthly', $extras);
             $blocked = $quote['allowed'] ? ($quote['type'] !== 'upgrade' ? 'That plan isn\'t an upgrade — switch to it from the Plans page instead.' : null) : $quote['blocked_reason'];
             $per = ($live->billing_cycle ?? 'Monthly') === 'Yearly' ? 'year' : 'month';
 
             return [$plan, $live->billing_cycle ?? 'Monthly', (float) $quote['amount_due'], $blocked, [
-                ['label' => "{$plan->name} plan (per {$per})", 'amount' => (float) ($quote['new_price'] ?? 0)],
-                ['label' => 'Already paid this term', 'amount' => -(float) $quote['paid_this_term']],
+                ['label' => 'Plan price difference (VAT included)', 'amount' => max(0, (float) PlanSwitchService::price($plan, $live->billing_cycle ?? 'Monthly') - (float) $quote['paid_this_term'])],
+                ['label' => 'Extra capacity difference (VAT included)', 'amount' => max(0, (float) $quote['extras_price'] - (float) $live->extras_paid)],
             ]];
         }
 
@@ -160,15 +168,16 @@ class CheckoutService
         // Over the plan's limits: with the hold columns the owner chooses
         // what to keep at checkout (start() checks it); without them (the
         // migration not run) it is refused, as before.
-        if (! $blocked && ! $this->fit->ready() && ($over = $this->planSwitch->overLimits($business, $plan))) {
-            $blocked = implode(' ', $over) . ' Remove branches or accounts first, or pick a bigger plan.';
+        if (! $blocked && ! $this->fit->ready() && ($over = $this->planSwitch->overLimits($business, $effective))) {
+            $blocked = implode(' ', $over).' Remove branches or accounts first, or pick a bigger plan.';
         }
 
-        $amount = (float) ($price ?? 0);
+        $amount = (float) ($price ?? 0) + $extrasAmount;
 
         return [$plan, $cycle, $amount, $blocked, [
-            ['label' => $cycle === 'Yearly' ? 'Yearly subscription' : 'Monthly subscription', 'amount' => round($amount - self::vatOf($amount), 2)],
-            ['label' => 'VAT (12%)', 'amount' => self::vatOf($amount)],
+            ['label' => ($cycle === 'Yearly' ? 'Yearly' : 'Monthly').' plan (VAT included)', 'amount' => (float) $price],
+            ['label' => ($extras['extra_branches'] ?? 0).' extra branches', 'amount' => (float) $plan->extra_branch_price * ($extras['extra_branches'] ?? 0) * ($cycle === 'Yearly' ? 12 : 1)],
+            ['label' => ($extras['extra_accounts'] ?? 0).' extra accounts', 'amount' => (float) $plan->extra_account_price * ($extras['extra_accounts'] ?? 0) * ($cycle === 'Yearly' ? 12 : 1)],
         ]];
     }
 
@@ -183,7 +192,7 @@ class CheckoutService
     {
         $business = $this->businessOf($owner);
         $purpose = $this->buyingAs($business->id, $payload['purpose']);
-        [$plan, $cycle, $amount, $blocked] = $this->price($business, $purpose, $payload['plan_uuid'] ?? null, $payload['billing_cycle'] ?? null);
+        [$plan, $cycle, $amount, $blocked] = $this->price($business, $purpose, $payload['plan_uuid'] ?? null, $payload['billing_cycle'] ?? null, $payload);
         if ($blocked) {
             abort(422, $blocked);
         }
@@ -193,11 +202,13 @@ class CheckoutService
         if ($reason = $this->xendit->blockedReason()) {
             abort(503, $reason);
         }
+        $extras = $plan ? PlanTerms::extras($plan, $payload) : [];
+        $effective = $plan ? PlanTerms::effective($plan, $extras) : null;
         // Nothing is charged until what to keep on a smaller plan is settled.
         $keep = null;
         if ($plan && in_array($purpose, ['subscribe', 'renew'], true)) {
             $keep = $payload['keep'] ?? null;
-            if ($problems = $this->fit->problems($business, $plan, $keep, now())) {
+            if ($problems = $this->fit->problems($business, $effective, $keep, now())) {
                 abort(422, $problems[0]);
             }
         }
@@ -217,8 +228,8 @@ class CheckoutService
             // Auto-renew needs a saved method; adding a method always saves it.
             'save_method' => $purpose === 'save_method' || $wantsAutoRenew || (bool) ($payload['save_method'] ?? false),
             'enable_auto_renew' => $wantsAutoRenew,
-            'reference_id' => 'SRV-' . Str::uuid(),
-            'meta' => $keep ? ['keep' => $keep] : null,
+            'reference_id' => 'SRV-'.Str::uuid(),
+            'meta' => ['keep' => $keep, 'extras' => $extras, 'base_amount' => $plan ? PlanSwitchService::price($plan, $cycle ?? 'Monthly') : 0, 'extras_amount' => $plan ? PlanTerms::extraPrice($plan, $cycle ?? 'Monthly', $extras) : 0],
         ]);
 
         if (($payload['method'] ?? null) === 'saved') {
@@ -403,8 +414,8 @@ class CheckoutService
      * saved method, the invoice with its VAT, and the payment. Safe to call
      * more than once — only the first call does anything.
      *
-     * @param array $x Xendit session or payment data: payment_request_id,
-     *                 payment_token_id, channel_code (any may be missing).
+     * @param  array  $x  Xendit session or payment data: payment_request_id,
+     *                    payment_token_id, channel_code (any may be missing).
      */
     public function complete(CheckoutSession $session, array $x): void
     {
@@ -414,7 +425,7 @@ class CheckoutService
                 return null;
             }
 
-            $business = SpaBusiness::find($session->spa_business_id);
+            $business = SpaBusiness::whereKey($session->spa_business_id)->lockForUpdate()->firstOrFail();
             $method = $session->paymentMethod;
             $tokenId = $x['payment_token_id'] ?? null;
             if ($tokenId && $session->save_method) {
@@ -470,6 +481,9 @@ class CheckoutService
             'expires_at' => $session->billing_cycle === 'Yearly' ? $start->copy()->addYear() : $start->copy()->addMonth(),
             'auto_renew' => $autoRenew,
             'payment_method_id' => $autoRenew ? ($method?->id ?? $previous?->payment_method_id) : null,
+            ...($session->meta['extras'] ?? []),
+            'base_paid' => $session->meta['base_amount'] ?? $session->amount,
+            'extras_paid' => $session->meta['extras_amount'] ?? 0,
             'status' => 'Active',
         ]);
 
@@ -486,7 +500,7 @@ class CheckoutService
         // (the owner's choice came with the payment), or earlier holds are
         // released if the plan has room for them again.
         if ($plan = SubscriptionPlan::find($session->subscription_plan_id)) {
-            $this->fit->settle($business, $plan, $session->meta['keep'] ?? null);
+            $this->fit->settle($business, PlanTerms::effective($plan, $session->meta['extras'] ?? []), $session->meta['keep'] ?? null);
         }
 
         return $subscription;
@@ -500,8 +514,8 @@ class CheckoutService
 
             return null;
         }
-        $session->setAttribute('meta', ['from_plan' => $subscription->plan?->name]);
-        $this->planSwitch->applyUpgrade($subscription, $session->subscription_plan_id);
+        $session->setAttribute('meta', array_merge($session->meta ?? [], ['from_plan' => $subscription->plan?->name]));
+        $this->planSwitch->applyUpgrade($subscription, $session->subscription_plan_id, $session->meta['extras'] ?? []);
 
         return $subscription;
     }
@@ -510,7 +524,7 @@ class CheckoutService
     // auto-renewal charges from now on (or turns auto-renew on, if asked).
     private function useNewMethod(SpaBusiness $business, ?BusinessPaymentMethod $method, bool $enableAutoRenew): ?Subscription
     {
-        $live = $this->subscriptions->findActiveOrInGraceForBusiness($business->id, \App\Models\SystemSetting::current()->subscription_grace_period_days);
+        $live = $this->subscriptions->findActiveOrInGraceForBusiness($business->id, SystemSetting::current()->subscription_grace_period_days);
         if ($live && ! $live->is_trial && $method && ($live->auto_renew || ($enableAutoRenew && ! $live->isEndingByChoice()))) {
             $live->update(['auto_renew' => true, 'payment_method_id' => $method->id, 'renewal_failure_reason' => null]);
         }
@@ -522,11 +536,13 @@ class CheckoutService
     {
         $plan = SubscriptionPlan::find($session->subscription_plan_id);
         $remarks = match ($session->purpose) {
-            'upgrade' => 'Upgrade: ' . ($session->meta['from_plan'] ?? 'previous plan') . ' → ' . ($plan?->name ?? 'new plan'),
-            'auto_renew' => ($plan?->name ?? 'Plan') . " Plan Renewal ({$session->billing_cycle})",
-            default => ($plan?->name ?? 'Plan') . " Plan Subscription ({$session->billing_cycle})",
+            'upgrade' => 'Upgrade: '.($session->meta['from_plan'] ?? 'previous plan').' → '.($plan?->name ?? 'new plan'),
+            'auto_renew' => ($plan?->name ?? 'Plan')." Plan Renewal ({$session->billing_cycle})",
+            default => ($plan?->name ?? 'Plan')." Plan Subscription ({$session->billing_cycle})",
         };
 
+        $extras = $session->meta['extras'] ?? [];
+        $remarks .= sprintf(' · Extras: %d branches, %d accounts · Plan PHP %.2f; extras PHP %.2f (cycle totals)', $extras['extra_branches'] ?? 0, $extras['extra_accounts'] ?? 0, $session->meta['base_amount'] ?? $session->amount, $session->meta['extras_amount'] ?? 0);
         $billing = $this->billings->create([
             'subscription_id' => $subscription?->id,
             'spa_business_id' => $session->spa_business_id,
@@ -612,9 +628,9 @@ class CheckoutService
         $account = $details['token_details']['account_name'] ?? null;
 
         $label = match ($type) {
-            'GCASH' => 'GCash' . ($account ? " · {$account}" : ''),
-            'MAYA' => 'Maya' . ($account ? " · {$account}" : ''),
-            default => ucfirst(strtolower((string) $brand)) . ($last4 ? " •••• {$last4}" : ''),
+            'GCASH' => 'GCash'.($account ? " · {$account}" : ''),
+            'MAYA' => 'Maya'.($account ? " · {$account}" : ''),
+            default => ucfirst(strtolower((string) $brand)).($last4 ? " •••• {$last4}" : ''),
         };
 
         $hasDefault = BusinessPaymentMethod::where('spa_business_id', $business->id)->where('is_default', true)->exists();
@@ -655,7 +671,7 @@ class CheckoutService
         $owner = $business->owner;
 
         return [
-            'full_name' => trim(($owner?->first_name ?? '') . ' ' . ($owner?->last_name ?? '')) ?: ($business->legal_name ?? ''),
+            'full_name' => trim(($owner?->first_name ?? '').' '.($owner?->last_name ?? '')) ?: ($business->legal_name ?? ''),
             'email' => $business->business_email ?: ($owner?->email ?? ''),
             'phone' => $business->business_phone ?? '',
             'line1' => $business->head_office_address ?? '',
@@ -701,7 +717,7 @@ class CheckoutService
         $parts = preg_split('/\s+/', trim($address->full_name), 2);
 
         return ['customer' => array_filter([
-            'reference_id' => 'servora-business-' . $business->uuid,
+            'reference_id' => 'servora-business-'.$business->uuid,
             'type' => 'INDIVIDUAL',
             'email' => $address->email,
             'mobile_number' => self::e164($address->phone),
@@ -715,8 +731,8 @@ class CheckoutService
         $digits = preg_replace('/\D/', '', (string) $phone);
 
         return match (true) {
-            strlen($digits) === 11 && str_starts_with($digits, '09') => '+63' . substr($digits, 1),
-            strlen($digits) === 12 && str_starts_with($digits, '639') => '+' . $digits,
+            strlen($digits) === 11 && str_starts_with($digits, '09') => '+63'.substr($digits, 1),
+            strlen($digits) === 12 && str_starts_with($digits, '639') => '+'.$digits,
             default => null,
         };
     }
@@ -735,7 +751,7 @@ class CheckoutService
             // localhost). Say where to open it, not "use HTTPS".
             if ($requestOrigin && str_starts_with($requestOrigin, 'https://') && $frontendHost) {
                 $port = parse_url($frontend, PHP_URL_PORT);
-                abort(422, "Open the checkout at https://{$frontendHost}" . ($port ? ":{$port}" : '') . ' instead. The secure payment form only loads at the address Servora is set up for.');
+                abort(422, "Open the checkout at https://{$frontendHost}".($port ? ":{$port}" : '').' instead. The secure payment form only loads at the address Servora is set up for.');
             }
             abort(422, 'The checkout must be opened over HTTPS for the secure payment form to load.');
         }
@@ -779,6 +795,8 @@ class CheckoutService
             'uuid' => $session->uuid,
             // Worked out again for a checkout saved as a renewal when it was
             // the first paid plan (bought during the free trial).
+            'extra_branches' => $session->meta['extras']['extra_branches'] ?? 0,
+            'extra_accounts' => $session->meta['extras']['extra_accounts'] ?? 0,
             'purpose' => $this->buyingAs($session->spa_business_id, $session->purpose, $session->created_at),
             'status' => $session->status,
             'failure_reason' => $session->failure_reason,
@@ -786,7 +804,7 @@ class CheckoutService
             'vat_amount' => (float) $session->vat_amount,
             // An upgrade carries no cycle of its own: it keeps the one the term runs on.
             'billing_cycle' => $session->billing_cycle ?? $session->subscription?->billing_cycle,
-            'plan' => $session->plan ? $this->presentPlan($session->plan) : null,
+            'plan' => $session->plan ? $this->presentPlan(PlanTerms::effective($session->plan, $session->meta['extras'] ?? [])) : null,
             'payment_method' => $session->paymentMethod?->present(),
             // What the money went through ("Credit Card", "GCash"), also for a
             // one-off payment that saved no method. Only once it has been paid.

@@ -5,6 +5,8 @@ namespace App\Service\Client;
 use App\Http\Resources\Client\ClientAppointmentResource;
 use App\Http\Resources\Client\ClientReviewResource;
 use App\Models\Appointment;
+use App\Models\Attendance;
+use App\Models\Client;
 use App\Models\Queue;
 use App\Models\Review;
 use App\Models\SpaBranch;
@@ -14,6 +16,10 @@ use App\Service\Business\AppointmentAvailabilityService;
 use App\Service\Business\AppointmentService;
 use App\Service\Business\MarketplaceReadiness;
 use App\Service\Business\StaffNotifier;
+use App\Service\PlanAccessService;
+use App\Support\AppCache;
+use App\Support\BusinessDay;
+use App\Support\Suspension;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -51,8 +57,7 @@ class ClientBookingService
         private AppointmentAvailabilityService $availabilityService,
         private StaffNotifier $staffNotifier,
         private BookingSlotService $slotService,
-    ) {
-    }
+    ) {}
 
     private function clientName(Appointment $appointment): string
     {
@@ -123,7 +128,7 @@ class ClientBookingService
                 $appointment,
                 'Booking cancelled by client',
                 "{$this->clientName($appointment)} cancelled booking {$appointment->appointment_number}."
-                    . ($reason ? " Reason: {$reason}" : ''),
+                    .($reason ? " Reason: {$reason}" : ''),
                 'on_cancellation',
             );
 
@@ -139,7 +144,7 @@ class ClientBookingService
     {
         $branch = SpaBranch::with('business')->where('uuid', $branchUuid)->firstOrFail();
         $policy = BookingPolicy::for($branch);
-        $client = \App\Models\Client::where('spa_business_id', $branch->spa_business_id)->where('user_id', $user->id)->first();
+        $client = Client::where('spa_business_id', $branch->spa_business_id)->where('user_id', $user->id)->first();
         $missed = $client ? $this->appointmentService->noShowCount($client->id) : 0;
 
         $dayLimit = $policy['max_bookings_per_client_per_day'];
@@ -165,7 +170,7 @@ class ClientBookingService
                 ])->values()
             : collect();
 
-        return ['data' => BookingPolicy::missedBookingsNotice($policy, $missed, (string) $branch->business?->business_name) + ['booked_dates' => $busy, 'bookings' => $upcoming]];
+        return ['plan_booking_usage' => app(PlanAccessService::class)->bookingUsage($branch->spa_business_id), 'data' => BookingPolicy::missedBookingsNotice($policy, $missed, (string) $branch->business?->business_name) + ['booked_dates' => $busy, 'bookings' => $upcoming]];
     }
 
     public function reschedule(User $user, string $uuid, array $payload)
@@ -184,7 +189,7 @@ class ClientBookingService
             if ($problem = BookingPolicy::startTimeProblem(BookingPolicy::for($branch), $startsAt)) {
                 return response()->json(['message' => $problem], 422);
             }
-            if ($suspended = \App\Support\Suspension::refusal($branch)) {
+            if ($suspended = Suspension::refusal($branch)) {
                 return $suspended;
             }
             if (! MarketplaceReadiness::acceptsChanges($branch)) {
@@ -251,7 +256,7 @@ class ClientBookingService
                 $appointment,
                 'Booking rescheduled by client',
                 "{$this->clientName($appointment)} moved booking {$appointment->appointment_number} to "
-                    . $startsAt->format('D, M j \\a\\t g:i A') . '.',
+                    .$startsAt->format('D, M j \\a\\t g:i A').'.',
                 'on_reschedule',
             );
 
@@ -283,7 +288,7 @@ class ClientBookingService
 
         $ahead = (clone $sameDay)
             ->where('queue_status', 'Waiting')
-            ->whereRaw(Queue::lineKey() . ' < ?', [$ticket->lineTime()])
+            ->whereRaw(Queue::lineKey().' < ?', [$ticket->lineTime()])
             ->with('appointment.services.serviceVariant')
             ->get();
 
@@ -295,8 +300,8 @@ class ClientBookingService
         // Therapists actually in today (checked in, not out) share the line;
         // before anyone has checked in, fall back to the active roster.
         $roster = Staff::where('spa_branch_id', $ticket->spa_branch_id)->where('role', 'therapist')->where('status', 'active');
-        $inToday = \App\Models\Attendance::whereIn('staff_id', (clone $roster)->select('id'))
-            ->whereDate('attendance_date', \App\Support\BusinessDay::attendanceDate($ticket->spa_branch_id, $date))
+        $inToday = Attendance::whereIn('staff_id', (clone $roster)->select('id'))
+            ->whereDate('attendance_date', BusinessDay::attendanceDate($ticket->spa_branch_id, $date))
             ->whereNotNull('check_in_at')
             ->whereNull('check_out_at')
             ->count();
@@ -324,6 +329,7 @@ class ClientBookingService
     public function review(User $user, string $uuid, array $payload)
     {
         $appointment = $this->findMine($user, $uuid);
+        abort_unless(AppCache::planAllows($appointment->branch->spa_business_id, 'review_access'), 403, 'Reviews are not included in this spa’s current plan.');
 
         if ($appointment->status !== Appointment::STATUS_COMPLETED) {
             return response()->json(['message' => 'You can review a visit once it is completed.'], 422);
@@ -336,7 +342,7 @@ class ClientBookingService
         // A spa is rated once (Review::ratedBranch). The client's row is locked
         // so two quick taps can't both get through.
         $review = DB::transaction(function () use ($appointment, $payload) {
-            \App\Models\Client::whereKey($appointment->client_id)->lockForUpdate()->first();
+            Client::whereKey($appointment->client_id)->lockForUpdate()->first();
             if (Review::ratedBranch($appointment->client_id, $appointment->spa_branch_id)) {
                 return null;
             }

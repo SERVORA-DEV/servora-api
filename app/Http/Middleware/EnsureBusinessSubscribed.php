@@ -2,17 +2,16 @@
 
 namespace App\Http\Middleware;
 
-use App\Support\AppCache;
 use App\Repository\SpaBusinessRepository;
+use App\Support\AppCache;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 // Runs after 'verified.business' in the same route group, so a business
-// here is already known to exist and be verified. Only gates
-// business_owner — manager accounts have never had access to billing
-// (see the owner-only subscription/plans routes) and stay unaffected here
-// too, same as the frontend's verified.global.ts scoping. 402 (not 423,
+// here is already known to exist and be verified. Owners and staff share
+// the business's subscription access; subscription purchase/recovery routes
+// remain owner-only and outside this gate. 402 (not 423,
 // which verification already uses) so the frontend can tell the two
 // "right role, something's missing" cases apart.
 //
@@ -30,7 +29,7 @@ class EnsureBusinessSubscribed
     {
         $user = $request->user();
 
-        if (! $user || $user->role !== 'business_owner') {
+        if (! $user || ! in_array($user->role, ['business_owner', 'manager', 'front_officer'], true)) {
             return $next($request);
         }
 

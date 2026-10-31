@@ -2,18 +2,21 @@
 
 namespace App\Service\System;
 
+use App\Http\Resources\SubscriptionPlanResource;
 use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
-use App\Repository\System\SubscriptionPlanRepository;
-use App\Http\Resources\SubscriptionPlanResource;
 use App\Repository\AuditLogRepository;
+use App\Repository\System\SubscriptionPlanRepository;
 use App\Service\PlanChangeService;
+use App\Support\AppCache;
 use Illuminate\Support\Arr;
 
 class SubscriptionPlanService
 {
     private SubscriptionPlanRepository $subscriptionPlanRepository;
+
     private PlanChangeService $planChangeService;
+
     private AuditLogRepository $auditLogRepository;
 
     public function __construct(
@@ -48,9 +51,9 @@ class SubscriptionPlanService
         // subscription changes (AppCache 'plans-public' version).
         $request = request();
         $key = sprintf('plans:public:%d:%d:%s:v%d', $perPage, (int) $request->input('page', 1),
-            md5($request->getSchemeAndHttpHost()), \App\Support\AppCache::version('plans-public'));
+            md5($request->getSchemeAndHttpHost()), AppCache::version('plans-public'));
 
-        return response()->json(\App\Support\AppCache::remember($key, 600, function () use ($perPage) {
+        return response()->json(AppCache::remember($key, 600, function () use ($perPage) {
             $collection = $this->subscriptionPlanRepository->paginateActivePlan($perPage);
             $this->markMostPopular($collection);
 
@@ -108,12 +111,14 @@ class SubscriptionPlanService
     public function getSubscriptionPlan(string $uuid)
     {
         $model = $this->subscriptionPlanRepository->findByUuid($uuid);
+
         return new SubscriptionPlanResource($model);
     }
 
     public function getSubscriptionPlanByField(string $field, $value)
     {
         $model = $this->subscriptionPlanRepository->findByField($field, $value);
+
         return new SubscriptionPlanResource($model);
     }
 
@@ -220,11 +225,14 @@ class SubscriptionPlanService
     // as free with no yearly price.
     private function withTrialPricing(array $payload, string $category): array
     {
+        if (isset($payload['export_mode'])) {
+            $payload['report_export'] = $payload['export_mode'] !== 'none';
+        }
         if ($category !== SubscriptionPlan::TRIAL_CATEGORY) {
             return $payload;
         }
 
-        return array_merge($payload, ['monthly_price' => 0, 'yearly_price' => null, 'billing_cycle' => 'Monthly']);
+        return array_merge($payload, ['monthly_price' => 0, 'yearly_price' => null, 'billing_cycle' => 'Monthly', 'extra_branch_price' => null, 'extra_account_price' => null]);
     }
 
     public function deleteSubscriptionPlan(string $uuid)

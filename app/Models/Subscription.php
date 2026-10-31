@@ -11,6 +11,7 @@ class Subscription extends Model
     use HasUuids, SoftDeletes;
 
     protected $fillable = [
+        'extra_branches', 'extra_accounts', 'base_paid', 'extras_paid', 'scheduled_extras',
         'uuid',
 
         'spa_business_id',
@@ -58,6 +59,8 @@ class Subscription extends Model
     protected function casts(): array
     {
         return [
+            'extra_branches' => 'integer', 'extra_accounts' => 'integer',
+            'base_paid' => 'decimal:2', 'extras_paid' => 'decimal:2', 'scheduled_extras' => 'array',
             'starts_at' => 'datetime',
             'expires_at' => 'datetime',
             'expiry_reminder_sent_at' => 'datetime',

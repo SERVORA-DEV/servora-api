@@ -6,6 +6,7 @@ use App\Models\SpaBusinessSetting;
 use App\Models\Subscription;
 use App\Models\SystemSetting;
 use App\Models\UserPermission;
+use App\Repository\SubscriptionRepository;
 use Closure;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -27,8 +28,11 @@ use Illuminate\Support\Facades\DB;
 final class AppCache
 {
     private const SETTINGS_TTL = 3600;
+
     private const SUBSCRIPTION_TTL = 600;
+
     private const PERMISSION_TTL = 600;
+
     private const IDENTITY_TTL = 600;
 
     // ── Core ──────────────────────────────────────────────────────────────
@@ -74,7 +78,7 @@ final class AppCache
     private static function memo(): \ArrayObject
     {
         if (! app()->bound('servora.app_cache')) {
-            app()->scoped('servora.app_cache', fn () => new \ArrayObject());
+            app()->scoped('servora.app_cache', fn () => new \ArrayObject);
         }
 
         return app('servora.app_cache');
@@ -112,13 +116,13 @@ final class AppCache
         }
 
         $grace = self::graceDays();
-        $subscription = app(\App\Repository\SubscriptionRepository::class)
+        $subscription = app(SubscriptionRepository::class)
             ->findActiveOrInGraceForBusiness($businessId, $grace);
         $subscription?->loadMissing('plan');
 
         $ttl = self::SUBSCRIPTION_TTL;
         if ($subscription?->expires_at) {
-            $lapses = $subscription->expires_at->copy()->addDays($grace);
+            $lapses = $subscription->expires_at->copy()->addDays($subscription->is_trial || $subscription->isEndingByChoice() ? 0 : $grace);
             $ttl = max(1, min($ttl, (int) now()->diffInSeconds($lapses, false)));
         }
         self::store($key, $subscription, $ttl);
@@ -161,7 +165,7 @@ final class AppCache
     // so both are part of the key rather than forgotten one by one.
     private static function subscriptionKey(int $businessId): string
     {
-        return "biz:{$businessId}:sub:g" . self::graceDays() . ':p' . self::version('plans');
+        return "biz:{$businessId}:sub:g".self::graceDays().':p'.self::version('plans');
     }
 
     public static function businessSettings(int $businessId): ?SpaBusinessSetting

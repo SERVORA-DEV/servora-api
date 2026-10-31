@@ -1,68 +1,77 @@
 <?php
 
-
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Auth\AuthController;
-use App\Http\Controllers\LegalController;
-use App\Http\Controllers\PushSubscriptionController;
-use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Auth\EmailVerificationController;
-use App\Http\Controllers\ContactEmailController;
-use App\Http\Controllers\System\SubscriptionPlanController;
-use App\Http\Controllers\System\SubscriberController;
-use App\Http\Controllers\System\ServiceTemplateController;
-use App\Http\Controllers\System\AdminUsersController;
-use App\Http\Controllers\System\TransactionController;
-use App\Http\Controllers\System\SystemSettingController;
-use App\Http\Controllers\System\AuditLogController;
-use App\Http\Controllers\System\SecurityController;
-use App\Http\Controllers\System\AnnouncementController;
-use App\Http\Controllers\System\NotificationController;
-use App\Http\Controllers\System\BranchController;
-use App\Http\Controllers\System\BusinessController;
-use App\Http\Controllers\System\DashboardController as SystemDashboardController;
-use App\Http\Controllers\Business\DashboardController;
-use App\Http\Controllers\Business\BusinessSettingsController;
-use App\Http\Controllers\Business\CustomerProgramController;
-use App\Http\Controllers\Business\BranchSettingsController;
-use App\Http\Controllers\SubscriptionController;
-use App\Http\Controllers\CheckoutController;
-use App\Http\Controllers\Business\ManagerNotificationPrefsController;
-use App\Http\Controllers\Business\NotificationController as BusinessNotificationController;
-use App\Http\Controllers\XenditWebhookController;
+use App\Http\Controllers\Auth\RegisterController;
+use App\Http\Controllers\Business\AccountController;
+use App\Http\Controllers\Business\AddonController;
+use App\Http\Controllers\Business\AppointmentController;
+use App\Http\Controllers\Business\AppointmentServiceController;
+use App\Http\Controllers\Business\AttendanceController;
+use App\Http\Controllers\Business\BillingAdjustmentController;
+use App\Http\Controllers\Business\BillingController;
 use App\Http\Controllers\Business\BranchClosureController;
 use App\Http\Controllers\Business\BranchOfferingController;
 use App\Http\Controllers\Business\BranchScheduleController;
+use App\Http\Controllers\Business\BranchSettingsController;
+use App\Http\Controllers\Business\BusinessAuditLogController;
+use App\Http\Controllers\Business\BusinessSettingsController;
 use App\Http\Controllers\Business\CatalogRequestController;
-use App\Http\Controllers\Business\ProgramRequestController;
-use App\Http\Controllers\Business\SpaBranchController;
-use App\Http\Controllers\Business\AccountController;
-use App\Http\Controllers\Business\AttendanceController;
-use App\Http\Controllers\Business\StaffController;
-use App\Http\Controllers\Business\StaffScheduleController;
-use App\Http\Controllers\Business\FacilityController;
-use App\Http\Controllers\Business\ServiceController;
-use App\Http\Controllers\Business\AddonController;
-use App\Http\Controllers\Business\PackageController;
-use App\Http\Controllers\Business\SpaBusinessController;
-use App\Http\Controllers\System\BranchRegistrationController;
-use App\Http\Controllers\Business\OwnerVerificationController as BusinessOwnerVerificationController;
-use App\Http\Controllers\System\OwnerVerificationController as SystemOwnerVerificationController;
 use App\Http\Controllers\Business\ClientController;
-use App\Http\Controllers\Business\AppointmentController;
-use App\Http\Controllers\Business\AppointmentServiceController;
-use App\Http\Controllers\Business\QueueController;
-use App\Http\Controllers\Business\BillingController;
-use App\Http\Controllers\Business\PaymentController;
-use App\Http\Controllers\Business\FrontOfficeLookupController;
-use App\Http\Controllers\Business\FrontOfficeDashboardController;
+use App\Http\Controllers\Business\CommissionPlanController;
+use App\Http\Controllers\Business\CustomerProgramController;
+use App\Http\Controllers\Business\DashboardController;
+use App\Http\Controllers\Business\FacilityController;
 use App\Http\Controllers\Business\FrontOfficeAttendanceController;
-use App\Http\Controllers\Client\ClientAppointmentController;
+use App\Http\Controllers\Business\FrontOfficeDashboardController;
+use App\Http\Controllers\Business\FrontOfficeLookupController;
+use App\Http\Controllers\Business\LivePulseController;
+use App\Http\Controllers\Business\ManagerNotificationPrefsController;
+use App\Http\Controllers\Business\NotificationController as BusinessNotificationController;
+use App\Http\Controllers\Business\OwnerVerificationController as BusinessOwnerVerificationController;
+use App\Http\Controllers\Business\PackageController;
+use App\Http\Controllers\Business\PaymentController;
+use App\Http\Controllers\Business\PlanAccessController;
+use App\Http\Controllers\Business\ProgramRequestController;
+use App\Http\Controllers\Business\QueueController;
+use App\Http\Controllers\Business\RefundPolicyController;
+use App\Http\Controllers\Business\ServiceController;
+use App\Http\Controllers\Business\SpaBranchController;
+use App\Http\Controllers\Business\SpaBusinessController;
+use App\Http\Controllers\Business\StaffController;
+use App\Http\Controllers\Business\StaffEarningsController;
+use App\Http\Controllers\Business\StaffScheduleController;
+use App\Http\Controllers\Business\StaffTransferController;
+use App\Http\Controllers\CheckoutController;
 use App\Http\Controllers\Client\ClientAccountController;
-use App\Http\Controllers\Client\ClientRewardsController;
+use App\Http\Controllers\Client\ClientAppointmentController;
 use App\Http\Controllers\Client\ClientBookingController;
 use App\Http\Controllers\Client\ClientProfileController;
+use App\Http\Controllers\Client\ClientRewardsController;
+use App\Http\Controllers\ContactEmailController;
+use App\Http\Controllers\LegalController;
+use App\Http\Controllers\MobileReleaseController;
+use App\Http\Controllers\PushSubscriptionController;
+use App\Http\Controllers\ScannerController;
+use App\Http\Controllers\SubscriptionController;
+use App\Http\Controllers\System\AdminUsersController;
+use App\Http\Controllers\System\AnnouncementController;
+use App\Http\Controllers\System\AuditLogController;
+use App\Http\Controllers\System\BranchController;
+use App\Http\Controllers\System\BranchRegistrationController;
+use App\Http\Controllers\System\BusinessController;
+use App\Http\Controllers\System\DashboardController as SystemDashboardController;
+use App\Http\Controllers\System\NotificationController;
+use App\Http\Controllers\System\OwnerVerificationController as SystemOwnerVerificationController;
+use App\Http\Controllers\System\SecurityController;
+use App\Http\Controllers\System\ServiceTemplateController;
+use App\Http\Controllers\System\SubscriberController;
+use App\Http\Controllers\System\SubscriptionPlanController;
+use App\Http\Controllers\System\SystemSettingController;
+use App\Http\Controllers\System\TransactionController;
+use App\Http\Controllers\XenditWebhookController;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 
 // Terms of Service + Privacy Policy, shown by the web and mobile apps.
 Route::get('/legal', [LegalController::class, 'show']);
@@ -95,7 +104,6 @@ Route::post('/auth/resend-registration-otp', [AuthController::class, 'resendRegi
     ->middleware('throttle:6,1');
 Route::post('/business/administrator/register', [RegisterController::class, 'register'])->middleware('throttle:auth-sensitive');
 
-
 // display available subscription plan
 Route::get('/active-subscription-plans', [SubscriptionPlanController::class, 'displayActivePlans']);
 
@@ -106,7 +114,7 @@ Route::get('/business/{uuid}/public', [SpaBusinessController::class, 'publicShow
 
 // Public: the newest mobile app version and the oldest still accepted, so an installed app can
 // offer (or require) the update. Published with `php artisan mobile:release`.
-Route::get('/app/release', [\App\Http\Controllers\MobileReleaseController::class, 'show'])->middleware('throttle:60,1');
+Route::get('/app/release', [MobileReleaseController::class, 'show'])->middleware('throttle:60,1');
 
 // Public, unauthenticated "spas near me" lookup for the client mobile app's
 // Home screen — see NearbySpaResource for what's exposed here.
@@ -143,18 +151,16 @@ Route::get('/spas/{uuid}/therapists/{staffUuid}/days-off', [SpaBranchController:
 // link the front desk gave them and scans a client's QR to start a home
 // visit — the secret in the link says which branch, and only that branch's
 // bookings can be started through it. Throttled against guessing codes.
-Route::get('/scanner/{token}', [\App\Http\Controllers\ScannerController::class, 'show'])->middleware('throttle:60,1');
-Route::post('/scanner/{token}/start', [\App\Http\Controllers\ScannerController::class, 'start'])->middleware('throttle:20,1');
+Route::get('/scanner/{token}', [ScannerController::class, 'show'])->middleware('throttle:60,1');
+Route::post('/scanner/{token}/start', [ScannerController::class, 'start'])->middleware('throttle:20,1');
 
 // Published reviews for a branch's page — first name + last initial only.
 Route::get('/spas/{uuid}/reviews', [SpaBranchController::class, 'publicReviews'])->whereUuid('uuid');
-
 
 // Private verification documents (government ID front/back, face-scan
 // frames, business registration document) are served directly by
 // Cloudinary now — see DocumentUploadService::signedUrl() — so there is no
 // local retrieval route for them anymore.
-
 
 // auth sanctum
 Route::middleware('auth:sanctum')->group(function () {
@@ -206,7 +212,6 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('notifications/read-all', [ClientAccountController::class, 'markAllNotificationsRead']);
             Route::patch('notifications/{id}/read', [ClientAccountController::class, 'markNotificationRead'])->whereNumber('id');
         });
-
 
     // system administrator access route
     Route::prefix('system')
@@ -332,7 +337,6 @@ Route::middleware('auth:sanctum')->group(function () {
             });
         });
 
-    
     // business access routes — split by role. Manager shares the owner's
     // dashboard and Employee Management (see ROLE_HOME.manager on the
     // frontend and SpaBusinessRepository::findForUser, which resolves
@@ -349,7 +353,7 @@ Route::middleware('auth:sanctum')->group(function () {
             // everything else.
             Route::middleware('role:business_owner,manager,front_officer')->group(function () {
                 // Changes the open screens' data: asked every few seconds, so cheap by design.
-                Route::get('live/pulse', [\App\Http\Controllers\Business\LivePulseController::class, 'show']);
+                Route::get('live/pulse', [LivePulseController::class, 'show']);
                 // The signed-in staff member's OWN feed — same
                 // NotificationService as the admin's /system/notifications,
                 // scoped to the caller's user_id.
@@ -384,6 +388,9 @@ Route::middleware('auth:sanctum')->group(function () {
             // EnsureBusinessSubscribed), so a manager passes through
             // unaffected here exactly like today.
             Route::middleware(['role:business_owner,manager', 'verified.business', 'subscribed.business'])->group(function () {
+                Route::get('plan-access', [PlanAccessController::class, 'show']);
+                Route::get('reports/export-data', [PlanAccessController::class, 'export'])->middleware(['permission:report_view', 'permission:report_export']);
+                Route::post('reports/export-authorize', [PlanAccessController::class, 'authorizeExport'])->middleware('permission:report_export');
                 // Each staff action needs its own permission: the owner turns
                 // them on and off per account (EnsurePermission).
                 Route::apiResource('staff', StaffController::class)->only(['index', 'show'])->middleware('permission:staff_view');
@@ -393,10 +400,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
                 // Business → Audit Log: the owner's whole business, or the
                 // branches a manager runs (BusinessAuditLogService).
-                Route::get('audit-log', [\App\Http\Controllers\Business\BusinessAuditLogController::class, 'index'])->middleware('permission:audit_log_view');
+                Route::get('audit-log', [BusinessAuditLogController::class, 'index'])->middleware('permission:audit_log_view');
                 // The commission plans a staff member can be given: read by the
                 // owner and managers, managed by the owner (below).
-                Route::get('commission-plan', [\App\Http\Controllers\Business\CommissionPlanController::class, 'index']);
+                Route::get('commission-plan', [CommissionPlanController::class, 'index']);
 
                 // Mutation + the single-day operational roster stay
                 // manager-only — the Owner gets a separate read-only
@@ -504,7 +511,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     ->middleware(['role:business_owner,manager', 'permission:staff_view'])->whereUuid('uuid');
                 // Every staff member's earnings for a pay period, less
                 // attendance penalties (the Earnings page).
-                Route::get('earnings', [\App\Http\Controllers\Business\StaffEarningsController::class, 'index'])
+                Route::get('earnings', [StaffEarningsController::class, 'index'])
                     ->middleware(['role:business_owner,manager', 'permission:commission_view']);
                 Route::patch('staff/{uuid}/services', [StaffController::class, 'updateServices'])->middleware('permission:staff_update');
 
@@ -532,11 +539,11 @@ Route::middleware('auth:sanctum')->group(function () {
                 // StaffTransferService). Asked for by saving the employee's
                 // Branch. branch-options lists every branch of the business,
                 // which a manager's own branch list does not.
-                Route::get('branch-options', [\App\Http\Controllers\Business\StaffTransferController::class, 'branchOptions'])->middleware('permission:staff_view');
-                Route::get('transfer-requests', [\App\Http\Controllers\Business\StaffTransferController::class, 'index'])->middleware('permission:staff_view');
-                Route::post('transfer-requests/{uuid}/approve', [\App\Http\Controllers\Business\StaffTransferController::class, 'approve'])->middleware(['role:business_owner', 'permission:staff_update'])->whereUuid('uuid');
-                Route::post('transfer-requests/{uuid}/decline', [\App\Http\Controllers\Business\StaffTransferController::class, 'decline'])->middleware(['role:business_owner', 'permission:staff_update'])->whereUuid('uuid');
-                Route::delete('transfer-requests/{uuid}', [\App\Http\Controllers\Business\StaffTransferController::class, 'withdraw'])->middleware('permission:staff_update')->whereUuid('uuid');
+                Route::get('branch-options', [StaffTransferController::class, 'branchOptions'])->middleware('permission:staff_view');
+                Route::get('transfer-requests', [StaffTransferController::class, 'index'])->middleware('permission:staff_view');
+                Route::post('transfer-requests/{uuid}/approve', [StaffTransferController::class, 'approve'])->middleware(['role:business_owner', 'permission:staff_update'])->whereUuid('uuid');
+                Route::post('transfer-requests/{uuid}/decline', [StaffTransferController::class, 'decline'])->middleware(['role:business_owner', 'permission:staff_update'])->whereUuid('uuid');
+                Route::delete('transfer-requests/{uuid}', [StaffTransferController::class, 'withdraw'])->middleware('permission:staff_update')->whereUuid('uuid');
             });
 
             // Day-to-day front-desk operations: appointment creation,
@@ -590,10 +597,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('appointment/{uuid}/assignment-options', [AppointmentServiceController::class, 'assignmentOptions'])->middleware('permission:appointment_view');
                 Route::post('appointment/{uuid}/auto-assign', [AppointmentServiceController::class, 'autoAssign'])->middleware('permission:appointment_update');
                 Route::post('appointment/{uuid}/assignments/batch', [AppointmentServiceController::class, 'assignBatch'])->middleware('permission:appointment_update');
-                Route::get('appointment-service/{uuid}/therapist-options',[AppointmentServiceController::class, 'therapistOptions'])->middleware('permission:appointment_view');
+                Route::get('appointment-service/{uuid}/therapist-options', [AppointmentServiceController::class, 'therapistOptions'])->middleware('permission:appointment_view');
                 // Every facility with why it can't take this service (booked, maintenance, not set up).
                 Route::get('appointment-service/{uuid}/facility-options', [AppointmentServiceController::class, 'facilityOptions'])->middleware('permission:appointment_view');
-                Route::post('appointment-service/{uuid}/assignments',[AppointmentServiceController::class, 'assignTherapist'])->middleware('permission:appointment_update');
+                Route::post('appointment-service/{uuid}/assignments', [AppointmentServiceController::class, 'assignTherapist'])->middleware('permission:appointment_update');
                 Route::delete('assignment/{uuid}', [AppointmentServiceController::class, 'cancelAssignment'])->middleware('permission:appointment_update');
                 Route::patch('assignment/{uuid}/room', [AppointmentServiceController::class, 'assignRoom'])->middleware('permission:appointment_update');
                 // Clears just the room, keeping the therapist on the assignment.
@@ -626,13 +633,13 @@ Route::middleware('auth:sanctum')->group(function () {
                 // refund): applied at once, or a request a manager or the
                 // owner answers — who may do which is checked in
                 // BillingAdjustmentService (App\Support\BillAdjustment).
-                Route::get('billing-adjustments', [\App\Http\Controllers\Business\BillingAdjustmentController::class, 'index'])->middleware('permission:billing_view');
-                Route::get('refund-policies', [\App\Http\Controllers\Business\RefundPolicyController::class, 'index'])->middleware('permission:billing_view');
-                Route::post('billing/{uuid}/adjustments', [\App\Http\Controllers\Business\BillingAdjustmentController::class, 'store'])->middleware(['permission:payment_create', 'throttle:30,1']);
-                Route::delete('billing-adjustments/{uuid}', [\App\Http\Controllers\Business\BillingAdjustmentController::class, 'destroy'])->middleware('permission:payment_create')->whereUuid('uuid');
-                Route::post('billing-adjustments/{uuid}/approve', [\App\Http\Controllers\Business\BillingAdjustmentController::class, 'approve'])
+                Route::get('billing-adjustments', [BillingAdjustmentController::class, 'index'])->middleware('permission:billing_view');
+                Route::get('refund-policies', [RefundPolicyController::class, 'index'])->middleware('permission:billing_view');
+                Route::post('billing/{uuid}/adjustments', [BillingAdjustmentController::class, 'store'])->middleware(['permission:payment_create', 'throttle:30,1']);
+                Route::delete('billing-adjustments/{uuid}', [BillingAdjustmentController::class, 'destroy'])->middleware('permission:payment_create')->whereUuid('uuid');
+                Route::post('billing-adjustments/{uuid}/approve', [BillingAdjustmentController::class, 'approve'])
                     ->middleware(['role:business_owner,manager', 'permission:payment_create'])->whereUuid('uuid');
-                Route::post('billing-adjustments/{uuid}/decline', [\App\Http\Controllers\Business\BillingAdjustmentController::class, 'decline'])
+                Route::post('billing-adjustments/{uuid}/decline', [BillingAdjustmentController::class, 'decline'])
                     ->middleware(['role:business_owner,manager', 'permission:payment_create'])->whereUuid('uuid');
 
                 Route::get('frontoffice/dashboard', [FrontOfficeDashboardController::class, 'index'])->middleware('permission:dashboard_view');
@@ -701,7 +708,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Role-gated only, like its sibling lookups above.
                 Route::get('frontoffice/therapist-queue', [FrontOfficeLookupController::class, 'therapistQueue'])->middleware('permission:appointment_view');
                 Route::get('frontoffice/availability-check', [FrontOfficeLookupController::class, 'availabilityCheck'])->middleware('permission:appointment_view');
-                Route::get('frontoffice/facilities',[FrontOfficeLookupController::class, 'facilities'])->middleware('permission:appointment_view');
+                Route::get('frontoffice/facilities', [FrontOfficeLookupController::class, 'facilities'])->middleware('permission:appointment_view');
                 Route::get('frontoffice/services', [FrontOfficeLookupController::class, 'services'])->middleware('permission:appointment_view');
                 Route::get('frontoffice/packages', [FrontOfficeLookupController::class, 'packages'])->middleware('permission:appointment_view');
                 Route::get('frontoffice/addons', [FrontOfficeLookupController::class, 'addons'])->middleware('permission:appointment_view');
@@ -730,7 +737,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::patch('branch/{uuid}/photos/order', [BranchSettingsController::class, 'reorderPhotos'])->middleware('permission:branch_update');
                 Route::patch('branch/{uuid}/booking-policy', [BranchSettingsController::class, 'updateBookingPolicy'])->middleware('permission:branch_update');
                 Route::post('branch/{uuid}/email/resend', [ContactEmailController::class, 'resendBranch'])->middleware(['permission:branch_update', 'throttle:6,1']);
-                Route::get('branch/{uuid}/reviews-summary', [BranchSettingsController::class, 'reviewsSummary'])->middleware('permission:review_view');
+                Route::get('branch/{uuid}/reviews-summary', [BranchSettingsController::class, 'reviewsSummary'])->middleware(['permission:review_view', 'plan.feature:review_access']);
 
                 // Read side of Business Settings. A manager gets only what a
                 // branch inherits (identity + booking defaults); every write
@@ -756,10 +763,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Business Defaults → Refunds: the owner's refund policies
                 // (App\Support\RefundPolicyRule). Read by everyone at
                 // business/refund-policies; changed only here.
-                Route::post('refund-policies', [\App\Http\Controllers\Business\RefundPolicyController::class, 'store']);
-                Route::patch('refund-policies/settings', [\App\Http\Controllers\Business\RefundPolicyController::class, 'settings']);
-                Route::patch('refund-policies/{uuid}', [\App\Http\Controllers\Business\RefundPolicyController::class, 'update'])->whereUuid('uuid');
-                Route::delete('refund-policies/{uuid}', [\App\Http\Controllers\Business\RefundPolicyController::class, 'destroy'])->whereUuid('uuid');
+                Route::post('refund-policies', [RefundPolicyController::class, 'store']);
+                Route::patch('refund-policies/settings', [RefundPolicyController::class, 'settings']);
+                Route::patch('refund-policies/{uuid}', [RefundPolicyController::class, 'update'])->whereUuid('uuid');
+                Route::delete('refund-policies/{uuid}', [RefundPolicyController::class, 'destroy'])->whereUuid('uuid');
 
                 // Owner identity + business verification submission — must
                 // stay reachable while the account is unverified (that's the
@@ -822,7 +829,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('service-templates', [ServiceController::class, 'templates']);
                 Route::apiResource('service', ServiceController::class)->only(['store', 'update', 'destroy']);
                 Route::apiResource('addon', AddonController::class)->only(['store', 'update', 'destroy']);
-                Route::apiResource('commission-plan', \App\Http\Controllers\Business\CommissionPlanController::class)->only(['store', 'update', 'destroy']);
+                Route::apiResource('commission-plan', CommissionPlanController::class)->only(['store', 'update', 'destroy']);
                 // Managing packages needs a plan that includes them. Reading
                 // the list stays open (the page shows what the plan is missing).
                 Route::apiResource('package', PackageController::class)->only(['store', 'update', 'destroy'])->middleware('plan.feature:package_access');
@@ -844,8 +851,7 @@ Route::middleware('auth:sanctum')->group(function () {
         });
 });
 
-
-// System Handle Part   
+// System Handle Part
 
 // The button in the sign-up email: the account is created when it is pressed
 // (App\Support\PendingRegistration).

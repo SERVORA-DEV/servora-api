@@ -2,7 +2,9 @@
 
 namespace App\Service;
 
+use App\Models\AccountBranch;
 use App\Models\Appointment;
+use App\Models\Billing;
 use App\Models\Client;
 use App\Models\ClientMembership;
 use App\Models\CustomerProgram;
@@ -14,6 +16,7 @@ use App\Models\User;
 use App\Repository\NotificationRepository;
 use App\Support\AppCache;
 use App\Support\PlanFit;
+use App\Support\PlanTerms;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -85,7 +88,7 @@ class PlanFitService
     // (App\Support\AccountScope), or their employee before that existed.
     private function ofBusiness($query, SpaBusiness $business)
     {
-        return \App\Models\AccountBranch::ready()
+        return AccountBranch::ready()
             ? $query->whereHas('accountBranches.branch', fn ($q) => $q->where('spa_business_id', $business->id))->with('accountBranches.branch')
             : $query->whereHas('staff.branch', fn ($q) => $q->where('spa_business_id', $business->id))->with('staff');
     }
@@ -93,7 +96,7 @@ class PlanFitService
     /** @return int[] the branches a login works at */
     private function branchIdsOf(User $u): array
     {
-        return \App\Models\AccountBranch::ready()
+        return AccountBranch::ready()
             ? $u->accountBranches->pluck('spa_branch_id')->all()
             : array_values(array_filter([$u->staff?->spa_branch_id]));
     }
@@ -111,7 +114,9 @@ class PlanFitService
     /** The plan the business is on right now, or null with no live subscription. */
     public function currentPlan(SpaBusiness $business): ?SubscriptionPlan
     {
-        return AppCache::activeSubscription($business->id)?->plan;
+        $sub = AppCache::activeSubscription($business->id);
+
+        return $sub?->plan ? PlanTerms::effective($sub->plan, $sub->only(['extra_branches', 'extra_accounts'])) : null;
     }
 
     // ── Fitting a plan ────────────────────────────────────────────────────
@@ -250,12 +255,22 @@ class PlanFitService
     /** Bring one branch back by hand. Returns why not, or null when done. */
     public function bringBackBranch(SpaBusiness $business, SpaBranch $branch): ?string
     {
+        return DB::transaction(function () use ($business, $branch) {
+            SpaBusiness::whereKey($business->id)->lockForUpdate()->first();
+            $branch->refresh();
+
+            return $this->bringBackBranchWithinCapacity($business, $branch);
+        });
+    }
+
+    private function bringBackBranchWithinCapacity(SpaBusiness $business, SpaBranch $branch): ?string
+    {
         if (! $this->ready() || ! $branch->plan_hold_at) {
             return 'That branch is not on hold.';
         }
         $plan = $this->currentPlan($business);
         if (! $this->hasRoomForBranch($business, $plan)) {
-            return 'Your ' . ($plan->name ?? 'current') . ' plan has no room for another branch. Upgrade to bring it back.';
+            return 'Your '.($plan->name ?? 'current').' plan has no room for another branch. Upgrade to bring it back.';
         }
         $branch->update(['operating_status' => 'Active', 'plan_hold_at' => null]);
 
@@ -265,11 +280,21 @@ class PlanFitService
     /** Bring one staff login back by hand. Returns why not, or null when done. */
     public function bringBackAccount(SpaBusiness $business, User $account): ?string
     {
+        return DB::transaction(function () use ($business, $account) {
+            SpaBusiness::whereKey($business->id)->lockForUpdate()->first();
+            $account->refresh();
+
+            return $this->bringBackAccountWithinCapacity($business, $account);
+        });
+    }
+
+    private function bringBackAccountWithinCapacity(SpaBusiness $business, User $account): ?string
+    {
         if (! $this->ready() || ! $account->plan_hold_at) {
             return 'That login is not on hold.';
         }
         // Held only while every branch it works at is: bring one back first.
-        $branches = \App\Models\AccountBranch::ready()
+        $branches = AccountBranch::ready()
             ? $account->accountBranches()->with('branch')->get()->pluck('branch')->filter()
             : collect([$account->staff?->branch])->filter();
         if ($branches->isNotEmpty() && $branches->every(fn ($b) => $b->plan_hold_at)) {
@@ -279,7 +304,7 @@ class PlanFitService
         }
         $plan = $this->currentPlan($business);
         if (! $this->hasRoomForAccount($business, $plan)) {
-            return 'Your ' . ($plan->name ?? 'current') . ' plan has no room for another staff login. Upgrade to bring it back.';
+            return 'Your '.($plan->name ?? 'current').' plan has no room for another staff login. Upgrade to bring it back.';
         }
         $account->update(['account_status' => 'Active', 'plan_hold_at' => null]);
 
@@ -314,7 +339,7 @@ class PlanFitService
             ->groupBy('spa_branch_id')
             ->pluck('total', 'spa_branch_id');
         // Nor can a bill that is still to be paid.
-        $unpaid = \App\Models\Billing::whereIn('spa_branch_id', $branches->pluck('id'))
+        $unpaid = Billing::whereIn('spa_branch_id', $branches->pluck('id'))
             ->whereNotIn('status', ['Paid', 'Cancelled', 'Refunded'])
             ->selectRaw('spa_branch_id, COUNT(*) as total')
             ->groupBy('spa_branch_id')
@@ -382,18 +407,18 @@ class PlanFitService
     {
         $parts = [];
         if ($held['branches']) {
-            $parts[] = implode(', ', $held['branches']) . (count($held['branches']) === 1 ? ' is' : ' are') . ' on hold';
+            $parts[] = implode(', ', $held['branches']).(count($held['branches']) === 1 ? ' is' : ' are').' on hold';
         }
         if ($held['accounts']) {
             $n = count($held['accounts']);
-            $parts[] = $n . ($n === 1 ? ' staff login is' : ' staff logins are') . ' suspended';
+            $parts[] = $n.($n === 1 ? ' staff login is' : ' staff logins are').' suspended';
         }
         if (! $parts || ! $business->owner_id) {
             return;
         }
         $this->notifications->create(
             $business->owner_id, 'Your Plan Changed',
-            "You are now on the {$plan->name} plan: " . implode(' and ', $parts) . '. Nothing was deleted. Upgrade to bring them back.',
+            "You are now on the {$plan->name} plan: ".implode(' and ', $parts).'. Nothing was deleted. Upgrade to bring them back.',
             'Subscription',
         );
     }

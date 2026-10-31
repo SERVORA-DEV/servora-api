@@ -16,6 +16,7 @@ class SubscriptionResource extends JsonResource
     {
         return [
             ...parent::toArray($request),
+            'effective_limits' => $this->plan ? ['max_branches' => (int) $this->plan->max_branches + (int) $this->extra_branches, 'max_user_accounts' => (int) $this->plan->max_user_accounts + (int) $this->extra_accounts] : null,
             'plan' => $this->whenLoaded('plan', fn () => new SubscriptionPlanResource($this->plan)),
             // Owner's downgrade taking effect at the next billing (PlanSwitchService).
             'scheduled_plan' => $this->whenLoaded('scheduledPlan', fn () => $this->scheduledPlan ? new SubscriptionPlanResource($this->scheduledPlan) : null),
