@@ -51,7 +51,11 @@ final class CacheInvalidation
         });
 
         self::on([UserPermission::class], fn (UserPermission $p) => AppCache::forget("user:{$p->user_id}:perm"));
-        self::on([OwnerIdentityVerification::class], fn (OwnerIdentityVerification $v) => AppCache::forget("user:{$v->user_id}:idv"));
+        self::on([OwnerIdentityVerification::class], function (OwnerIdentityVerification $v) {
+            AppCache::forget("user:{$v->user_id}:idv");
+            // It decides whether the owner's branches are on the marketplace.
+            AppCache::bumpBusiness(DB::table('spa_businesses')->where('owner_id', $v->user_id)->value('id'));
+        });
 
         self::on([SpaBusinessSetting::class], function (SpaBusinessSetting $s) {
             AppCache::forget("biz:{$s->spa_business_id}:settings");

@@ -12,7 +12,8 @@ use Illuminate\Database\Eloquent\Builder;
 
 // Whether a branch can actually take a booking from the client app, so the
 // marketplace only lists branches a client won't dead-end at. Ready means:
-//  - the business is verified (not pending or suspended);
+//  - the business is verified (not pending or suspended), and so is its owner's
+//    identity: an owner can use Servora before verifying, but not be listed;
 //  - at least one service or package is on offer;
 //  - opening hours are set for at least one day;
 //  - at least one active therapist who works at least one day;
@@ -41,6 +42,7 @@ class MarketplaceReadiness
         });
         $query
             ->whereHas('business', fn ($q) => $q->where('verification_status', 'Verified'))
+            ->whereHas('business.owner.ownerIdentityVerification', fn ($q) => $q->where('status', 'Verified'))
             ->where(fn ($q) => $q
                 ->whereHas('branchServices', fn ($s) => SpaBranchRepository::publicServices($s))
                 ->orWhereHas('branchPackages', fn ($p) => SpaBranchRepository::publicPackages($p)))
@@ -165,6 +167,8 @@ class MarketplaceReadiness
                 'done' => $branch->verification_status === 'Verified' && $branch->operating_status === 'Active'],
             ['key' => 'business_verified', 'label' => 'Business verified',
                 'done' => $branch->business?->verification_status === 'Verified'],
+            ['key' => 'owner_verified', 'label' => 'Owner identity verified',
+                'done' => $branch->business?->owner_id && AppCache::identityStatus($branch->business->owner_id) === 'Verified'],
             ['key' => 'location', 'label' => 'Map location set',
                 'done' => $branch->latitude !== null && $branch->longitude !== null],
             ['key' => 'services', 'label' => 'At least one service or package available', 'done' => $hasOffer],

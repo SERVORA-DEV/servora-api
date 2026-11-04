@@ -4,6 +4,7 @@ namespace Tests\Concerns;
 
 use App\Models\BranchSchedule;
 use App\Models\BranchService;
+use App\Models\OwnerIdentityVerification;
 use App\Models\Service;
 use App\Models\ServiceVariant;
 use App\Models\SpaBranch;
@@ -14,7 +15,7 @@ use App\Service\Client\BookingPolicy;
 use App\Support\ListingPolicy;
 
 // Gives a test branch what MarketplaceReadiness needs before clients can
-// find or book it: opening hours, an active therapist and (optionally) a
+// find or book it: a verified owner, opening hours, an active therapist and (optionally) a
 // service. Only fills what's missing, so a test's own therapist/services
 // stay the ones it asserts on.
 //
@@ -26,8 +27,19 @@ use App\Support\ListingPolicy;
 // fixed 2027 dates.
 trait MakesBranchesBookable
 {
+    protected function verifyOwner(int $ownerId): void
+    {
+        OwnerIdentityVerification::updateOrCreate(['user_id' => $ownerId], [
+            'id_type' => 'Drivers License', 'id_document_front_path' => 'test/front', 'id_document_back_path' => 'test/back',
+            'face_scan_paths' => ['test/face'], 'liveness_sequence' => ['center', 'left', 'right'],
+            'liveness_result' => 'Passed', 'status' => 'Verified',
+        ]);
+    }
+
     protected function makeBookable(SpaBranch $branch, bool $withService = false): void
     {
+        $this->verifyOwner($branch->business->owner_id);
+
         BranchSchedule::firstOrCreate(
             ['spa_branch_id' => $branch->id, 'day_of_week' => 'Sunday'],
             ['opening_time' => '09:00:00', 'closing_time' => '21:00:00', 'is_closed' => false],

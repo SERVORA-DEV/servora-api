@@ -8,8 +8,8 @@ use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
-// Runs after 'verified.business' in the same route group, so a business
-// here is already known to exist and be verified. Owners and staff share
+// Runs after 'business.usable' in the same route group, so a business
+// here is already known to exist. Owners and staff share
 // the business's subscription access; subscription purchase/recovery routes
 // remain owner-only and outside this gate. 402 (not 423,
 // which verification already uses) so the frontend can tell the two

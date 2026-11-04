@@ -15,7 +15,7 @@ class SpaBusinessRepository
         return SpaBusiness::create($payload);
     }
 
-    // One lookup per request: EnsureBusinessVerified, EnsureBusinessSubscribed
+    // One lookup per request: EnsureBusinessUsable, EnsureBusinessSubscribed
     // and the controller's service all ask for the owner's business, and the
     // database is a network round trip away. Remembered on the current HTTP
     // request only (never in queue workers or commands, which have no route),

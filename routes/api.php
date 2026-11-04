@@ -357,7 +357,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('business')
         ->middleware('activity')
         ->group(function () {
-            // Deliberately outside verified.business / subscribed.business: the
+            // Deliberately outside business.usable / subscribed.business: the
             // notices an owner most needs to see (verification decided, plan
             // overdue, plan changed) arrive exactly when those gates block
             // everything else.
@@ -405,20 +405,19 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('account/sessions/{id}', [SecurityController::class, 'revokeSession']);
             });
 
-            // 'verified.business' is the real enforcement of the
-            // verification-onboarding gate — this group is what actually
-            // renders the dashboard, so it's the point where an unverified
-            // account must be blocked (see EnsureBusinessVerified). Owner
-            // onboarding/verification submission and account/subscription
-            // routes below deliberately stay outside this middleware so
-            // they remain reachable while unverified.
+            // 'business.usable' stops an account with no business yet and a
+            // suspended business (see EnsureBusinessUsable). An unverified
+            // owner gets through: verification only decides the marketplace
+            // (MarketplaceReadiness). Owner verification submission and
+            // account/subscription routes below deliberately stay outside
+            // this middleware so they remain reachable either way.
             // 'subscribed.business' is the equivalent enforcement for "the
             // business must have an active subscription" — it must run
-            // after verified.business (a business isn't resolved/verified
+            // after business.usable (a business isn't resolved
             // yet otherwise) and only ever acts on business_owner (see
             // EnsureBusinessSubscribed), so a manager passes through
             // unaffected here exactly like today.
-            Route::middleware(['role:business_owner,manager', 'verified.business', 'subscribed.business'])->group(function () {
+            Route::middleware(['role:business_owner,manager', 'business.usable', 'subscribed.business'])->group(function () {
                 Route::get('plan-access', [PlanAccessController::class, 'show']);
                 Route::get('reports/export-data', [PlanAccessController::class, 'export'])->middleware(['permission:report_view', 'permission:report_export']);
                 Route::post('reports/export-authorize', [PlanAccessController::class, 'authorizeExport'])->middleware('permission:report_export');
@@ -588,7 +587,7 @@ Route::middleware('auth:sanctum')->group(function () {
             // start/complete service, add/remove service, add package) stay
             // gated at this role-group level only — see
             // config/permission.php's front_officer array for the gap.
-            Route::middleware(['role:business_owner,manager,front_officer', 'verified.business', 'subscribed.business'])->group(function () {
+            Route::middleware(['role:business_owner,manager,front_officer', 'business.usable', 'subscribed.business'])->group(function () {
                 Route::get('client', [ClientController::class, 'index'])->middleware('permission:client_view');
                 Route::post('client', [ClientController::class, 'store'])->middleware('permission:client_create');
                 Route::get('client/{uuid}', [ClientController::class, 'show'])->middleware('permission:client_view');
@@ -802,7 +801,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Owner identity + business verification submission — must
                 // stay reachable while the account is unverified (that's the
                 // whole point of this flow), so it's deliberately outside
-                // the 'verified.business'-gated group above. Now also covers
+                // the 'business.usable'-gated group above. Now also covers
                 // what used to be the separate "basic onboarding" step
                 // (personal details, business creation) — there is no
                 // longer a distinct onboarding phase, just the first

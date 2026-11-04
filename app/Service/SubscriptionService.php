@@ -251,10 +251,11 @@ class SubscriptionService
             return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
-        // These routes sit outside verified.business (checkout must stay
-        // reachable), so the trial checks it itself.
-        if ($business->verification_status !== 'Verified') {
-            return response()->json(['message' => 'Your business needs to be verified before the free trial can start.'], 422);
+        // An unverified owner can try Servora (they stay off the marketplace),
+        // but these routes sit outside business.usable (checkout must stay
+        // reachable), so the trial refuses a suspended business itself.
+        if ($business->verification_status === 'Suspended') {
+            return response()->json(['message' => 'This business is suspended, so the free trial can\'t start.'], 422);
         }
 
         $plan = $this->trialPlan();

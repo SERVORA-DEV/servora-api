@@ -126,6 +126,8 @@ class UserResource extends JsonResource
             $data['overall_verification_status'] = OwnerVerificationStatus::compute($identityStatus, $businessStatus);
 
             if ($this->role === 'business_owner') {
+                // None yet: they haven't answered Verify now / Not now.
+                $data['has_business'] = (bool) $business;
                 $data['has_active_subscription'] = $business
                     ? (bool) app(SubscriptionRepository::class)->findActiveForBusiness($business->id)
                     : false;

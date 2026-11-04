@@ -1,7 +1,7 @@
 <?php
 
 use App\Http\Middleware\EnsureBusinessSubscribed;
-use App\Http\Middleware\EnsureBusinessVerified;
+use App\Http\Middleware\EnsureBusinessUsable;
 use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\EnsurePlanFeature;
 use App\Http\Middleware\FrontendOrigin;
@@ -46,7 +46,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'role' => RoleMiddleware::class,
-            'verified.business' => EnsureBusinessVerified::class,
+            'business.usable' => EnsureBusinessUsable::class,
             'subscribed.business' => EnsureBusinessSubscribed::class,
             'permission' => EnsurePermission::class,
             'plan.feature' => EnsurePlanFeature::class,

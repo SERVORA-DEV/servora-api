@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\BranchSchedule;
 use App\Models\BranchService;
 use App\Models\ClientFavorite;
+use App\Models\OwnerIdentityVerification;
 use App\Models\Service;
 use App\Models\ServiceVariant;
 use App\Models\SpaBranch;
@@ -49,6 +50,13 @@ class MarketplaceReadinessTest extends TestCase
             'listing_visible' => true,
             'latitude' => 7.07,
             'longitude' => 125.61,
+        ]);
+
+        OwnerIdentityVerification::create([
+            'user_id' => $this->owner->id, 'id_type' => 'Drivers License',
+            'id_document_front_path' => 'test/front', 'id_document_back_path' => 'test/back',
+            'face_scan_paths' => ['test/face'], 'liveness_sequence' => ['center', 'left', 'right'],
+            'liveness_result' => 'Passed', 'status' => 'Verified',
         ]);
 
         BranchSchedule::create([
@@ -125,6 +133,39 @@ class MarketplaceReadinessTest extends TestCase
     {
         $this->business->update(['verification_status' => 'Suspended']);
         $this->assertListed(false);
+    }
+
+    // An owner can use Servora before verifying, but can't be listed.
+    public function test_an_unverified_owner_hides_it_even_with_an_approved_business(): void
+    {
+        foreach (['Unregistered', 'Pending', 'Rejected'] as $status) {
+            OwnerIdentityVerification::where('user_id', $this->owner->id)->first()->update(['status' => $status]);
+            $this->assertListed(false);
+        }
+
+        OwnerIdentityVerification::where('user_id', $this->owner->id)->first()->update(['status' => 'Verified']);
+        $this->assertListed(true);
+    }
+
+    public function test_an_unverified_business_hides_it_even_with_a_verified_owner(): void
+    {
+        foreach (['Unregistered', 'Pending', 'Rejected'] as $status) {
+            $this->business->update(['verification_status' => $status]);
+            $this->assertListed(false);
+        }
+    }
+
+    public function test_the_owner_is_told_their_identity_is_what_is_missing(): void
+    {
+        OwnerIdentityVerification::where('user_id', $this->owner->id)->first()->update(['status' => 'Pending']);
+        Sanctum::actingAs($this->owner);
+
+        $readiness = $this->getJson("/api/business/branch/{$this->branch->uuid}/marketplace")
+            ->assertOk()
+            ->json('data.readiness');
+
+        $this->assertFalse($readiness['ready']);
+        $this->assertSame(['owner_verified'], collect($readiness['items'])->where('done', false)->pluck('key')->all());
     }
 
     public function test_favorites_only_list_ready_branches(): void

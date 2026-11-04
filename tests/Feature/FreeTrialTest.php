@@ -94,9 +94,17 @@ class FreeTrialTest extends TestCase
         $this->assertSame(1, Subscription::withTrashed()->where('is_trial', true)->count());
     }
 
-    public function test_an_unverified_business_cannot_start_the_trial(): void
+    public function test_an_unverified_business_can_start_the_trial(): void
     {
-        $this->business->update(['verification_status' => 'Pending']);
+        $this->business->update(['verification_status' => 'Unregistered']);
+
+        $this->postJson('/api/business/subscription/trial')->assertCreated();
+        $this->assertSame(1, Subscription::count());
+    }
+
+    public function test_a_suspended_business_cannot_start_the_trial(): void
+    {
+        $this->business->update(['verification_status' => 'Suspended']);
 
         $this->postJson('/api/business/subscription/trial')->assertStatus(422);
         $this->assertSame(0, Subscription::count());

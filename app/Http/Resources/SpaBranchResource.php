@@ -90,6 +90,12 @@ class SpaBranchResource extends JsonResource
                         'last_name' => $this->business->owner->last_name,
                         'email' => $this->business->owner->email,
                         'phone_number' => $this->business->owner->phone_number,
+                        // Whether the owner is verified, on the administrator's branch review.
+                        'verified' => $this->when(
+                            $this->business->owner->relationLoaded('ownerIdentityVerification'),
+                            fn () => $this->business->verification_status === 'Verified'
+                                && $this->business->owner->ownerIdentityVerification?->status === 'Verified',
+                        ),
                     ] : null,
                 ];
             }),

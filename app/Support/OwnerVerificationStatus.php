@@ -7,7 +7,7 @@ namespace App\Support;
 // owner_identity_verifications.status and spa_businesses.verification_status
 // are the two real sources of truth; a third stored column would risk
 // drifting out of sync across independent partial approve/reject actions.
-// Used by EnsureBusinessVerified, UserResource, and OwnerVerificationService.
+// Used by UserResource and OwnerVerificationService.
 class OwnerVerificationStatus
 {
     public static function compute(string $identityStatus, string $businessStatus): string

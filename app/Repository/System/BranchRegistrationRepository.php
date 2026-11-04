@@ -10,7 +10,7 @@ class BranchRegistrationRepository
     // review, not every branch regardless of status.
     public function paginatePending(int $perPage = 15)
     {
-        return SpaBranch::with('business.owner')
+        return SpaBranch::with('business.owner.ownerIdentityVerification')
             ->where('verification_status', 'Pending')
             ->latest()
             ->paginate($perPage);
@@ -18,7 +18,7 @@ class BranchRegistrationRepository
 
     public function findByUuid(string $uuid): SpaBranch
     {
-        return SpaBranch::with('business.owner', 'schedules', 'verifier')
+        return SpaBranch::with('business.owner.ownerIdentityVerification', 'schedules', 'verifier')
             ->where('uuid', $uuid)
             ->firstOrFail();
     }
