@@ -3,12 +3,12 @@
 namespace App\Support;
 
 // Add-ons: small extras put on a service during the visit — hot stones on a
-// massage, a scalp treatment on a haircut. An add-on is its own thing on the
+// massage, a scalp massage on a facial. An add-on is its own thing on the
 // owner's menu (App\Models\Addon), not a service: a name, a price, the time it
 // adds, and where it is available —
 //
 //   categories    the service categories it goes with (Ventosa is for
-//                 Massage, never for Nails);
+//                 Massage, never for Waxing);
 //   all services  every service in those categories, or only the ones the
 //                 owner ticked.
 //

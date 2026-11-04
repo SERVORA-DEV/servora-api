@@ -7,7 +7,7 @@ namespace App\Support;
 //   time       a massage: sold in lengths (60 / 90 / 120 min), each with its
 //              price; a therapist performs it; when its time is up the desk is
 //              told, and it can be extended to a longer length.
-//   procedure  a haircut, waxing, nails: one price; the time is only an
+//   procedure  waxing, ear candling: one price; the time is only an
 //              estimate, so there is no "time is up" and nothing to extend to.
 //              One therapist may do two of these for the same client at once.
 //   facility   a sauna, a jacuzzi: sold in lengths like a time-based service,
@@ -16,7 +16,7 @@ namespace App\Support;
 //
 // A facility (a room, a sauna) can be picked for any service. A facility-based
 // service always needs one; any other needs one only when the owner ticked
-// "Facility required" on it — a haircut or nails usually doesn't. The front
+// "Facility required" on it — a foot soak in the lounge usually doesn't. The front
 // desk can't start a service that needs one until one is chosen (never for a
 // home visit, which has none).
 //

@@ -5,8 +5,8 @@ namespace App\Support;
 // May a service start while another service of the SAME visit is still in
 // progress? A client is one person: they can't be in two rooms at once, and
 // one therapist can't be doing two things at once. But two therapists can
-// work on the same client in the same place — a manicure during a hair
-// treatment — so that is allowed.
+// work on the same client in the same place — a foot spa during a
+// facial — so that is allowed.
 //
 // A room is never required (App\Support\ServiceKind), so a service with no
 // room set says nothing about where it is — an open bed, a chair — and goes

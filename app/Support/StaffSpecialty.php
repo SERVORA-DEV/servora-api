@@ -4,7 +4,7 @@ namespace App\Support;
 
 // What a member of staff does. "Staff" is the general word for everyone who
 // performs services (the role saved as 'therapist'); a specialty says which
-// kind — a nail technician, a hair stylist, a massage therapist. A person can
+// kind — a massage therapist, a skincare specialist, a waxing specialist. A person can
 // have several; the first is their main one, shown beside their name.
 //
 // A label only: which services someone may be given is set per person
@@ -17,20 +17,11 @@ class StaffSpecialty
 {
     public const ALL = [
         'Therapist',
-        'Nail Technician',
-        'Hair Stylist',
-        'Beautician',
-        'Makeup Artist',
-        'Lash Technician',
-        'Brow Technician',
-        'Nail Artist',
-        'Hair Colorist',
-        'Spa Attendant',
-        'Skincare Specialist',
         'Massage Therapist',
-        'Waxing Specialist',
-        'Hair Treatment Specialist',
+        'Skincare Specialist',
         'Body Treatment Specialist',
+        'Waxing Specialist',
+        'Spa Attendant',
     ];
 
     /** What someone is until they are given a specialty of their own. */
@@ -74,7 +65,7 @@ class StaffSpecialty
         return self::clean($list)[0] ?? null;
     }
 
-    /** "Nail Technician", or "Nail Technician +1" with more than one. */
+    /** "Massage Therapist", or "Massage Therapist +1" with more than one. */
     public static function label(mixed $list): string
     {
         $kept = self::clean($list);

@@ -10,7 +10,7 @@ use Illuminate\Validation\Rule;
 
 class BusinessIdentityRequest extends FormRequest
 {
-    public const SPA_TYPES = ['Day Spa', 'Health Spa', 'Medical Spa', 'Resort Spa', 'Beauty Salon', 'Wellness Center'];
+    public const SPA_TYPES = ['Day Spa', 'Health Spa', 'Resort Spa', 'Wellness Center'];
 
     public function authorize(): bool
     {

@@ -63,29 +63,7 @@ class ServiceTemplateSeeder extends Seeder
         ['name' => 'Body Wrap', 'code' => 'BWR', 'category' => 'Body Treatment',
             'description' => 'Detoxifying seaweed or clay wrap that hydrates and firms the skin.',
             'variants' => [[60, 1300, 15]]],
-
-        // ── Hair ────────────────────────────────────────────────────────
-        ['name' => 'Hair Spa Treatment', 'code' => 'HST', 'category' => 'Hair',
-            'description' => 'Deep conditioning with a scalp massage to restore shine and strength.',
-            'variants' => [[60, 700, 8]]],
-        ['name' => 'Keratin Treatment', 'code' => 'KRT', 'category' => 'Hair',
-            'description' => 'Smoothing treatment that tames frizz and adds lasting shine.',
-            'variants' => [[120, 2500, 30]]],
-        ['name' => 'Haircut and Blow-dry', 'code' => 'HCB', 'category' => 'Hair',
-            'description' => 'Wash, cut and style by a stylist.',
-            'variants' => [[45, 450, 5]]],
-
-        // ── Nails ───────────────────────────────────────────────────────
-        ['name' => 'Classic Manicure', 'code' => 'CMN', 'category' => 'Nails',
-            'description' => 'Nail shaping, cuticle care and polish for neat, healthy-looking hands.',
-            'variants' => [[30, 250, 3]]],
-        ['name' => 'Classic Pedicure', 'code' => 'CPD', 'category' => 'Nails',
-            'description' => 'A foot soak with nail shaping, cuticle care and polish.',
-            'variants' => [[45, 350, 4]]],
-        ['name' => 'Gel Manicure', 'code' => 'GMN', 'category' => 'Nails',
-            'description' => 'Long-lasting, chip-resistant gel polish over a classic manicure.',
-            'variants' => [[60, 600, 6]]],
-        ['name' => 'Foot Spa', 'code' => 'FSP', 'category' => 'Nails',
+        ['name' => 'Foot Spa', 'code' => 'FSP', 'category' => 'Body Treatment',
             'description' => 'Warm soak, scrub, callus care and a foot massage.',
             'variants' => [[45, 450, 5]]],
 
@@ -99,25 +77,6 @@ class ServiceTemplateSeeder extends Seeder
         ['name' => 'Brazilian Waxing', 'code' => 'BRW', 'category' => 'Waxing',
             'description' => 'Complete bikini-area hair removal by a trained specialist.',
             'variants' => [[30, 1000, 10]]],
-
-        // ── Lash & Brow ─────────────────────────────────────────────────
-        ['name' => 'Lash Lift and Tint', 'code' => 'LLT', 'category' => 'Lash & Brow',
-            'description' => 'Curls and darkens natural lashes for a wide-eyed look without extensions.',
-            'variants' => [[60, 1200, 12]]],
-        ['name' => 'Classic Lash Extensions', 'code' => 'CLE', 'category' => 'Lash & Brow',
-            'description' => 'One extension per natural lash for fuller, longer lashes.',
-            'variants' => [[90, 1500, 15]]],
-        ['name' => 'Brow Shaping', 'code' => 'BRS', 'category' => 'Lash & Brow',
-            'description' => 'Threading or waxing to shape and define the brows.',
-            'variants' => [[20, 300, 3]]],
-
-        // ── Makeup ──────────────────────────────────────────────────────
-        ['name' => 'Event Makeup', 'code' => 'EVM', 'category' => 'Makeup',
-            'description' => 'Full-face makeup for parties, photoshoots and special occasions.',
-            'variants' => [[60, 1500, 15]]],
-        ['name' => 'Bridal Makeup', 'code' => 'BRM', 'category' => 'Makeup',
-            'description' => 'Long-wear bridal look with a trial consultation.',
-            'variants' => [[120, 4500, 50]]],
 
         // ── Couples ─────────────────────────────────────────────────────
         ['name' => 'Couples Massage', 'code' => 'CPM', 'category' => 'Couples',

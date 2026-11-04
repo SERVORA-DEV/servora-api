@@ -29,8 +29,7 @@ class FacilityRequest extends FormRequest
             ],
             'description' => 'nullable|string',
             'category' => ['sometimes', Rule::in([
-                'Massage', 'Facial', 'Body Treatment', 'Hair', 'Nails', 'Waxing',
-                'Lash & Brow', 'Makeup', 'Couples', 'VIP', 'Wellness',
+                'Massage', 'Facial', 'Body Treatment', 'Waxing', 'Couples', 'VIP', 'Wellness',
             ])],
             // 'Occupied' is computed live from active appointment
             // assignments (see FacilityResource) — never accepted here.

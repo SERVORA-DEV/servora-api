@@ -13,7 +13,7 @@ class ServiceStartRulesTest extends TestCase
 
     private function running(array $over = []): array
     {
-        return $over + ['name' => 'Hair Spa Treatment', 'staff' => [10 => 'Aileen Pascual'], 'room' => self::LOUNGE, 'room_name' => 'Nail and Hair Lounge'];
+        return $over + ['name' => 'Foot Spa', 'staff' => [10 => 'Aileen Pascual'], 'room' => self::LOUNGE, 'room_name' => 'Foot Spa Lounge'];
     }
 
     public function test_nothing_in_progress_means_it_can_start(): void
@@ -26,11 +26,11 @@ class ServiceStartRulesTest extends TestCase
     {
         $problem = ServiceStartRules::problem(['staff' => [11 => 'Jomar Castillo'], 'room' => self::FACIAL_ROOM], [$this->running()]);
 
-        $this->assertSame('This client is still having Hair Spa Treatment in Nail and Hair Lounge. Complete it first, or put this service in the same facility to do both together.', $problem);
+        $this->assertSame('This client is still having Foot Spa in Foot Spa Lounge. Complete it first, or put this service in the same facility to do both together.', $problem);
     }
 
     // A room is never required, so a service without one is not "somewhere
-    // else": a manicure at a chair during a hair treatment in the lounge.
+    // else": a foot reflexology at a chair during a foot spa in the lounge.
     public function test_no_room_on_this_one_goes_beside_one_that_has_a_room(): void
     {
         $this->assertNull(ServiceStartRules::problem(['staff' => [11 => 'Jomar Castillo'], 'room' => null], [$this->running()]));
@@ -54,14 +54,14 @@ class ServiceStartRulesTest extends TestCase
 
         $problem = ServiceStartRules::problem(['staff' => [11 => 'Jomar Castillo'], 'room' => self::FACIAL_ROOM], $running);
 
-        $this->assertStringContainsString('still having Hair Spa Treatment in Nail and Hair Lounge', (string) $problem);
+        $this->assertStringContainsString('still having Foot Spa in Foot Spa Lounge', (string) $problem);
     }
 
     public function test_no_room_does_not_get_around_the_same_therapist(): void
     {
         $problem = ServiceStartRules::problem(['staff' => [10 => 'Aileen Pascual'], 'room' => null], [$this->running()]);
 
-        $this->assertSame('Aileen Pascual is still doing Hair Spa Treatment for this client. Complete it first.', $problem);
+        $this->assertSame('Aileen Pascual is still doing Foot Spa for this client. Complete it first.', $problem);
     }
 
     public function test_the_same_room_with_a_different_therapist_can_run_together(): void
@@ -83,7 +83,7 @@ class ServiceStartRulesTest extends TestCase
     {
         $problem = ServiceStartRules::problem(['staff' => [10 => 'Aileen Pascual'], 'room' => self::LOUNGE], [$this->running()]);
 
-        $this->assertSame('Aileen Pascual is still doing Hair Spa Treatment for this client. Complete it first.', $problem);
+        $this->assertSame('Aileen Pascual is still doing Foot Spa for this client. Complete it first.', $problem);
     }
 
     public function test_the_same_therapist_is_named_before_the_room(): void
@@ -100,21 +100,21 @@ class ServiceStartRulesTest extends TestCase
             [$this->running(['staff' => [10 => 'Aileen Pascual', 12 => 'Grace Villanueva']])],
         );
 
-        $this->assertSame('Aileen Pascual is still doing Hair Spa Treatment for this client. Complete it first.', $problem);
+        $this->assertSame('Aileen Pascual is still doing Foot Spa for this client. Complete it first.', $problem);
     }
 
     public function test_every_service_in_progress_has_to_agree(): void
     {
         $running = [
             $this->running(),
-            $this->running(['name' => 'Classic Manicure', 'staff' => [12 => 'Grace Villanueva']]),
+            $this->running(['name' => 'Foot Reflexology', 'staff' => [12 => 'Grace Villanueva']]),
         ];
 
         // Same room as both, a third therapist: fine.
         $this->assertNull(ServiceStartRules::problem(['staff' => [11 => 'Jomar Castillo'], 'room' => self::LOUNGE], $running));
         // The second one's therapist: refused, and it is that service that is named.
         $this->assertSame(
-            'Grace Villanueva is still doing Classic Manicure for this client. Complete it first.',
+            'Grace Villanueva is still doing Foot Reflexology for this client. Complete it first.',
             ServiceStartRules::problem(['staff' => [12 => 'Grace Villanueva'], 'room' => self::LOUNGE], $running),
         );
     }
@@ -153,13 +153,13 @@ class ServiceStartRulesTest extends TestCase
             [$this->running(['kind' => 'procedure'])],
         );
 
-        $this->assertStringContainsString('in Nail and Hair Lounge', (string) $problem);
+        $this->assertStringContainsString('in Foot Spa Lounge', (string) $problem);
     }
 
     public function test_a_service_measured_in_time_holds_its_therapist(): void
     {
         $aileen = [10 => 'Aileen Pascual'];
-        $busy = 'Aileen Pascual is still doing Hair Spa Treatment for this client. Complete it first.';
+        $busy = 'Aileen Pascual is still doing Foot Spa for this client. Complete it first.';
 
         // Either one being time-based is enough; no kind given means time-based.
         $this->assertSame($busy, ServiceStartRules::problem(['staff' => $aileen, 'room' => self::LOUNGE, 'kind' => 'procedure'], [$this->running(['kind' => 'time'])]));
@@ -171,7 +171,7 @@ class ServiceStartRulesTest extends TestCase
     {
         // The client moves from the lounge to the sauna: one place at a time.
         $problem = ServiceStartRules::problem(['staff' => [], 'room' => self::FACIAL_ROOM, 'kind' => 'facility'], [$this->running()]);
-        $this->assertStringContainsString('in Nail and Hair Lounge', (string) $problem);
+        $this->assertStringContainsString('in Foot Spa Lounge', (string) $problem);
 
         $this->assertNull(ServiceStartRules::problem(['staff' => [], 'room' => self::LOUNGE, 'kind' => 'facility'], [$this->running()]));
         // With no room picked for it — nothing and nobody on it — it starts beside anything.

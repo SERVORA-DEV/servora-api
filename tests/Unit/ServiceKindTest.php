@@ -25,7 +25,7 @@ class ServiceKindTest extends TestCase
     }
 
     // A facility-based service always needs one; anything else only when the
-    // owner ticked "Facility required" — a haircut or nails usually doesn't.
+    // owner ticked "Facility required" — a foot soak in the lounge usually doesn't.
     public function test_a_facility_based_service_always_needs_a_facility_and_others_only_when_ticked(): void
     {
         $this->assertTrue(ServiceKind::needsFacility('facility'));

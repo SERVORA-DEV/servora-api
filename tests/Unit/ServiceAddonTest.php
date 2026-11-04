@@ -28,7 +28,7 @@ class ServiceAddonTest extends TestCase
 
     public function test_an_add_on_never_goes_with_another_category(): void
     {
-        $this->assertFalse(ServiceAddon::appliesTo($this->addon(), 'Nails', 1));
+        $this->assertFalse(ServiceAddon::appliesTo($this->addon(), 'Waxing', 1));
         $this->assertFalse(ServiceAddon::appliesTo($this->addon(['categories' => []]), 'Massage', 1));
     }
 
@@ -47,7 +47,7 @@ class ServiceAddonTest extends TestCase
         $this->assertFalse(ServiceAddon::appliesTo($only, 'Massage', 2));
         $this->assertFalse(ServiceAddon::appliesTo($only, 'Massage', null));
         // A ticked service that has since moved to another category no longer counts.
-        $this->assertFalse(ServiceAddon::appliesTo($only, 'Nails', 1));
+        $this->assertFalse(ServiceAddon::appliesTo($only, 'Waxing', 1));
     }
 
     public function test_it_is_added_to_a_waiting_or_running_service(): void
@@ -59,8 +59,8 @@ class ServiceAddonTest extends TestCase
     public function test_an_add_on_for_another_category_is_refused(): void
     {
         $this->assertSame(
-            'Hot Stone isn\'t offered with Classic Manicure.',
-            ServiceAddon::problem($this->main(['category' => 'Nails', 'name' => 'Classic Manicure']), $this->addon(), [], 'in_service', false),
+            'Hot Stone isn\'t offered with Underarm Waxing.',
+            ServiceAddon::problem($this->main(['category' => 'Waxing', 'name' => 'Underarm Waxing']), $this->addon(), [], 'in_service', false),
         );
     }
 
@@ -117,9 +117,9 @@ class ServiceAddonTest extends TestCase
 
     public function test_ticked_services_outside_the_categories_are_named(): void
     {
-        $services = [1 => 'Massage', 2 => 'Nails', 3 => null, 4 => 'massage'];
+        $services = [1 => 'Massage', 2 => 'Waxing', 3 => null, 4 => 'massage'];
 
         $this->assertSame([2, 3], ServiceAddon::outsideCategories(['Massage'], $services));
-        $this->assertSame([], ServiceAddon::outsideCategories(['Massage', 'Nails'], [1 => 'Massage', 2 => 'Nails']));
+        $this->assertSame([], ServiceAddon::outsideCategories(['Massage', 'Waxing'], [1 => 'Massage', 2 => 'Waxing']));
     }
 }

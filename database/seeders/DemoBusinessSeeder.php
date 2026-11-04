@@ -53,7 +53,7 @@ class DemoBusinessSeeder extends Seeder
             'branch_name' => 'Lotus Haven – Lanang',
             'email' => 'lanang@lotushaven.demo',
             'phone_number' => '09171230001',
-            'description' => 'Our flagship spa near the Lanang business district — eight treatment rooms, a couples suite and a nail lounge.',
+            'description' => 'Our flagship spa near the Lanang business district — eight treatment rooms, a couples suite and a foot spa lounge.',
             'promo_text' => 'Open until 10 PM daily',
             'latitude' => 7.1003500,
             'longitude' => 125.6310800,
@@ -64,7 +64,7 @@ class DemoBusinessSeeder extends Seeder
             'branch_name' => 'Lotus Haven – Matina',
             'email' => 'matina@lotushaven.demo',
             'phone_number' => '09171230002',
-            'description' => 'A quiet neighborhood spa in Matina for massages, facials and nail care after work.',
+            'description' => 'A quiet neighborhood spa in Matina for massages, facials and foot spa after work.',
             'promo_text' => 'Walk-ins welcome',
             'latitude' => 7.0589900,
             'longitude' => 125.5883700,
@@ -77,20 +77,14 @@ class DemoBusinessSeeder extends Seeder
     // more for massages.
     private const SERVICES = [
         'Swedish Massage', 'Deep Tissue Massage', 'Hilot', 'Hot Stone Massage', 'Foot Reflexology',
-        'Back and Shoulder Massage', 'Classic Facial', 'Anti-Aging Facial', 'Body Scrub', 'Hair Spa Treatment',
-        'Classic Manicure', 'Classic Pedicure', 'Gel Manicure', 'Couples Massage', 'Ventosa Cupping',
+        'Back and Shoulder Massage', 'Classic Facial', 'Anti-Aging Facial', 'Body Scrub', 'Foot Spa',
+        'Couples Massage', 'Ventosa Cupping',
     ];
 
     private const PACKAGES = [
         ['name' => 'Relax & Renew', 'code' => 'PKG-RR', 'price' => 1550, 'minutes' => 120, 'points' => 20,
             'description' => 'A 60-minute Swedish massage followed by a classic facial.',
             'items' => [['Swedish Massage', 60, 1], ['Classic Facial', 60, 1]]],
-        ['name' => 'Mani-Pedi Combo', 'code' => 'PKG-MP', 'price' => 520, 'minutes' => 75, 'points' => 5,
-            'description' => 'Classic manicure and pedicure in one visit.',
-            'items' => [['Classic Manicure', 30, 1], ['Classic Pedicure', 45, 1]]],
-        ['name' => 'Bridal Glow', 'code' => 'PKG-BG', 'price' => 2600, 'minutes' => 195, 'points' => 30,
-            'description' => 'Anti-aging facial, hair spa and gel manicure before the big day.',
-            'items' => [['Anti-Aging Facial', 75, 1], ['Hair Spa Treatment', 60, 1], ['Gel Manicure', 60, 1]]],
         ['name' => "Couple's Retreat", 'code' => 'PKG-CR', 'price' => 2900, 'minutes' => 120, 'points' => 35,
             'description' => 'A 90-minute couples massage and foot reflexology for two.',
             'items' => [['Couples Massage', 90, 1], ['Foot Reflexology', 30, 2]]],
@@ -105,9 +99,9 @@ class DemoBusinessSeeder extends Seeder
             'description' => 'Single massage room with aromatherapy.'],
         ['name' => 'Facial Room', 'category' => 'Facial', 'amenities' => ['Magnifying Lamp', 'Facial Steamer'], 'services' => ['Classic Facial', 'Anti-Aging Facial'],
             'description' => 'Treatment bed with facial equipment.'],
-        ['name' => 'Nail and Hair Lounge', 'category' => 'Nails', 'amenities' => ['Pedicure Chairs', 'Hair Wash Station'],
-            'services' => ['Classic Manicure', 'Classic Pedicure', 'Gel Manicure', 'Foot Reflexology', 'Hair Spa Treatment'],
-            'description' => 'Two pedicure chairs, a manicure table and a hair wash station.'],
+        ['name' => 'Foot Spa Lounge', 'category' => 'Body Treatment', 'amenities' => ['Reclining Chairs', 'Foot Basins'],
+            'services' => ['Foot Spa', 'Foot Reflexology'],
+            'description' => 'Two reclining chairs with foot basins.'],
         ['name' => 'Couples Suite', 'category' => 'Couples', 'amenities' => ['Two Massage Beds', 'Private Shower', 'Tea Service'],
             'services' => ['Couples Massage', 'Swedish Massage', 'Hot Stone Massage'],
             'description' => 'Private suite for two with side-by-side beds.'],
@@ -121,7 +115,7 @@ class DemoBusinessSeeder extends Seeder
             ['Rodel', 'Manalo', 'Male', 'therapist', 'Full-Time', '1992-11-20', '2024-03-15', 'massage'],
             ['Liza', 'Fernandez', 'Female', 'therapist', 'Full-Time', '1995-02-08', '2024-04-01', 'massage'],
             ['Grace', 'Villanueva', 'Female', 'therapist', 'Full-Time', '1997-07-25', '2024-08-10', 'skin'],
-            ['Aileen', 'Pascual', 'Female', 'therapist', 'Part-Time', '2000-01-17', '2025-02-01', 'nails'],
+            ['Aileen', 'Pascual', 'Female', 'therapist', 'Part-Time', '2000-01-17', '2025-02-01', 'foot'],
         ],
         'MTN' => [
             ['Ramon', 'Aquino', 'Male', 'manager', 'Full-Time', '1987-03-30', '2024-05-01', null],
@@ -129,14 +123,14 @@ class DemoBusinessSeeder extends Seeder
             ['Jomar', 'Castillo', 'Male', 'therapist', 'Full-Time', '1993-06-05', '2024-05-15', 'massage'],
             ['Rhea', 'Mercado', 'Female', 'therapist', 'Full-Time', '1996-10-19', '2024-06-01', 'massage'],
             ['Donna', 'Garcia', 'Female', 'therapist', 'Contractual', '1998-04-23', '2025-01-10', 'skin'],
-            ['Precious', 'Ramos', 'Female', 'therapist', 'Part-Time', '2001-08-09', '2025-03-01', 'nails'],
+            ['Precious', 'Ramos', 'Female', 'therapist', 'Part-Time', '2001-08-09', '2025-03-01', 'foot'],
         ],
     ];
 
     private const SKILLS = [
         'massage' => ['Swedish Massage', 'Deep Tissue Massage', 'Hilot', 'Hot Stone Massage', 'Back and Shoulder Massage', 'Ventosa Cupping', 'Couples Massage', 'Foot Reflexology', 'Body Scrub'],
-        'skin' => ['Classic Facial', 'Anti-Aging Facial', 'Body Scrub', 'Swedish Massage', 'Hair Spa Treatment'],
-        'nails' => ['Classic Manicure', 'Classic Pedicure', 'Gel Manicure', 'Foot Reflexology', 'Hair Spa Treatment'],
+        'skin' => ['Classic Facial', 'Anti-Aging Facial', 'Body Scrub', 'Swedish Massage'],
+        'foot' => ['Foot Spa', 'Foot Reflexology', 'Body Scrub'],
     ];
 
     private User $owner;
@@ -224,7 +218,7 @@ class DemoBusinessSeeder extends Seeder
                 'business_email' => 'hello@lotushaven.demo',
                 'business_phone' => '09171230000',
                 'head_office_address' => 'J.P. Laurel Avenue, Lanang, Davao City',
-                'business_description' => 'A Davao day spa offering Filipino hilot, massages, facials and nail care in calm, private rooms.',
+                'business_description' => 'A Davao day spa offering Filipino hilot, massages, facials and foot spa in calm, private rooms.',
                 'business_type' => 'Corporation',
                 'registration_document_type' => 'SEC',
                 'registered_business_name' => 'Lotus Haven Wellness Inc.',

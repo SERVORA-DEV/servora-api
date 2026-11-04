@@ -46,7 +46,7 @@ class FacilitySeeder extends Seeder
 
         // service_names is resolved to service_ids per business below —
         // rooms whose category has no matching real service in this
-        // catalog yet (Waxing, Lash & Brow, Makeup, Body Treatment) are
+        // catalog yet (Waxing, Body Treatment) are
         // deliberately left unassigned rather than skipped: an unrestricted
         // room (no services configured) is a valid, supported state — see
         // FacilityRepository::listAvailableForBranches and
@@ -80,48 +80,12 @@ class FacilitySeeder extends Seeder
                 'service_names' => ['Classic Facial'],
             ],
             [
-                'name' => 'Hair Station',
-                'description' => 'Open-concept station for hair spa treatments.',
-                'category' => 'Hair',
-                'status' => 'Available',
-                'is_available' => true,
-                'amenities' => ['Reclining Wash Chair'],
-                'service_names' => ['Hair Spa Treatment'],
-            ],
-            [
-                'name' => 'Nail Room',
-                'description' => 'Manicure and pedicure room with ventilation.',
-                'category' => 'Nails',
-                'status' => 'Available',
-                'is_available' => true,
-                'amenities' => ['Ventilation System'],
-                'service_names' => ['Classic Manicure', 'Classic Pedicure'],
-            ],
-            [
                 'name' => 'Waxing Room',
                 'description' => 'Private room for waxing services.',
                 'category' => 'Waxing',
                 'status' => 'Available',
                 'is_available' => true,
                 'amenities' => ['Privacy Curtain'],
-                'service_names' => [],
-            ],
-            [
-                'name' => 'Lash & Brow Studio',
-                'description' => 'Dedicated studio for lash and brow services.',
-                'category' => 'Lash & Brow',
-                'status' => 'Available',
-                'is_available' => true,
-                'amenities' => ['Magnifying Lamp'],
-                'service_names' => [],
-            ],
-            [
-                'name' => 'Makeup Room',
-                'description' => 'Vanity-lit room for makeup application.',
-                'category' => 'Makeup',
-                'status' => 'Available',
-                'is_available' => true,
-                'amenities' => ['Vanity Lighting'],
                 'service_names' => [],
             ],
             [
@@ -158,7 +122,7 @@ class FacilitySeeder extends Seeder
                 'status' => 'Available',
                 'is_available' => true,
                 'amenities' => ['Aromatherapy Diffuser'],
-                'service_names' => ['Hair Spa Treatment'],
+                'service_names' => [],
             ],
         ];
 
