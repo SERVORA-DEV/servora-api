@@ -221,6 +221,10 @@ Route::middleware('auth:sanctum')->group(function () {
             // permission flags (EnsurePermission + App\Support\AdminPermissions);
             // the Settings → Security self-service routes further down are
             // the caller's own account and stay open to every admin.
+            // Own photo: available to every admin under the existing role/IP/2FA gates.
+            Route::post('profile/photo', [\App\Http\Controllers\System\ProfilePhotoController::class, 'store'])->middleware('throttle:20,1');
+            Route::delete('profile/photo', [\App\Http\Controllers\System\ProfilePhotoController::class, 'destroy'])->middleware('throttle:20,1');
+
             Route::get('subscription-plans', [SubscriptionPlanController::class, 'index'])->middleware('permission:subscription_plan_view');
             Route::get('subscription-plans/{subscription_plan}', [SubscriptionPlanController::class, 'show'])->middleware('permission:subscription_plan_view');
             Route::post('subscription-plans', [SubscriptionPlanController::class, 'store'])->middleware('permission:subscription_plan_create');
@@ -302,6 +306,9 @@ Route::middleware('auth:sanctum')->group(function () {
             // separate approve/reject actions for each half.
             Route::get('owner-verifications', [SystemOwnerVerificationController::class, 'index'])->middleware('permission:spa_business_view');
             Route::get('owner-verifications/{uuid}', [SystemOwnerVerificationController::class, 'show'])->middleware('permission:spa_business_view');
+            Route::put('owner-verifications/{uuid}/{part}/review-checklist', [SystemOwnerVerificationController::class, 'saveChecklist'])->whereIn('part', ['identity', 'business'])->middleware('permission:spa_business_view');
+            Route::post('owner-verifications/{uuid}/identity/request-resubmission', [SystemOwnerVerificationController::class, 'requestIdentityResubmission'])->middleware('permission:spa_business_reject');
+            Route::post('owner-verifications/{uuid}/business/request-resubmission', [SystemOwnerVerificationController::class, 'requestBusinessResubmission'])->middleware('permission:spa_business_reject');
 
             Route::post('owner-verifications/{uuid}/identity/approve', [SystemOwnerVerificationController::class, 'approveIdentity'])->middleware('permission:spa_business_approve');
             Route::post('owner-verifications/{uuid}/identity/reject', [SystemOwnerVerificationController::class, 'rejectIdentity'])->middleware('permission:spa_business_reject');
