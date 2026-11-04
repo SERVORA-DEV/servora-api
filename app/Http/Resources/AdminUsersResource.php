@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Support\ProfilePhoto;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -16,6 +17,7 @@ class AdminUsersResource extends JsonResource
     {
          return [
             ...parent::toArray($request),
+            'profile_photo' => ProfilePhoto::url($this->profile_photo),
 
             'permission' => $this
             ->permission !== null ?
