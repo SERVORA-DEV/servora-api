@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Business;
 
 use App\Service\Business\SpaBranchService;
+use App\Service\Business\BranchCloneService;
+use App\Http\Requests\Business\SpaBranchCloneRequest;
 use App\Http\Requests\Business\SpaBranchRequest;
 use App\Http\Requests\Business\SpaBranchUpdateRequest;
 use App\Http\Requests\Business\SpaBranchLocationRequest;
@@ -92,6 +94,11 @@ class SpaBranchController extends Controller
     public function store(SpaBranchRequest $request)
     {
         return $this->spaBranchService->createSpaBranch($request->user(), $request->validated());
+    }
+
+    public function clone(SpaBranchCloneRequest $request, string $uuid, BranchCloneService $cloner): JsonResponse
+    {
+        return $cloner->clone($request->user(), $uuid, $request->validated());
     }
 
     public function show(Request $request, string $uuid)

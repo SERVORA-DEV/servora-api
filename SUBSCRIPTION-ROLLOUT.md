@@ -24,6 +24,7 @@ Do not run `migrate:fresh`, the entire DatabaseSeeder, or a reset command agains
 - Basic exports CSV from the most recent 30 calendar days, including today. Report viewing retains its normal date filters. Premium/Enterprise export PDF, Excel and CSV for any available date range. Restricted export data is fetched from an authorized, branch-scoped API endpoint.
 - Packages and customer programs retain their existing plan checks. Listing, reviews, reports, and export controls now also consult the plan. Subscription access middleware applies to business staff as well as owners; role permissions remain separate requirements.
 - Capacity enforcement counts only branches/logins that are not on plan hold. A move to a smaller plan uses the existing keep-choice workflow and retains historical records. The owner can keep additional capacity by buying eligible extras.
+- Duplicating a branch uses the ordinary branch-creation capacity check, including purchased extra branches and legacy unlimited terms. Drafts and inactive branches consume capacity; plan-held and deleted branches do not. The owner-only `POST /api/business/branch/{uuid}/clone` creates a new draft and copies selected configuration in one transaction under the business row lock. Failure rolls back the draft and copied settings. Location, permits, verification, staff and transaction history are never copied.
 - Automatic renewal is attempted at/after expiry rather than early, so the next plan's features/holds do not activate before its paid term starts.
 
 ## Validation
@@ -33,6 +34,8 @@ Focused PHP tests (using disposable in-memory fixtures where needed):
 ```powershell
 php vendor/phpunit/phpunit/phpunit tests/Unit --filter 'PlanTermsTest|PlanSwitchQuoteTest|PlanFitTest|SubscriberStateTest|SubscriptionReminderScheduleTest|XenditDemoOnlyTest'
 ```
+
+Branch duplication regression checks run with `php vendor/phpunit/phpunit/phpunit tests/Unit/BranchCloneTest.php`. They exercise the actual endpoint validation and clone/create services against an isolated SQLite fixture, including effective capacity, draft usage, holds, ownership, selected settings and rollback. PostgreSQL concurrency requires a separate integration run; SQLite does not implement the business row lock.
 
 Integration tests require a running isolated PostgreSQL `servora_test` database configured through phpunit.xml. The new test refuses to refresh another database:
 

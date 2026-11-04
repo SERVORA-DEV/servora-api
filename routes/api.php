@@ -822,6 +822,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::apiResource('subscription', SubscriptionController::class)->only(['index', 'store']);
                 Route::apiResource('account', AccountController::class);
                 Route::apiResource('branch', SpaBranchController::class)->except(['index', 'show']);
+                Route::post('branch/{uuid}/clone', [SpaBranchController::class, 'clone'])->whereUuid('uuid');
                 // Read-only view of the admin's catalog, shown when the owner
                 // clicks Add Service. Adopting one is just the normal
                 // POST service below carrying source_template_uuid — there is
