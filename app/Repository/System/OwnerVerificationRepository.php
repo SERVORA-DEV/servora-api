@@ -4,6 +4,7 @@ namespace App\Repository\System;
 
 use App\Models\OwnerIdentityVerification;
 use App\Models\SpaBusiness;
+use App\Models\User;
 
 class OwnerVerificationRepository
 {
@@ -35,5 +36,16 @@ class OwnerVerificationRepository
         $identity->update($payload);
 
         return $identity->fresh();
+    }
+
+    // All review writes use the same lock order, including final decisions.
+    public function findForReviewUpdate(string $uuid): SpaBusiness
+    {
+        $business = SpaBusiness::where('uuid', $uuid)->lockForUpdate()->firstOrFail();
+        $owner = $business->owner_id ? User::whereKey($business->owner_id)->lockForUpdate()->first() : null;
+        if ($owner) {
+            $owner->setRelation('ownerIdentityVerification', OwnerIdentityVerification::where('user_id', $owner->id)->lockForUpdate()->first());
+        }
+        return $business->setRelation('owner', $owner);
     }
 }
