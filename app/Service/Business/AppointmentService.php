@@ -2499,7 +2499,21 @@ class AppointmentService
                 return response()->json(['message' => 'This service is already completed — its assignments can no longer be changed.'], 422);
             }
 
-            $this->therapistAssignmentRepository->cancel($assignment);
+            if ($stale = self::staleRefusal($assignment->appointmentService->appointment)) {
+                return $stale;
+            }
+            if ($refusal = $this->addonFollows($assignment->appointmentService, 'shares its staff and facility')) {
+                return $refusal;
+            }
+
+            // Only the person comes off: the service keeps its facility on this
+            // row, and whoever is picked next claims it (assignTherapistInternal).
+            // A row with nothing else on it is cancelled.
+            if ($assignment->staff_id && $assignment->facility_id) {
+                $assignment->update(['staff_id' => null]);
+            } else {
+                $this->therapistAssignmentRepository->cancel($assignment);
+            }
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($assignment->appointmentService->appointment->uuid));
         });
@@ -2555,9 +2569,9 @@ class AppointmentService
     }
 
     // Takes the room off an assignment but keeps its therapist — the "×" on
-    // the room chip. (cancelAssignment drops the whole row, therapist and
-    // all.) A room-only row has nothing left once its room goes, so it is
-    // cancelled instead.
+    // the room chip. (cancelAssignment is the other way round: it takes the
+    // therapist and keeps the room.) A room-only row has nothing left once its
+    // room goes, so it is cancelled instead.
     public function clearRoom(User $user, string $assignmentUuid)
     {
         $business = $this->spaBusinessRepository->findForUser($user);

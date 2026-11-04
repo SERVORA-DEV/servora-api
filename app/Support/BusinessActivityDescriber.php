@@ -200,6 +200,17 @@ final class BusinessActivityDescriber
         'AccountController@destroy' => ['account.delete', 'accounts', 'Deactivate', User::class, 'Removed login[ {subject}]'],
         'AccountController@bringBack' => ['account.restore', 'accounts', 'Activate', User::class, 'Brought back login[ {subject}]'],
         'SecurityController@changePassword' => ['account.password', 'accounts', 'Change Password', null, 'Changed their own password'],
+        'SecurityController@enableTwoFactor' => ['account.two_factor_start', 'accounts', 'Update', null, 'Started turning on two-factor sign-in'],
+        'SecurityController@confirmTwoFactor' => ['account.two_factor_on', 'accounts', 'Activate', null, 'Turned on two-factor sign-in'],
+        'SecurityController@disableTwoFactor' => ['account.two_factor_off', 'accounts', 'Deactivate', null, 'Turned off two-factor sign-in'],
+        'SecurityController@submitPersonalEmail' => ['account.personal_email', 'accounts', 'Update', null, 'Changed their personal verification email'],
+        'SecurityController@verifyPersonalEmail' => ['account.personal_email_verify', 'accounts', 'Verify Email', null, 'Verified their personal email'],
+        'SecurityController@resendPersonalEmailOtp' => ['account.personal_email_resend', 'accounts', 'Update', null, 'Asked for a new personal email code'],
+        'SecurityController@revokeSession' => ['account.session_end', 'accounts', 'Logout', null, 'Signed out one of their devices'],
+        'SecurityController@revokeOtherSessions' => ['account.sessions_end', 'accounts', 'Logout', null, 'Signed out their other devices'],
+        'AccountProfileController@update' => ['account.profile', 'accounts', 'Update', null, 'Changed their own phone number'],
+        'ProfilePhotoController@store' => ['account.photo', 'accounts', 'Upload', null, 'Changed their own profile photo'],
+        'ProfilePhotoController@destroy' => ['account.photo_remove', 'accounts', 'Delete', null, 'Removed their own profile photo'],
     ];
 
     // The records a sentence is about that belong to no one branch: the

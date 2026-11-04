@@ -10,6 +10,12 @@ use App\Services\ImageUploadService;
 // owner's profile). This turns any of them into something a screen can show.
 class ProfilePhoto
 {
+    /** Where an uploaded picture of this account is kept (ImageUploadService). */
+    public static function folderFor(?string $role, string $uuid): string
+    {
+        return ($role === 'system_administrator' ? 'administrators' : 'staff-accounts') . "/{$uuid}/profile";
+    }
+
     /** The address to show for a stored value, or null when there is none. */
     public static function url(?string $stored): ?string
     {

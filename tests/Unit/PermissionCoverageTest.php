@@ -14,10 +14,21 @@ use Tests\TestCase;
 class PermissionCoverageTest extends TestCase
 {
     // Self-service actions of the signed-in account: its own notifications,
-    // password and notification switches. There is nothing to grant or take
-    // away.
+    // password, two-factor, personal email, devices, phone number, photo and
+    // notification switches. There is nothing to grant or take away.
     private const SELF_SERVICE = [
         'SecurityController@changePassword',
+        'SecurityController@enableTwoFactor',
+        'SecurityController@confirmTwoFactor',
+        'SecurityController@disableTwoFactor',
+        'SecurityController@submitPersonalEmail',
+        'SecurityController@verifyPersonalEmail',
+        'SecurityController@resendPersonalEmailOtp',
+        'SecurityController@revokeSession',
+        'SecurityController@revokeOtherSessions',
+        'AccountProfileController@update',
+        'ProfilePhotoController@store',
+        'ProfilePhotoController@destroy',
         'NotificationController@markRead',
         'NotificationController@markAllRead',
         'NotificationController@destroy',

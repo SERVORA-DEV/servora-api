@@ -21,7 +21,7 @@ class ProfilePhotoController extends Controller
         // Only the authenticated account; no target user identifier is accepted.
         $user = $request->user();
         $old = $user->profile_photo;
-        $path = $this->images->store($request->file('photo'), "administrators/{$user->uuid}/profile");
+        $path = $this->images->store($request->file('photo'), ProfilePhoto::folderFor($user->role, $user->uuid));
         try {
             if (! $user->forceFill(['profile_photo' => $path])->saveOrFail()) {
                 throw new \RuntimeException('Could not save the profile photo.');

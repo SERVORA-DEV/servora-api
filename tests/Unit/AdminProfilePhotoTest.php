@@ -17,7 +17,7 @@ class AdminProfilePhotoTest extends TestCase
     private function actor(): User
     {
         $user = Mockery::mock(User::class)->makePartial();
-        $user->forceFill(['uuid' => 'admin-one', 'profile_photo' => 'administrators/old']);
+        $user->forceFill(['uuid' => 'admin-one', 'role' => 'system_administrator', 'profile_photo' => 'administrators/old']);
         return $user;
     }
 

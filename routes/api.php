@@ -4,6 +4,7 @@ use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Business\AccountController;
+use App\Http\Controllers\Business\AccountProfileController;
 use App\Http\Controllers\Business\AddonController;
 use App\Http\Controllers\Business\AppointmentController;
 use App\Http\Controllers\Business\AppointmentServiceController;
@@ -85,9 +86,11 @@ Route::post('/auth/admin/login', [AuthController::class, 'adminLogin'])->middlew
 // "Continue with Google" for business owners (sign-in and sign-up) — see
 // UserService::loginWithGoogle. Per-IP, since there is no email input to key on.
 Route::post('/auth/google', [AuthController::class, 'loginWithGoogle'])->middleware('throttle:20,1');
-// Per-IP throttles on top of UserService's per-challenge attempt cap.
-Route::post('/auth/two-factor/verify', [AuthController::class, 'verifyTwoFactorLogin'])->middleware('throttle:10,1');
-Route::post('/auth/two-factor/request-email-code', [AuthController::class, 'requestTwoFactorEmailCode'])->middleware('throttle:5,1');
+// Per-IP throttles on top of UserService's per-challenge attempt cap. Named, because
+// unnamed ones from one IP all share a counter, and a spa's staff share an IP: two of
+// them signing in within a minute would otherwise block each other's emailed code.
+Route::post('/auth/two-factor/verify', [AuthController::class, 'verifyTwoFactorLogin'])->middleware('throttle:10,1,login-2fa-verify');
+Route::post('/auth/two-factor/request-email-code', [AuthController::class, 'requestTwoFactorEmailCode'])->middleware('throttle:5,1,login-2fa-email');
 Route::post('/auth/register', [RegisterController::class, 'registerClient'])->middleware('throttle:auth-sensitive');
 Route::post('/auth/forget-password', [AuthController::class, 'forgetPassword'])->middleware('throttle:auth-sensitive');
 Route::post('/auth/forget-password/verify-otp', [AuthController::class, 'verifyForgetPasswordOtp'])->middleware('throttle:auth-otp');
@@ -379,6 +382,27 @@ Route::middleware('auth:sanctum')->group(function () {
                 // subscription gates on purpose — a password must always be
                 // changeable.
                 Route::post('account/change-password', [SecurityController::class, 'changePassword'])->middleware('throttle:10,1');
+
+                // The rest of the signed-in account's own settings, outside the same
+                // gates for the same reason. Two-factor, the personal email its codes
+                // go to and the sessions are the admin's /system/security again. Each throttle has
+                // its own name: unnamed ones of one person all share a counter, and saving a
+                // phone number and a photo must not use up the attempts to turn on two-factor.
+                Route::patch('account/profile', [AccountProfileController::class, 'update'])->middleware('throttle:20,1,account-profile');
+                Route::post('account/photo', [\App\Http\Controllers\System\ProfilePhotoController::class, 'store'])->middleware('throttle:20,1,account-photo');
+                Route::delete('account/photo', [\App\Http\Controllers\System\ProfilePhotoController::class, 'destroy'])->middleware('throttle:20,1,account-photo');
+
+                Route::post('account/two-factor/enable', [SecurityController::class, 'enableTwoFactor'])->middleware('throttle:6,1,account-2fa-send');
+                Route::post('account/two-factor/confirm', [SecurityController::class, 'confirmTwoFactor'])->middleware('throttle:10,1,account-2fa-code');
+                Route::post('account/two-factor/disable', [SecurityController::class, 'disableTwoFactor']);
+
+                Route::post('account/personal-email', [SecurityController::class, 'submitPersonalEmail']);
+                Route::post('account/personal-email/verify', [SecurityController::class, 'verifyPersonalEmail'])->middleware('throttle:10,1,account-email-code');
+                Route::post('account/personal-email/resend', [SecurityController::class, 'resendPersonalEmailOtp'])->middleware('throttle:6,1,account-email-send');
+
+                Route::get('account/sessions', [SecurityController::class, 'sessions']);
+                Route::delete('account/sessions', [SecurityController::class, 'revokeOtherSessions']);
+                Route::delete('account/sessions/{id}', [SecurityController::class, 'revokeSession']);
             });
 
             // 'verified.business' is the real enforcement of the

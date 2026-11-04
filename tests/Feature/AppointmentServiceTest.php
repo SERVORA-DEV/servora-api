@@ -125,6 +125,30 @@ class AppointmentServiceTest extends TestCase
         $this->assertSame($this->facilityA->id, $claimed->facility_id, 'room must be preserved after claiming');
     }
 
+    public function test_removing_the_staff_member_keeps_the_room_for_whoever_is_picked_next(): void
+    {
+        $appointment = $this->createAppointment();
+        $service = $this->addService($appointment);
+        $this->service->assignTherapist($this->owner, $service->uuid, [
+            'staff_uuid' => $this->therapistA->uuid,
+            'facility_uuid' => $this->facilityA->uuid,
+        ]);
+        $row = TherapistAssignment::where('appointment_service_id', $service->id)->firstOrFail();
+
+        $removed = $this->service->cancelAssignment($this->owner, $row->uuid);
+        $this->assertNotInstanceOf(JsonResponse::class, $removed, $this->msg($removed));
+
+        $row->refresh();
+        $this->assertNull($row->staff_id);
+        $this->assertNull($row->staff_name);
+        $this->assertSame($this->facilityA->id, $row->facility_id);
+        $this->assertSame('Assigned', $row->assignment_status);
+
+        $this->service->assignTherapist($this->owner, $service->uuid, ['staff_uuid' => $this->therapistA->uuid]);
+        $this->assertCount(1, TherapistAssignment::where('appointment_service_id', $service->id)->get(), 'the next person claims the same row');
+        $this->assertSame($this->facilityA->id, $row->fresh()->facility_id);
+    }
+
     public function test_assigning_service_package_and_room_never_flips_status_to_in_service(): void
     {
         $appointment = $this->createAppointment();
