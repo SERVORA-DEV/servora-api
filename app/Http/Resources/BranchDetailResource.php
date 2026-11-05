@@ -225,8 +225,6 @@ class BranchDetailResource extends JsonResource
                 // What they do, main one first (App\Support\StaffSpecialty) —
                 // sent for the app to show; it doesn't yet.
                 'specialties' => $staff->specialtyList(),
-                // For the app's preferred-gender filter (App\Support\StaffGender).
-                'gender' => $staff->gender,
                 // Whether they can be sent to a client's home (HomeServiceRules).
                 'home_service_available' => $staff->takesHomeService(),
             ])->values(),

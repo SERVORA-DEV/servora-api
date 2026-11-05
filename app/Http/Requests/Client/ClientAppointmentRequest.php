@@ -4,7 +4,6 @@ namespace App\Http\Requests\Client;
 
 use App\Models\Client;
 use App\Support\ClientProfile;
-use App\Support\StaffGender;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use App\Rules\NoEmoji;
@@ -31,8 +30,6 @@ class ClientAppointmentRequest extends FormRequest
             'services.*.service_variant_uuid' => 'required|uuid',
             'package_uuid' => 'nullable|uuid|required_without:services',
             'requested_therapist_uuid' => 'nullable|uuid',
-            // The staff gender they would rather have (App\Support\StaffGender).
-            'preferred_staff_gender' => ['nullable', Rule::in(StaffGender::PREFERENCES)],
             'remarks' => 'nullable|string|max:500',
             // The client saw they already have a booking at this time and books anyway.
             'acknowledge_overlap' => 'sometimes|boolean',

@@ -19,6 +19,7 @@ class FacilityResource extends JsonResource
             'name' => $this->name,
             'description' => $this->description,
             'category' => $this->category,
+            'max_clients' => $this->resource->clientLimit(),
             // 'Occupied' overrides the stored status (Available/Maintenance)
             // whenever there's a live in-progress assignment; is_available
             // false (Inactive) takes precedence over both — a room that's

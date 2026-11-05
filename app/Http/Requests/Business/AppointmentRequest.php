@@ -4,7 +4,6 @@ namespace App\Http\Requests\Business;
 
 use App\Models\Client;
 use App\Support\ClientProfile;
-use App\Support\StaffGender;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -63,9 +62,6 @@ class AppointmentRequest extends FormRequest
             'client_update.phone_number' => 'nullable|string|max:20',
 
             'requested_therapist_uuid' => 'nullable|uuid|exists:staff,uuid',
-            // The staff gender the client would rather have — advice for
-            // whoever assigns (App\Support\StaffGender).
-            'preferred_staff_gender' => ['nullable', Rule::in(StaffGender::PREFERENCES)],
 
             'services' => 'sometimes|array',
             'services.*.service_variant_uuid' => 'required_with:services|uuid|exists:service_variants,uuid',

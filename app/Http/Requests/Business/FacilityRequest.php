@@ -36,6 +36,9 @@ class FacilityRequest extends FormRequest
             'status' => ['sometimes', Rule::in(['Available', 'Maintenance'])],
             'is_available' => 'sometimes|boolean',
 
+            // Not saved until the column exists (Facility::hasClientLimit).
+            ...(\App\Models\Facility::hasClientLimit() ? ['max_clients' => 'sometimes|integer|min:1|max:20'] : []),
+
             'amenities' => 'sometimes|array',
             'amenities.*' => 'string|max:50',
 

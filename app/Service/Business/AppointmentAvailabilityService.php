@@ -4,12 +4,14 @@ namespace App\Service\Business;
 
 use App\Models\Appointment;
 use App\Models\BranchSchedule;
+use App\Models\Facility;
 use App\Models\Staff;
 use App\Models\StaffSchedule;
 use App\Models\TherapistAssignment;
 use App\Repository\Business\StaffServiceRepository;
 use App\Support\BranchClosures;
 use App\Support\ReservationHold;
+use App\Support\RoomCapacity;
 use App\Support\StaleVisit;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -469,7 +471,19 @@ class AppointmentAvailabilityService
             }
 
             return $other->queue->lineTime()->lt($myAt);
-        })->sortBy(fn (TherapistAssignment $a) => $a->appointmentService->appointment->queue->lineTime()->getTimestamp())->first();
+        });
+
+        // A shared room: those ahead only stand in the way when they need all the space left.
+        $roomLimit = $facilityId ? (Facility::clientLimits([$facilityId])[$facilityId] ?? 1) : 1;
+        if ($roomLimit > 1) {
+            $forRoom = $ahead->where('facility_id', $facilityId)
+                ->map(fn (TherapistAssignment $a) => $a->appointmentService->appointment_id)->unique()->count();
+            if (RoomCapacity::hasSpace($this->visitsRunningIn($facilityId, $mine->id) + $forRoom, $roomLimit)) {
+                $ahead = $ahead->filter(fn (TherapistAssignment $a) => $staffId && $a->staff_id === $staffId);
+            }
+        }
+
+        $ahead = $ahead->sortBy(fn (TherapistAssignment $a) => $a->appointmentService->appointment->queue->lineTime()->getTimestamp())->first();
         if (! $ahead) {
             return null;
         }
@@ -488,7 +502,22 @@ class AppointmentAvailabilityService
     // the two may run together is App\Support\ServiceStartRules' call).
     public function isFacilityCurrentlyOccupied(int $facilityId, ?int $excludeAssignmentId = null, ?int $excludeAppointmentId = null): array
     {
-        $occupied = TherapistAssignment::where('facility_id', $facilityId)
+        $limit = Facility::clientLimits([$facilityId])[$facilityId] ?? 1;
+
+        if (RoomCapacity::hasSpace($this->visitsRunningIn($facilityId, $excludeAppointmentId, $excludeAssignmentId), $limit)) {
+            return ['ok' => true, 'reason' => null];
+        }
+
+        return ['ok' => false, 'reason' => $limit > 1
+            ? 'This facility is full right now.'
+            : 'This facility is currently occupied by another service.'];
+    }
+
+    // How many other clients are being served in this room right now. A visit
+    // with two services running in it is one client.
+    private function visitsRunningIn(int $facilityId, ?int $excludeAppointmentId = null, ?int $excludeAssignmentId = null): int
+    {
+        return TherapistAssignment::where('facility_id', $facilityId)
             ->where('assignment_status', 'In Progress')
             ->whereHas('appointmentService.appointment', fn ($q) => $q->where('appointment_date', '>=', StaleVisit::today()))
             ->when($excludeAssignmentId, fn ($q) => $q->where('id', '!=', $excludeAssignmentId))
@@ -496,15 +525,14 @@ class AppointmentAvailabilityService
                 'appointmentService',
                 fn ($s) => $s->where('appointment_id', $excludeAppointmentId),
             ))
-            ->exists();
-
-        return $occupied
-            ? ['ok' => false, 'reason' => 'This facility is currently occupied by another service.']
-            : ['ok' => true, 'reason' => null];
+            ->with('appointmentService:id,appointment_id')
+            ->get()
+            ->map(fn (TherapistAssignment $a) => $a->appointmentService?->appointment_id)
+            ->filter()->unique()->count();
     }
 
-    // Hard gate, unlike isStaffAvailable() above — a room is a single
-    // physical resource that can't serve two appointments at once, so
+    // Hard gate, unlike isStaffAvailable() above — a room holds only so many
+    // clients at once (Facility::clientLimit, usually one), so
     // unlike therapist scheduling (soft/advisory only, see class doc
     // comment), room booking IS time-blocked: this is called at
     // assignment time in AppointmentService and actually rejects a
@@ -528,17 +556,25 @@ class AppointmentAvailabilityService
             ->when($excludeAssignmentId, fn ($q) => $q->where('id', '!=', $excludeAssignmentId))
             ->get();
 
+        $windows = [];
         foreach ($assignments as $assignment) {
             $otherAppointmentId = $assignment->appointmentService?->appointment?->id;
             if ($excludeAppointmentId && $otherAppointmentId === $excludeAppointmentId) {
                 continue;
             }
-            if ($this->overlapsAppointment($assignment, $date, $start, $end)) {
-                return ['ok' => false, 'reason' => 'This facility is already booked during the requested time.'];
+            if ($other = $this->overlappedAppointment($assignment, $date, $start, $end)) {
+                $windows[$other->id] = $this->windowWithin($other, $start, $end);
             }
         }
 
-        return ['ok' => true, 'reason' => null];
+        $limit = Facility::clientLimits([$facilityId])[$facilityId] ?? 1;
+        if (RoomCapacity::hasSpace(RoomCapacity::peak(array_values($windows)), $limit)) {
+            return ['ok' => true, 'reason' => null];
+        }
+
+        return ['ok' => false, 'reason' => $limit > 1
+            ? 'This facility is full during the requested time.'
+            : 'This facility is already booked during the requested time.'];
     }
 
     /**
@@ -583,6 +619,16 @@ class AppointmentAvailabilityService
     private function overlapsAppointment(TherapistAssignment $assignment, string $date, Carbon $start, Carbon $end): bool
     {
         return $this->overlappedAppointment($assignment, $date, $start, $end) !== null;
+    }
+
+    // The part of the window this appointment is there for, as timestamps.
+    /** @return array{0: int, 1: int} */
+    private function windowWithin(Appointment $appointment, Carbon $start, Carbon $end): array
+    {
+        $from = Carbon::parse($appointment->appointment_date->format('Y-m-d') . ' ' . $appointment->appointment_time);
+        $to = (clone $from)->addMinutes($this->estimatedDurationMinutes($appointment));
+
+        return [max($from->getTimestamp(), $start->getTimestamp()), min($to->getTimestamp(), $end->getTimestamp())];
     }
 
     // The other appointment this assignment belongs to, when it runs over the window; else null.
@@ -683,22 +729,66 @@ class AppointmentAvailabilityService
                 ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW, Appointment::STATUS_COMPLETED]))
             ->get();
 
-        $found = [];
+        $first = [];
+        $windows = [];
         foreach ($assignments as $assignment) {
             $id = $assignment->{$column};
-            if (isset($found[$id])) {
-                continue;
-            }
             $other = $this->overlappedAppointment($assignment, $date, $start, $end);
             if (! $other || ($excludeAppointmentId && $other->id === $excludeAppointmentId)) {
                 continue;
             }
+            $windows[$id][$other->id] = $this->windowWithin($other, $start, $end);
+            if (isset($first[$id])) {
+                continue;
+            }
             $client = trim(($other->client?->first_name ?? '') . ' ' . ($other->client?->last_name ?? '')) ?: 'another client';
             $at = Carbon::parse($other->appointment_date->format('Y-m-d') . ' ' . $other->appointment_time)->format('g:i A');
-            $found[$id] = ($column === 'staff_id' ? 'Booked with ' : 'Booked for ') . "{$client} at {$at}";
+            $first[$id] = ($column === 'staff_id' ? 'Booked with ' : 'Booked for ') . "{$client} at {$at}";
+        }
+
+        // Staff do one thing at a time; a room holds as many as its limit says.
+        $limits = $column === 'facility_id' ? Facility::clientLimits($ids) : [];
+        $found = [];
+        foreach ($first as $id => $line) {
+            $limit = $limits[$id] ?? 1;
+            if (! RoomCapacity::hasSpace(RoomCapacity::peak(array_values($windows[$id])), $limit)) {
+                $found[$id] = $limit > 1 ? "Full at that time ({$limit} clients)" : $line;
+            }
         }
 
         return $found;
+    }
+
+    /**
+     * How many other clients are in each shared room over a window, for "1 of 3 in use" and
+     * for auto-assign's empty rooms first. Rooms that hold one aren't asked about: they are either
+     * free or refused already.
+     *
+     * @param  array<int, int>  $facilityIds
+     * @return array<int, int>
+     */
+    public function clientsInSharedRooms(array $facilityIds, string $date, string $startTime, int $durationMinutes, ?int $excludeAppointmentId = null): array
+    {
+        $shared = array_keys(array_filter(Facility::clientLimits($facilityIds), fn (int $limit) => $limit > 1));
+        if (! $shared) {
+            return [];
+        }
+
+        $start = Carbon::parse("{$date} {$startTime}");
+        $end = (clone $start)->addMinutes($durationMinutes);
+        $windows = [];
+        $assignments = TherapistAssignment::with('appointmentService.appointment.services.serviceVariant')
+            ->whereIn('facility_id', $shared)
+            ->whereIn('assignment_status', ['Assigned', 'In Progress'])
+            ->get();
+        foreach ($assignments as $assignment) {
+            $other = $this->overlappedAppointment($assignment, $date, $start, $end);
+            if ($other && $other->id !== $excludeAppointmentId) {
+                $windows[$assignment->facility_id][$other->id] = $this->windowWithin($other, $start, $end);
+            }
+        }
+
+        return array_map(fn (array $visits) => RoomCapacity::peak(array_values($visits)), $windows);
     }
 
     // Sum of duration_minutes across this appointment's non-cancelled

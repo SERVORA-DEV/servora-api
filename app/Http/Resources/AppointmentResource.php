@@ -30,11 +30,9 @@ class AppointmentResource extends JsonResource
             'home_service_fee' => (float) $this->home_service_fee,
             // Starting a home visit by scanning (App\Support\HomeVisitStart):
             // the code the staff can type into their scanner, and when a
-            // scan started the visit. Then the staff gender the booking
-            // asked for (App\Support\StaffGender). Null until they exist.
+            // scan started the visit. Null until they exist.
             'home_start_code' => \App\Models\Appointment::hasHomeStart() && $this->isHomeService() ? $this->home_start_code : null,
             'home_scanned_at' => \App\Models\Appointment::hasHomeStart() ? optional($this->home_scanned_at)->toIso8601String() : null,
-            'preferred_staff_gender' => \App\Models\Appointment::hasHomeStart() ? $this->preferred_staff_gender : null,
             'source' => $this->source,
             'status' => $this->status,
             'check_in_at' => optional($this->check_in_at)->toIso8601String(),

@@ -6,6 +6,7 @@ use App\Http\Resources\SpaBranchResource;
 use App\Models\BranchPackage;
 use App\Models\BranchService;
 use App\Models\CustomerProgram;
+use App\Models\Facility;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
 use App\Models\User;
@@ -59,6 +60,7 @@ class BranchCloneService
                         'name' => $name,
                         'amenities' => $facility->amenities,
                         'is_available' => $facility->is_available,
+                        ...(Facility::hasClientLimit() ? ['max_clients' => $facility->clientLimit()] : []),
                     ]);
                     $new->services()->sync($facility->services->where('spa_business_id', $business->id)->modelKeys());
                     $copied['facilities']++;

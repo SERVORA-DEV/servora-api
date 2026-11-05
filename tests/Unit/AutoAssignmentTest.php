@@ -25,7 +25,7 @@ class AutoAssignmentTest extends TestCase
 
     private function person(string $uuid, array $can, array $o = []): array
     {
-        return $o + ['uuid' => $uuid, 'name' => ucfirst($uuid), 'gender' => null, 'workload' => 0, 'position' => null, 'can' => $can];
+        return $o + ['uuid' => $uuid, 'name' => ucfirst($uuid), 'workload' => 0, 'position' => null, 'can' => $can];
     }
 
     private function room(string $uuid, array $can): array
@@ -118,23 +118,61 @@ class AutoAssignmentTest extends TestCase
         $this->assertSame(['a' => 'ana'], AutoAssignment::decide([$this->svc('a')], [$this->person('ana', $can, ['workload' => 0]), $free], [])['staff']);
     }
 
-    public function test_the_gender_preference_comes_first_and_gives_way_with_a_warning(): void
+    // Nobody's gender comes into it: the same people are picked whatever gender is on record, or none.
+    public function test_gender_plays_no_part_in_who_is_assigned(): void
     {
         $can = ['a' => true];
         $services = [$this->svc('a')];
-        $man = $this->person('al', $can, ['gender' => 'Male', 'workload' => 0]);
-        $woman = $this->person('bea', $can, ['gender' => 'Female', 'workload' => 5]);
 
-        $r = AutoAssignment::decide($services, [$man, $woman], [], 'Female');
-        $this->assertSame(['a' => 'bea'], $r['staff']);
+        foreach ([['Male', 'Female'], ['Female', 'Male'], ['Other', null], [null, null]] as [$g1, $g2]) {
+            $first = $this->person('al', $can, ['gender' => $g1, 'workload' => 0]);
+            $second = $this->person('bea', $can, ['gender' => $g2, 'workload' => 5]);
+
+            $r = AutoAssignment::decide($services, [$second, $first], []);
+            $this->assertSame(['a' => 'al'], $r['staff']);
+            $this->assertSame([], $r['warnings']);
+        }
+
+        // Only one person can do it: assigned with no warning, whoever they are.
+        $this->assertSame(['a' => 'bea'], AutoAssignment::decide($services, [$this->person('bea', $can, ['gender' => 'Male'])], [])['staff']);
+        $this->assertSame([], AutoAssignment::decide($services, [$this->person('bea', $can, ['gender' => 'Male'])], [])['warnings']);
+    }
+
+    // A room can hold several clients, but nobody is put in with a stranger while a room of their own will do.
+    public function test_empty_rooms_come_before_a_shared_room_with_someone_in_it(): void
+    {
+        $service = [$this->roomSvc('a')];
+        $can = ['a' => true];
+        $shared = $this->room('a-lounge', $can) + ['clients_in' => 1];
+        $empty = $this->room('z-room', $can) + ['clients_in' => 0];
+
+        // First by name, but someone is in it.
+        $this->assertSame(['a' => 'z-room'], AutoAssignment::decide($service, [], [$shared, $empty])['facility']);
+
+        // No empty room fits: the shared room it is, with no warning.
+        $full = $this->room('z-room', ['a' => false]);
+        $r = AutoAssignment::decide($service, [], [$shared, $full]);
+        $this->assertSame(['a' => 'a-lounge'], $r['facility']);
         $this->assertSame([], $r['warnings']);
+    }
 
-        $r = AutoAssignment::decide($services, [$man], [], 'Female');
-        $this->assertSame(['a' => 'al'], $r['staff']);
-        $this->assertStringContainsString('No female staff is available for A', $r['warnings'][0]);
+    public function test_an_empty_room_wins_even_when_the_shared_one_fits_more_of_the_visit(): void
+    {
+        $services = [$this->roomSvc('a'), $this->svc('b', ['needs_staff' => false, 'needs_facility' => false])];
+        $shared = $this->room('a-lounge', ['a' => true, 'b' => true]) + ['clients_in' => 2];
+        $empty = $this->room('z-room', ['a' => true, 'b' => false]);
 
-        // No preference: anyone, and staff with no gender on record are fine.
-        $this->assertSame(['a' => 'al'], AutoAssignment::decide($services, [$man, $woman], [], null)['staff']);
+        $this->assertSame('z-room', AutoAssignment::decide($services, [], [$shared, $empty])['facility']['a']);
+    }
+
+    public function test_when_no_one_room_fits_the_split_still_prefers_empty_rooms(): void
+    {
+        $services = [$this->roomSvc('a'), $this->roomSvc('b')];
+        $shared = $this->room('a-lounge', ['a' => true, 'b' => false]) + ['clients_in' => 1];
+        $forA = $this->room('m-room', ['a' => true, 'b' => false]);
+        $forB = $this->room('z-room', ['a' => false, 'b' => true]);
+
+        $this->assertSame(['a' => 'm-room', 'b' => 'z-room'], AutoAssignment::decide($services, [], [$shared, $forA, $forB])['facility']);
     }
 
     public function test_services_that_already_have_staff_or_a_room_are_left_alone(): void

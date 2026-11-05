@@ -85,6 +85,9 @@ class ServiceExtensionService
         $staff = $running->filter(fn ($a) => $a->staff)->mapWithKeys(fn ($a) => [$a->staff_id => trim("{$a->staff->first_name} {$a->staff->last_name}")])->all();
         $rooms = $running->filter(fn ($a) => $a->facility)->mapWithKeys(fn ($a) => [$a->facility_id => $a->facility->name])->all();
         $bookings = $options && $startedAt ? $this->othersWaiting($appointment) : [];
+        // A shared room has space for whoever is waiting, so running longer doesn't keep them out.
+        $roomLimits = \App\Models\Facility::clientLimits(array_keys($rooms));
+        $roomsHoldingOne = array_values(array_filter(array_keys($rooms), fn ($id) => ($roomLimits[$id] ?? 1) === 1));
         $now = now();
 
         // Its add-ons ride with it: every end time below is that much later.
@@ -98,12 +101,12 @@ class ServiceExtensionService
             'due_at' => $startedAt && $currentMinutes ? (clone $startedAt)->addMinutes($currentMinutes + $added)->toIso8601String() : null,
             // Whether this person may go ahead on a choice that needs an override.
             'can_override' => app(PolicyGate::class)->mayOverride($user),
-            'options' => array_map(function (array $option) use ($startedAt, $now, $staff, $rooms, $bookings, $policy, $already, $added) {
+            'options' => array_map(function (array $option) use ($startedAt, $now, $staff, $rooms, $roomsHoldingOne, $bookings, $policy, $already, $added) {
                 $endsAt = $startedAt ? (clone $startedAt)->addMinutes($option['minutes'] + $added) : null;
                 // A new end past midnight still counts as later than everything today.
                 $newEnd = $endsAt ? ($endsAt->isSameDay($now) ? $endsAt->hour * 60 + $endsAt->minute : 24 * 60) : 0;
                 $clashes = $endsAt
-                    ? ServiceExtension::clashes($newEnd, $now->hour * 60 + $now->minute, array_keys($staff), array_keys($rooms), $bookings)
+                    ? ServiceExtension::clashes($newEnd, $now->hour * 60 + $now->minute, array_keys($staff), $roomsHoldingOne, $bookings)
                     : [];
 
                 return [

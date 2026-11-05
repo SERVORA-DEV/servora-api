@@ -123,7 +123,6 @@ class ClientAppointmentResource extends JsonResource
             'home_start_qr' => Appointment::hasHomeStart() && $this->isHomeService() && $this->home_start_code
                 ? \App\Support\HomeVisitStart::qrText($this->home_start_code)
                 : null,
-            'preferred_staff_gender' => Appointment::hasHomeStart() ? $this->preferred_staff_gender : null,
             'source' => $this->source,
             'status' => $this->status,
             'check_in_at' => optional($this->check_in_at)->toIso8601String(),

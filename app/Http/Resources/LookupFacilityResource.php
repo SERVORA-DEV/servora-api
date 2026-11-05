@@ -13,6 +13,7 @@ class LookupFacilityResource extends JsonResource
             'uuid' => $this->uuid,
             'name' => $this->name,
             'category' => $this->category,
+            'max_clients' => $this->resource->clientLimit(),
             'status' => $this->status,
             'amenities' => $this->amenities ?? [],
             // The services this room can be used for (by service uuid). Empty

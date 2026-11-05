@@ -17,8 +17,6 @@ class LookupTherapistResource extends JsonResource
             'name' => trim("{$this->first_name} {$this->last_name}"),
             // What they do, main one first (App\Support\StaffSpecialty).
             'specialties' => $this->resource->specialtyList(),
-            // For the preferred-gender filter (App\Support\StaffGender).
-            'gender' => $this->gender,
             // Whether they can be sent to a client's home (HomeServiceRules), for the home-visit pickers.
             'home_service_available' => $this->resource->takesHomeService(),
 

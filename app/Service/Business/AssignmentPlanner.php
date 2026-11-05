@@ -258,7 +258,6 @@ class AssignmentPlanner
                 // Place in today's turn order (null when not on the floor); who is next for THESE services
                 // is worked out by the drawer among the people who can do them.
                 'queue_position' => $row['position'] ?? null,
-                'gender' => $staff->gender,
                 // When what they are doing right now should be over (H:i), or null when they are not with a client.
                 'busy_until' => $inService ? ($busyUntil[$staff->id] ?? null) : null,
                 // Bookings already on their day, for sharing reservations out.
@@ -294,8 +293,11 @@ class AssignmentPlanner
         }
 
         $occupiedUntil = $this->freeAt('facility_id', $facilities->pluck('id')->all());
+        $clientsIn = $this->availability->clientsInSharedRooms(
+            $facilities->pluck('id')->all(), $date, $time, (int) $services->max(fn ($s) => $s->lengthMinutes() ?? 30), $appointment->id,
+        );
 
-        return $facilities->map(function (Facility $f) use ($services, $can, $occupiedUntil) {
+        return $facilities->map(function (Facility $f) use ($services, $can, $occupiedUntil, $clientsIn) {
             $per = [];
             foreach ($services as $service) {
                 $reason = $can[$service->uuid][$f->id] ?? null;
@@ -303,7 +305,8 @@ class AssignmentPlanner
             }
 
             // occupied_until: when the client in it now should be done (H:i), or null when it is empty.
-            return ['uuid' => $f->uuid, 'name' => $f->name, 'category' => $f->category, 'occupied_until' => $occupiedUntil[$f->id] ?? null, 'can' => $per];
+            // max_clients / clients_in: how many it holds, and how many others are there for this time.
+            return ['uuid' => $f->uuid, 'name' => $f->name, 'category' => $f->category, 'max_clients' => $f->clientLimit(), 'clients_in' => $clientsIn[$f->id] ?? 0, 'occupied_until' => $occupiedUntil[$f->id] ?? null, 'can' => $per];
         })->values()->all();
     }
 }

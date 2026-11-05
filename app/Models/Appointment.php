@@ -86,8 +86,6 @@ class Appointment extends Model
         // the code in the client's QR, and when a scan started the visit.
         'home_start_code',
         'home_scanned_at',
-        // 'Male' | 'Female' | null — App\Support\StaffGender.
-        'preferred_staff_gender',
         'source',
         'status',
         'check_in_at',
@@ -135,9 +133,8 @@ class Appointment extends Model
     }
 
     /**
-     * Whether home visits have start codes and bookings keep a preferred
-     * staff gender yet (the migration has been run). Until then neither is
-     * saved, shown or asked for.
+     * Whether home visits have start codes yet (the migration has been run).
+     * Until then they are not saved, shown or asked for.
      */
     public static function hasHomeStart(): bool
     {

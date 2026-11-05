@@ -298,6 +298,41 @@ class AppointmentServiceTest extends TestCase
         $this->assertNotInstanceOf(JsonResponse::class, $secondResult, $this->msg($secondResult));
     }
 
+    public function test_a_room_that_holds_several_takes_clients_up_to_its_limit(): void
+    {
+        $this->facilityA->update(['max_clients' => 2]);
+        $assign = function () {
+            $service = $this->addService($this->createAppointment('2026-09-06', '10:00'));
+
+            return $this->service->assignTherapist($this->owner, $service->uuid, ['facility_uuid' => $this->facilityA->uuid]);
+        };
+
+        $first = $assign();
+        $this->assertNotInstanceOf(JsonResponse::class, $first, $this->msg($first));
+        $second = $assign();
+        $this->assertNotInstanceOf(JsonResponse::class, $second, $this->msg($second));
+
+        $third = $assign();
+        $this->assertInstanceOf(JsonResponse::class, $third);
+        $this->assertSame(422, $third->getStatusCode());
+        $this->assertStringContainsString('full', $this->msg($third));
+    }
+
+    public function test_a_room_that_holds_several_counts_clients_not_services(): void
+    {
+        $this->facilityA->update(['max_clients' => 2]);
+        $visit = $this->createAppointment('2026-09-06', '10:00');
+        foreach ([$this->addService($visit), $this->addService($visit)] as $service) {
+            $result = $this->service->assignTherapist($this->owner, $service->uuid, ['facility_uuid' => $this->facilityA->uuid]);
+            $this->assertNotInstanceOf(JsonResponse::class, $result, $this->msg($result));
+        }
+
+        // Their two services are one client, so there is still space.
+        $other = $this->addService($this->createAppointment('2026-09-06', '10:00'));
+        $result = $this->service->assignTherapist($this->owner, $other->uuid, ['facility_uuid' => $this->facilityA->uuid]);
+        $this->assertNotInstanceOf(JsonResponse::class, $result, $this->msg($result));
+    }
+
     public function test_overlapping_room_reservation_is_rejected_across_appointments(): void
     {
         // Unlike therapists, a room IS a hard time-blocked resource now — a

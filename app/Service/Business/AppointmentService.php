@@ -59,7 +59,6 @@ use App\Support\ServiceAddon;
 use App\Support\ServiceKind;
 use App\Support\ServiceStartRules;
 use App\Support\ServiceVoidRules;
-use App\Support\StaffGender;
 use App\Support\StaleVisit;
 use App\Support\Suspension;
 use App\Support\VoucherTarget;
@@ -719,9 +718,8 @@ class AppointmentService
     // the window being checked is the same for all of them. The duration is
     // read off the already-added services, which is why this runs after
     // they're attached.
-    // What a booking keeps for App\Support\HomeVisitStart and StaffGender: a
-    // start code when it is a home visit, and the staff gender asked for.
-    // Nothing until the columns exist (Appointment::hasHomeStart).
+    // What a booking keeps for App\Support\HomeVisitStart: a start code when it
+    // is a home visit. Nothing until the columns exist (Appointment::hasHomeStart).
     private function startAttributes(array $payload, bool $isHome): array
     {
         if (! Appointment::hasHomeStart()) {
@@ -730,7 +728,6 @@ class AppointmentService
 
         return [
             'home_start_code' => $isHome ? Appointment::newHomeStartCode() : null,
-            'preferred_staff_gender' => StaffGender::clean($payload['preferred_staff_gender'] ?? null),
         ];
     }
 
@@ -2086,8 +2083,6 @@ class AppointmentService
                 'name' => trim("{$staff->first_name} {$staff->last_name}"),
                 // What they do, main one first (App\Support\StaffSpecialty).
                 'specialties' => $staff->specialtyList(),
-                // For the preferred-gender filter (App\Support\StaffGender).
-                'gender' => $staff->gender,
                 'state' => $state,
                 'qualified' => $qualified,
                 // False when this is a home visit and they aren't marked
@@ -2315,7 +2310,7 @@ class AppointmentService
         }, $plan['services']);
 
         $staff = array_map(fn (array $p) => [
-            'uuid' => $p['uuid'], 'name' => $p['name'], 'gender' => $p['gender'] ?? null,
+            'uuid' => $p['uuid'], 'name' => $p['name'],
             'workload' => $p['workload'] ?? 0, 'position' => $p['queue_position'] ?? null,
             'warning' => ($p['warning']['kind'] ?? null) === 'late',
             // A client who is here is given someone free now before someone mid-service.
@@ -2325,10 +2320,11 @@ class AppointmentService
 
         $facilities = array_map(fn (array $f) => [
             'uuid' => $f['uuid'], 'name' => $f['name'],
+            'clients_in' => $f['clients_in'] ?? 0,
             'can' => array_map(fn ($c) => (bool) $c['ok'], $f['can']),
         ], $plan['facilities']);
 
-        $decision = AutoAssignment::decide($services, $staff, $facilities, $appointment->preferred_staff_gender ?? null);
+        $decision = AutoAssignment::decide($services, $staff, $facilities);
         $warnings = $decision['warnings'];
 
         $items = $appointment->services->keyBy('uuid');

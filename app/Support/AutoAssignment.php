@@ -10,11 +10,12 @@ namespace App\Support;
 // the person who fits the most remaining services takes those, then the next, and a service nobody can
 // take is left for the desk with a warning. Among equals: not running late, not busy right now (for a client
 // who is here), fewest bookings that day,
-// then the earlier in today's turn order, then name. A gender preference comes first, and gives way
-// (with a warning) only when nobody of that gender can do it.
+// then the earlier in today's turn order, then name. Nobody's gender comes into it: not the client's,
+// not the staff member's.
 //
-// Facility: one room for everything that needs one when a single room fits all of it, else the room
-// that fits the most, and so on. A service whose facility is optional joins that room when it fits there,
+// Facility: rooms with nobody else in them first, and a shared room only once none of those fits (a room
+// can hold several clients: Facility::clientLimit). One room for everything that needs one when a single
+// room fits all of it, else the room that fits the most, and so on. A service whose facility is optional joins that room when it fits there,
 // else is given a free room of its own, and is left without one (no warning) when none is free. A home
 // visit has no room at all.
 //
@@ -23,20 +24,18 @@ final class AutoAssignment
 {
     /**
      * @param  array<int, array{uuid: string, name: string, needs_staff: bool, needs_facility: bool, has_staff: bool, has_facility: bool, takes_facility?: bool}>  $services
-     * @param  array<int, array{uuid: string, name: string, gender: ?string, workload: int, position: ?int, warning?: bool, busy?: bool, can: array<string, bool>}>  $staff
-     * @param  array<int, array{uuid: string, name: string, can: array<string, bool>}>  $facilities
+     * @param  array<int, array{uuid: string, name: string, workload: int, position: ?int, warning?: bool, busy?: bool, can: array<string, bool>}>  $staff
+     * @param  array<int, array{uuid: string, name: string, clients_in?: int, can: array<string, bool>}>  $facilities
      * @return array{staff: array<string, string>, facility: array<string, string>, warnings: array<int, string>}
      */
-    public static function decide(array $services, array $staff, array $facilities, ?string $genderPreference = null): array
+    public static function decide(array $services, array $staff, array $facilities): array
     {
-        $preference = StaffGender::clean($genderPreference);
         $names = array_column($services, 'name', 'uuid');
         $warnings = [];
 
         $staffPlan = self::staffFor(
             array_values(array_filter($services, fn ($s) => $s['needs_staff'] && ! $s['has_staff'])),
             $staff,
-            $preference,
             $names,
             $warnings,
         );
@@ -46,21 +45,18 @@ final class AutoAssignment
     }
 
     /** @return array<string, string> service uuid => staff uuid */
-    private static function staffFor(array $targets, array $staff, ?string $preference, array $names, array &$warnings): array
+    private static function staffFor(array $targets, array $staff, array $names, array &$warnings): array
     {
         if (! $targets) {
             return [];
         }
         $ids = array_column($targets, 'uuid');
-        $ranked = self::rank($staff, $preference);
+        $ranked = self::rank($staff);
 
-        // Anyone who can do the whole visit first (a client stays with one person), those of the preferred gender before the rest.
+        // Anyone who can do the whole visit first (a client stays with one person).
         foreach ($ranked as $person) {
             if (self::covers($person['can'], $ids) === $ids) {
-                $plan = array_fill_keys($ids, $person['uuid']);
-                self::noteGender($person, $preference, $ids, $names, $warnings);
-
-                return $plan;
+                return array_fill_keys($ids, $person['uuid']);
             }
         }
 
@@ -83,7 +79,6 @@ final class AutoAssignment
             foreach ($bestCovered as $id) {
                 $plan[$id] = $best['uuid'];
             }
-            self::noteGender($best, $preference, $bestCovered, $names, $warnings);
             $remaining = array_values(array_diff($remaining, $bestCovered));
         }
 
@@ -95,15 +90,14 @@ final class AutoAssignment
     }
 
     /**
-     * Staff best first: the preferred gender, fewest bookings that day, turn order (those not on the
+     * Staff best first: on time, free now, fewest bookings that day, turn order (those not on the
      * floor last), name.
      *
      * @return array<int, array<string, mixed>>
      */
-    private static function rank(array $staff, ?string $preference): array
+    private static function rank(array $staff): array
     {
         usort($staff, fn ($a, $b) => [
-            (int) ! StaffGender::matches($a['gender'] ?? null, $preference),
             // Someone running late or not yet in sorts after those on time.
             (int) ! empty($a['warning']),
             // For a client who is here now: someone free right now before someone mid-service.
@@ -112,7 +106,6 @@ final class AutoAssignment
             $a['position'] ?? PHP_INT_MAX,
             strtolower((string) $a['name']),
         ] <=> [
-            (int) ! StaffGender::matches($b['gender'] ?? null, $preference),
             (int) ! empty($b['warning']),
             (int) ! empty($b['busy']),
             $b['workload'] ?? 0,
@@ -129,14 +122,6 @@ final class AutoAssignment
         return array_values(array_filter($ids, fn ($id) => ! empty($can[$id])));
     }
 
-    private static function noteGender(array $person, ?string $preference, array $ids, array $names, array &$warnings): void
-    {
-        if ($preference !== null && ! StaffGender::matches($person['gender'] ?? null, $preference)) {
-            $what = count($ids) === 1 ? ($names[$ids[0]] ?? 'this service') : 'these services';
-            $warnings[] = 'No ' . strtolower($preference) . " staff is available for {$what}, so {$person['name']} was assigned.";
-        }
-    }
-
     /** @return array<string, string> service uuid => facility uuid */
     private static function facilitiesFor(array $services, array $facilities, array $names, array &$warnings): array
     {
@@ -150,21 +135,30 @@ final class AutoAssignment
         }
         $byName = $facilities;
         usort($byName, fn ($a, $b) => strcasecmp((string) $a['name'], (string) $b['name']));
+        // Empty rooms first: nobody is put in with a stranger while a room of their own will do.
+        $empty = array_values(array_filter($byName, fn ($room) => empty($room['clients_in'])));
+        $shared = array_values(array_filter($byName, fn ($room) => ! empty($room['clients_in'])));
+        $byName = [...$empty, ...$shared];
 
         $plan = [];
         $remaining = $requiredIds;
         if ($requiredIds) {
             // One room for everything that needs one; the one that also suits the optional services wins.
             $best = null;
-            $bestOptional = -1;
-            foreach ($byName as $room) {
-                if (self::covers($room['can'], $requiredIds) !== $requiredIds) {
-                    continue;
+            foreach ([$empty, $shared] as $rooms) {
+                $bestOptional = -1;
+                foreach ($rooms as $room) {
+                    if (self::covers($room['can'], $requiredIds) !== $requiredIds) {
+                        continue;
+                    }
+                    $extra = count(self::covers($room['can'], $optionalIds));
+                    if ($extra > $bestOptional) {
+                        $best = $room;
+                        $bestOptional = $extra;
+                    }
                 }
-                $extra = count(self::covers($room['can'], $optionalIds));
-                if ($extra > $bestOptional) {
-                    $best = $room;
-                    $bestOptional = $extra;
+                if ($best) {
+                    break;
                 }
             }
             if ($best) {
@@ -175,7 +169,7 @@ final class AutoAssignment
                 $remaining = [];
             } else {
                 // No single room fits: the room that fits the most takes those, then the rest are looked at again.
-                $remaining = self::fill($requiredIds, $byName, $plan);
+                $remaining = self::fill(self::fill($requiredIds, $empty, $plan), $shared, $plan);
                 foreach ($remaining as $id) {
                     $warnings[] = 'No facility is free for ' . ($names[$id] ?? 'a service') . '.';
                 }
