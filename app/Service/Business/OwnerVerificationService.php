@@ -280,7 +280,7 @@ class OwnerVerificationService
         }
     }
 
-    public function saveBusinessVerification(User $user, array $fields, UploadedFile $file, ?Request $request = null)
+    public function saveBusinessVerification(User $user, array $fields, ?UploadedFile $file, ?Request $request = null)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
 
@@ -297,11 +297,20 @@ class OwnerVerificationService
         $wasRejected = $business->verification_status === 'Rejected';
         $oldValues = $business->only(['business_type', 'verification_status']);
 
-        $path = $this->documentUploadService->replace(
-            $business->registration_document_path,
-            $file,
-            "verification/business/{$business->uuid}"
-        );
+        // No new file: the details are being corrected, and the certificate on
+        // file stays (OwnerBusinessVerificationRequest only lets that through
+        // when there is one).
+        if ($file) {
+            $path = $this->documentUploadService->replace(
+                $business->registration_document_path,
+                $file,
+                "verification/business/{$business->uuid}"
+            );
+        } elseif ($business->registration_document_path) {
+            $path = $business->registration_document_path;
+        } else {
+            return response()->json(['message' => 'Upload your DTI Business Name Certificate.'], 422);
+        }
 
         $payload = [
             'business_type' => $fields['business_type'],

@@ -34,6 +34,18 @@ class ClientProfile
         return null;
     }
 
+    /**
+     * What clients.gender keeps: 'Male', 'Female', or 'Other' for "Prefer not
+     * to say" (the column is too short for the words — App\Support\Gender).
+     * Null for blank or anything else.
+     */
+    public static function storedGender(mixed $value): ?string
+    {
+        $clean = Gender::clean($value);
+
+        return $clean === null ? null : (string) Gender::forShortColumn($clean);
+    }
+
     /** The year someone of `$age` was born, counted from `$thisYear`; null when no (sensible) age was given. */
     public static function birthYear(mixed $age, int $thisYear): ?int
     {
@@ -71,7 +83,8 @@ class ClientProfile
         if (trim((string) ($client['phone_number'] ?? '')) === '') {
             $missing[] = 'phone number';
         }
-        if (self::gender($client['gender'] ?? null) === null) {
+        // Any of the three answers will do, "Prefer not to say" too (App\Support\Gender).
+        if (Gender::clean($client['gender'] ?? null) === null) {
             $missing[] = 'gender';
         }
 

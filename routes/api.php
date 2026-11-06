@@ -42,6 +42,7 @@ use App\Http\Controllers\Business\SpaBusinessController;
 use App\Http\Controllers\Business\StaffController;
 use App\Http\Controllers\Business\StaffEarningsController;
 use App\Http\Controllers\Business\StaffScheduleController;
+use App\Http\Controllers\Business\StaffTimeOffController;
 use App\Http\Controllers\Business\StaffTransferController;
 use App\Http\Controllers\CheckoutController;
 use App\Http\Controllers\Client\ClientAccountController;
@@ -554,6 +555,12 @@ Route::middleware('auth:sanctum')->group(function () {
                 // detection.
                 Route::get('staff/{uuid}/schedule', [StaffScheduleController::class, 'show'])->middleware('permission:staff_view');
                 Route::patch('staff/{uuid}/schedule', [StaffScheduleController::class, 'update'])->middleware('permission:staff_update');
+
+                // Time off (leave, sick, absent) by date range, on top of the
+                // weekly schedule. Read by AppointmentAvailabilityService.
+                Route::get('staff/{uuid}/time-off', [StaffTimeOffController::class, 'index'])->middleware('permission:staff_view')->whereUuid('uuid');
+                Route::post('staff/{uuid}/time-off', [StaffTimeOffController::class, 'store'])->middleware('permission:staff_update')->whereUuid('uuid');
+                Route::delete('staff/{uuid}/time-off/{timeOffUuid}', [StaffTimeOffController::class, 'destroy'])->middleware('permission:staff_update')->whereUuid(['uuid', 'timeOffUuid']);
 
                 // A manager's schedule change waiting for the owner (Staff
                 // Policies → "Owner approval for schedule changes"). Approve

@@ -2,6 +2,8 @@
 
 namespace App\Http\Requests\Client;
 
+use App\Rules\ValidEmail;
+use App\Rules\PersonName;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use App\Rules\NoEmoji;
@@ -23,8 +25,8 @@ class ClientProfileRequest extends FormRequest
         $userId = $this->user()->id;
 
         return [
-            'first_name' => ['required', 'string', 'max:100', new NoEmoji()],
-            'last_name' => ['required', 'string', 'max:100', new NoEmoji()],
+            'first_name' => ['required', 'string', 'max:100', new NoEmoji(), new PersonName()],
+            'last_name' => ['required', 'string', 'max:100', new NoEmoji(), new PersonName()],
             // users.phone_number carries a unique index. The whereNull on
             // deleted_at matters: the table is soft-deleting and Rule::unique
             // queries it raw, so without it a deleted account's number stays
@@ -41,6 +43,7 @@ class ClientProfileRequest extends FormRequest
             'email' => [
                 'nullable',
                 'email',
+                new ValidEmail(),
                 'max:255',
                 Rule::unique('users', 'email')
                     ->where('audience', 'mobile')

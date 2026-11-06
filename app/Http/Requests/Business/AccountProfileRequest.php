@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Business;
 
 use App\Rules\NoEmoji;
+use App\Rules\PhMobile;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -29,6 +30,7 @@ class AccountProfileRequest extends FormRequest
                 'max:20',
                 Rule::unique('users', 'phone_number')->ignore($this->user()?->id)->whereNull('deleted_at'),
                 new NoEmoji(),
+                new PhMobile(),
             ],
         ];
     }

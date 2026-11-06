@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Auth;
 
+use App\Rules\ValidEmail;
 use Illuminate\Validation\Rules\Password;
 
 use Illuminate\Foundation\Http\FormRequest;
@@ -26,6 +27,7 @@ class RegisterClientRequest extends FormRequest
             'email' => [
                 'required',
                 'email',
+                new ValidEmail(),
                 // Only a VERIFIED account with this email blocks
                 // registration — an existing unverified/pending row is
                 // allowed through, so resubmitting after a lost/expired

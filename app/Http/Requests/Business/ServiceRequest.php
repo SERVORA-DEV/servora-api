@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Rules\NoEmoji;
 use App\Models\Service;
 use App\Support\ServiceKind;
 use Illuminate\Foundation\Http\FormRequest;
@@ -29,6 +30,7 @@ class ServiceRequest extends FormRequest
             // owner's name collide with the global catalog.
             'name' => [
                 $isCreate ? 'required' : 'sometimes', 'string', 'max:150',
+                new NoEmoji(),
                 Rule::unique('services', 'name')
                     ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
                     ->whereNotNull('spa_business_id')
@@ -87,8 +89,8 @@ class ServiceRequest extends FormRequest
             // on update gets soft-deleted — see ServiceVariantRepository.
             'variants' => [$isCreate ? 'required' : 'sometimes', 'array', 'min:1'],
             'variants.*.uuid' => 'nullable|uuid',
-            'variants.*.duration_minutes' => 'required_with:variants|integer|min:1',
-            'variants.*.price' => 'required_with:variants|numeric|min:0',
+            'variants.*.duration_minutes' => 'required_with:variants|integer|min:1|max:720',
+            'variants.*.price' => 'required_with:variants|numeric|min:0|max:1000000|decimal:0,2',
         ];
     }
 

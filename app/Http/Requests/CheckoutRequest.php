@@ -2,6 +2,8 @@
 
 namespace App\Http\Requests;
 
+use App\Rules\ValidEmail;
+use App\Rules\PersonName;
 use Illuminate\Foundation\Http\FormRequest;
 
 // POST business/checkout — see CheckoutService::start. The billing address is
@@ -35,8 +37,8 @@ class CheckoutRequest extends FormRequest
             'keep.account_uuids.*' => 'uuid',
 
             'billing_address' => 'required|array',
-            'billing_address.full_name' => 'required|string|max:150',
-            'billing_address.email' => 'required|email|max:150',
+            'billing_address.full_name' => ['required', 'string', 'max:150', new PersonName()],
+            'billing_address.email' => ['required', 'email', 'max:150', new ValidEmail()],
             'billing_address.phone' => ['nullable', 'string', 'max:30', 'regex:/^[0-9+\-\s()]{7,}$/'],
             'billing_address.line1' => 'required|string|max:200',
             'billing_address.line2' => 'nullable|string|max:200',

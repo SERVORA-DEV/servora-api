@@ -2,10 +2,12 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Rules\ValidEmail;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use App\Rules\NoEmoji;
+use App\Rules\PhMobile;
 
 class SpaBranchRequest extends FormRequest
 {
@@ -32,7 +34,7 @@ class SpaBranchRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'branch_name' => 'required|string|max:150',
+            'branch_name' => ['required', 'string', 'max:150', new NoEmoji()],
 
             // The short area/locality label for this branch ("Mandug") —
             // business-scoped like services.code, matching the
@@ -47,8 +49,8 @@ class SpaBranchRequest extends FormRequest
                     ->whereNull('deleted_at'),
             ],
 
-            'email' => ['nullable', 'email', 'max:255', new NoEmoji()],
-            'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji()],
+            'email' => ['nullable', 'email', new ValidEmail(), 'max:255', new NoEmoji()],
+            'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji(), new PhMobile()],
 
             'description' => 'nullable|string',
 

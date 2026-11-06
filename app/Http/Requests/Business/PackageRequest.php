@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Rules\NoEmoji;
 use App\Models\SpaBusiness;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -21,6 +22,7 @@ class PackageRequest extends FormRequest
             // Matches the packages table's unique(spa_business_id, name) index.
             'name' => [
                 $isCreate ? 'required' : 'sometimes', 'string', 'max:150',
+                new NoEmoji(),
                 Rule::unique('packages', 'name')
                     ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
                     ->ignore($this->route('package'), 'uuid'),
@@ -33,8 +35,8 @@ class PackageRequest extends FormRequest
                     ->ignore($this->route('package'), 'uuid'),
             ],
             'description' => 'nullable|string',
-            'duration_minutes' => 'nullable|integer|min:1',
-            'default_price' => [$isCreate ? 'required' : 'sometimes', 'numeric', 'min:0'],
+            'duration_minutes' => 'nullable|integer|min:1|max:720',
+            'default_price' => [$isCreate ? 'required' : 'sometimes', 'numeric', 'min:0', 'max:1000000', 'decimal:0,2'],
             'is_active' => 'sometimes|boolean',
 
             // What is in it (App\Support\PackagePlan): services — not menu

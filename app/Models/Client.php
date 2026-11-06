@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use App\Support\ClientProfile;
+use App\Support\Gender;
 
 class Client extends Model
 {
@@ -109,6 +110,17 @@ class Client extends Model
         $own = self::hasProfile() ? ClientProfile::gender($this->gender) : null;
 
         return $own ?? ($this->user_id ? ClientProfile::gender($this->user?->gender) : null);
+    }
+
+    /**
+     * What to show: 'Male' | 'Female' | 'Prefer not to say' | null. The same
+     * as genderValue(), plus the third answer (kept as 'Other' on clients).
+     */
+    public function genderShown(): ?string
+    {
+        $own = self::hasProfile() ? Gender::clean($this->gender) : null;
+
+        return $own ?? ($this->user_id ? Gender::clean($this->user?->gender) : null);
     }
 
     /** Their age this year: from the birth year recorded, or else their account's birth date. */

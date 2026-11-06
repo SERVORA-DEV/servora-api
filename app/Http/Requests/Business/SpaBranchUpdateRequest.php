@@ -2,12 +2,14 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Rules\ValidEmail;
 use App\Rules\SocialLink;
 use App\Support\SocialLinks;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use App\Rules\NoEmoji;
+use App\Rules\PhMobile;
 
 class SpaBranchUpdateRequest extends FormRequest
 {
@@ -34,7 +36,7 @@ class SpaBranchUpdateRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'branch_name' => 'sometimes|required|string|max:150',
+            'branch_name' => ['sometimes', 'required', 'string', 'max:150', new NoEmoji()],
 
             // The short area/locality label for this branch ("Mandug") —
             // business-scoped like services.code, matching the
@@ -50,8 +52,8 @@ class SpaBranchUpdateRequest extends FormRequest
                     ->ignore($this->route('branch'), 'uuid'),
             ],
 
-            'email' => ['nullable', 'email', 'max:255', new NoEmoji()],
-            'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji()],
+            'email' => ['nullable', 'email', new ValidEmail(), 'max:255', new NoEmoji()],
+            'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji(), new PhMobile()],
 
             // Branch Settings → Branch Details → Social links.
             // Each branch's own links; any left empty show the company's

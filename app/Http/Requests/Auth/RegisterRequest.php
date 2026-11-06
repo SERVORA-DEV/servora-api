@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Auth;
 
+use App\Rules\ValidEmail;
 use Illuminate\Validation\Rules\Password;
 
 use Illuminate\Foundation\Http\FormRequest;
@@ -26,6 +27,7 @@ class RegisterRequest extends FormRequest
             'email' => [
                 'required',
                 'email',
+                new ValidEmail(),
                 // Unique per audience: the same email may also hold a client account.
                 Rule::unique('users', 'email')->where('audience', 'web'),
                 new NoEmoji(),

@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Rules\NoEmoji;
 use App\Models\SpaBusiness;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -31,7 +32,7 @@ class SpaBranchCloneRequest extends FormRequest
 
         return [
             'branch' => 'required|array:branch_name,code,description',
-            'branch.branch_name' => 'required|string|max:150',
+            'branch.branch_name' => ['required', 'string', 'max:150', new NoEmoji()],
             'branch.code' => [
                 'nullable', 'string', 'max:50',
                 Rule::unique('spa_branches', 'code')->where('spa_business_id', $businessId)->whereNull('deleted_at'),

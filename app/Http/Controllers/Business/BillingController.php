@@ -40,7 +40,7 @@ class BillingController extends Controller
     {
         $data = $request->validate([
             'type' => ['required', 'in:amount,percent'],
-            'value' => ['required', 'numeric', 'min:0', $request->input('type') === 'percent' ? 'max:100' : 'max:9999999'],
+            'value' => ['required', 'numeric', 'min:0', $request->input('type') === 'percent' ? 'max:100' : 'max:1000000'],
             'reason' => ['nullable', 'string', 'max:255'],
         ]);
 
@@ -80,7 +80,7 @@ class BillingController extends Controller
     public function refund(Request $request, string $uuid)
     {
         $data = $request->validate([
-            'amount' => ['required', 'numeric', 'min:0.01'],
+            'amount' => ['required', 'numeric', 'min:0.01', 'max:1000000'],
             'reason' => ['required', 'string', 'max:255'],
             // The money for one service of the visit, when it is not for the whole bill.
             'service_uuid' => ['nullable', 'string', 'max:64'],

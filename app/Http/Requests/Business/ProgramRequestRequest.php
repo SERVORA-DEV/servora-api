@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Rules\NoEmoji;
 use App\Models\CustomerProgram;
 use App\Models\ProgramRequest;
 use Illuminate\Foundation\Http\FormRequest;
@@ -24,7 +25,7 @@ class ProgramRequestRequest extends FormRequest
     {
         return [
             'type' => ['required', Rule::in(ProgramRequest::TYPES)],
-            'name' => ['required', 'string', 'min:2', 'max:120'],
+            'name' => ['required', 'string', 'min:2', 'max:120', new NoEmoji()],
             // Why the branch needs it.
             'note' => ['nullable', 'string', 'max:500'],
         ] + self::programRules();

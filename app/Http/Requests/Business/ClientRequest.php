@@ -2,11 +2,15 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Rules\ValidEmail;
+use App\Rules\PersonName;
 use App\Models\Client;
 use App\Support\ClientProfile;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use App\Rules\NoEmoji;
+use App\Rules\PhMobile;
+use App\Support\Gender;
 
 // Validates POST/PATCH /business/client (register/update a client). Also
 // reused as the shape of the nested "client" object inside AppointmentRequest
@@ -29,21 +33,29 @@ class ClientRequest extends FormRequest
         $isCreate = $this->isMethod('post');
 
         return [
-            'first_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji()],
-            'last_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji()],
-            'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji()],
-            'email' => ['nullable', 'email', 'max:255', new NoEmoji()],
+            'first_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji(), new PersonName()],
+            'last_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji(), new PersonName()],
+            'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji(), new PhMobile()],
+            'email' => ['nullable', 'email', new ValidEmail(), 'max:255', new NoEmoji()],
             'notes' => 'nullable|string',
-            'gender' => [$isCreate && Client::hasProfile() ? 'required' : 'nullable', Rule::in(ClientProfile::GENDERS)],
+            'gender' => [$isCreate && Client::hasProfile() ? 'required' : 'nullable', Rule::in([...ClientProfile::GENDERS, Gender::SHORT_FOR_UNSAID])],
             'age' => 'nullable|integer|min:0|max:' . ClientProfile::OLDEST,
         ];
+    }
+
+    // "Prefer not to say" is kept as 'Other' (App\Support\Gender: clients.gender is too short for it).
+    protected function prepareForValidation(): void
+    {
+        if ($this->filled('gender')) {
+            $this->merge(['gender' => Gender::forShortColumn($this->input('gender'))]);
+        }
     }
 
     public function messages(): array
     {
         return [
             'gender.required' => 'Choose the client\'s gender.',
-            'gender.in' => 'Choose Male or Female.',
+            'gender.in' => 'Choose Male, Female or Prefer not to say.',
         ];
     }
 }

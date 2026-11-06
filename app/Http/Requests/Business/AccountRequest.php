@@ -2,6 +2,8 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Rules\ValidEmail;
+use App\Rules\PersonName;
 use Illuminate\Validation\Rules\Password;
 
 use Illuminate\Foundation\Http\FormRequest;
@@ -26,7 +28,7 @@ class AccountRequest extends FormRequest
 
         return [
             'username' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:50', Rule::unique('users', 'username'), new NoEmoji()],
-            'email' => [$isCreate ? 'required' : 'sometimes', 'email', 'max:255', Rule::unique('users', 'email')->where('audience', 'web'), new NoEmoji()],
+            'email' => [$isCreate ? 'required' : 'sometimes', 'email', new ValidEmail(), 'max:255', Rule::unique('users', 'email')->where('audience', 'web'), new NoEmoji()],
 
             // Which staff member this login belongs to — locked at
             // creation, same as role below, since reassigning an account to
@@ -35,8 +37,8 @@ class AccountRequest extends FormRequest
             // one-account-per-staff rule are all enforced in
             // AccountService::createAccount, not here.
             // The account's own name.
-            'first_name' => ['sometimes', 'nullable', 'string', 'max:100', new NoEmoji()],
-            'last_name' => ['sometimes', 'nullable', 'string', 'max:100', new NoEmoji()],
+            'first_name' => ['sometimes', 'nullable', 'string', 'max:100', new NoEmoji(), new PersonName()],
+            'last_name' => ['sometimes', 'nullable', 'string', 'max:100', new NoEmoji(), new PersonName()],
 
             // Where it works and at which level (AccountService checks the
             // branches are the owner's own). Before that migration, a login is

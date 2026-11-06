@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Rules\NoEmoji;
 use App\Models\CustomerProgram;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -21,7 +22,7 @@ class CustomerProgramRequest extends FormRequest
 
         return [
             'type' => [$isCreate ? 'required' : 'prohibited', Rule::in(CustomerProgram::TYPES)],
-            'name' => [$isCreate && $this->input('type') !== 'loyalty' ? 'required' : 'sometimes', 'string', 'max:120'],
+            'name' => [$isCreate && $this->input('type') !== 'loyalty' ? 'required' : 'sometimes', 'string', 'max:120', new NoEmoji()],
             'active' => ['sometimes', 'boolean'],
             'audience' => ['sometimes', Rule::in(CustomerProgram::AUDIENCES)],
             'values' => ['sometimes', 'array'],

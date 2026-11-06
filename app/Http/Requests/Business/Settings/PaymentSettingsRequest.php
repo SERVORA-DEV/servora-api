@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests\Business\Settings;
 
+use App\Rules\PhMobile;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class PaymentSettingsRequest extends FormRequest
 {
@@ -25,8 +27,17 @@ class PaymentSettingsRequest extends FormRequest
             'accept_paymaya' => 'sometimes|boolean',
             'accept_card' => 'sometimes|boolean',
             'accept_bank_transfer' => 'sometimes|boolean',
-            'gcash_number' => 'nullable|string|max:20',
-            'paymaya_number' => 'nullable|string|max:20',
+            // Switched on, the number clients pay to is needed: a PH mobile.
+            'gcash_number' => [Rule::requiredIf(fn () => $this->boolean('accept_gcash')), 'nullable', 'string', 'max:20', new PhMobile()],
+            'paymaya_number' => [Rule::requiredIf(fn () => $this->boolean('accept_paymaya')), 'nullable', 'string', 'max:20', new PhMobile()],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'gcash_number.required' => 'Add your GCash number, or switch GCash off.',
+            'paymaya_number.required' => 'Add your Maya number, or switch Maya off.',
         ];
     }
 

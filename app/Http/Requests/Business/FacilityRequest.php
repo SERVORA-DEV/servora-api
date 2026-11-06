@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Rules\NoEmoji;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -23,6 +24,7 @@ class FacilityRequest extends FormRequest
         return [
             'name' => [
                 $isCreate ? 'required' : 'sometimes', 'string', 'max:150',
+                new NoEmoji(),
                 Rule::unique('facilities', 'name')
                     ->where(fn ($q) => $q->where('spa_branch_id', $this->resolvedBranchId()))
                     ->ignore($this->route('facility'), 'uuid'),

@@ -98,7 +98,7 @@ class CustomerProgramController extends Controller
         return [
             'payment_method' => ['required', Rule::in(['Cash', 'GCash', 'Maya', 'Bank Transfer', 'Online Banking', 'Credit Card', 'Debit Card', 'QR Code', 'Other'])],
             'reference_number' => ['nullable', 'string', 'max:100'],
-            'amount_tendered' => ['nullable', 'numeric', 'min:0.01'],
+            'amount_tendered' => ['nullable', 'numeric', 'min:0.01', 'max:1000000'],
             'remarks' => ['nullable', 'string', 'max:1000'],
         ];
     }

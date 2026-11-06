@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Client;
 
+use App\Rules\PersonName;
 use App\Models\Client;
 use App\Support\ClientProfile;
 use Illuminate\Foundation\Http\FormRequest;
@@ -46,8 +47,8 @@ class ClientAppointmentRequest extends FormRequest
             'home_latitude' => 'nullable|required_if:service_location,Home Service|numeric|between:-90,90',
             'home_longitude' => 'nullable|required_if:service_location,Home Service|numeric|between:-180,180',
             'client' => 'required|array',
-            'client.first_name' => ['required', 'string', 'max:100', new NoEmoji()],
-            'client.last_name' => ['required', 'string', 'max:100', new NoEmoji()],
+            'client.first_name' => ['required', 'string', 'max:100', new NoEmoji(), new PersonName()],
+            'client.last_name' => ['required', 'string', 'max:100', new NoEmoji(), new PersonName()],
             'client.phone_number' => ['required', 'string', 'max:20', new NoEmoji()],
             // Asked once: an account that already said has nothing to add.
             // Age is optional (App\Support\ClientProfile).

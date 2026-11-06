@@ -334,7 +334,7 @@ class AppointmentService
             // come first (App\Support\ClientProfile). abort() rolls back a
             // client record made a moment ago.
             if ($home && Client::hasProfile()) {
-                $missing = ClientProfile::missingForHome(['phone_number' => $client->phone_number, 'gender' => $client->genderValue()]);
+                $missing = ClientProfile::missingForHome(['phone_number' => $client->phone_number, 'gender' => $client->genderShown()]);
                 abort_if((bool) $missing, 422, ClientProfile::homeMessage($missing));
             }
 

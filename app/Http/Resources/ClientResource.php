@@ -20,8 +20,8 @@ class ClientResource extends JsonResource
             // user" label, and who earns loyalty points.
             'uses_app' => $this->resource->usesApp(),
             // What the spa recorded, or else what the client's own account
-            // says (Client::genderValue / ageValue). Null when not known.
-            'gender' => $this->resource->genderValue(),
+            // says (Client::genderShown / ageValue). Null when not known.
+            'gender' => $this->resource->genderShown(),
             'age' => $this->resource->ageValue(),
             'current_points' => (int) $this->current_points,
             'lifetime_points' => (int) $this->lifetime_points,

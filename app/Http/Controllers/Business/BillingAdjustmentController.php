@@ -33,7 +33,7 @@ class BillingAdjustmentController extends Controller
         $data = $request->validate([
             'kind' => ['required', Rule::in(BillAdjustment::KINDS)],
             'refund_policy_uuid' => ['nullable', 'uuid'],
-            'amount' => ['nullable', 'required_without_all:refund_policy_uuid,client_voucher_uuid', 'numeric', 'min:0.01', 'max:9999999'],
+            'amount' => ['nullable', 'required_without_all:refund_policy_uuid,client_voucher_uuid', 'numeric', 'min:0.01', 'max:1000000'],
             'charge_to' => ['nullable', Rule::in(\App\Support\RefundCharge::WHO)],
             // Before payment (kind credit): the service it is for; none for the whole bill.
             'service_uuid' => ['nullable', 'uuid'],

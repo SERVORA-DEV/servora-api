@@ -2,7 +2,10 @@
 
 namespace App\Http\Requests\Business\Settings;
 
+use App\Rules\NoEmoji;
+use App\Rules\ValidEmail;
 use App\Repository\SpaBusinessRepository;
+use App\Rules\PhMobile;
 use App\Rules\SocialLink;
 use App\Support\SocialLinks;
 use Illuminate\Foundation\Http\FormRequest;
@@ -28,8 +31,8 @@ class BusinessIdentityRequest extends FormRequest
         $business = app(SpaBusinessRepository::class)->findForUser($this->user());
 
         return [
-            'business_name' => 'required|string|max:150',
-            'legal_name' => 'nullable|string|max:150',
+            'business_name' => ['required', 'string', 'max:150', new NoEmoji()],
+            'legal_name' => ['nullable', 'string', 'max:150', new NoEmoji()],
             'spa_type' => ['nullable', 'string', Rule::in(self::SPA_TYPES)],
             'tagline' => 'nullable|string|max:160',
             'business_description' => 'nullable|string|max:2000',
@@ -37,11 +40,12 @@ class BusinessIdentityRequest extends FormRequest
             'business_email' => [
                 'required',
                 'email',
+                new ValidEmail(),
                 'max:255',
                 Rule::unique('spa_businesses', 'business_email')->ignore($business?->id),
             ],
-            // Same E.164 format verification onboarding stores.
-            'business_phone' => ['nullable', 'string', 'regex:/^\+[1-9]\d{6,14}$/'],
+            // A PH mobile, sent as +639XXXXXXXXX (the site's phone field).
+            'business_phone' => ['nullable', 'string', 'max:20', new PhMobile()],
             'head_office_address' => 'nullable|string|max:255',
             // Company-wide links; a branch shows these for any it hasn't set
             // itself (App\Support\SocialLinks).
@@ -61,7 +65,6 @@ class BusinessIdentityRequest extends FormRequest
     {
         return [
             'business_email.unique' => 'Another business already uses that email.',
-            'business_phone.regex' => 'Use the international format, e.g. +639171234567.',
         ];
     }
 }

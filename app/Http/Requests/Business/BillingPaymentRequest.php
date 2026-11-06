@@ -25,9 +25,9 @@ class BillingPaymentRequest extends FormRequest
             // Which methods the business accepts, whether a reference is
             // required and the no-overpayment rule are checked against the
             // bill itself in BillingService::paymentRejection.
-            'amount' => 'required|numeric|min:0.01',
+            'amount' => 'required|numeric|min:0.01|max:1000000|decimal:0,2',
             // Cash only: what the client handed over (change = this − amount).
-            'amount_tendered' => 'nullable|numeric|min:0.01',
+            'amount_tendered' => 'nullable|numeric|min:0.01|max:1000000|decimal:0,2',
             // payments.reference_number is varchar(100).
             'reference_number' => 'nullable|string|max:100',
             'remarks' => 'nullable|string|max:1000',

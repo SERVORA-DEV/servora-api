@@ -15,7 +15,7 @@ class AppointmentPackageRequest extends FormRequest
     {
         return [
             'package_uuid' => 'required|uuid|exists:packages,uuid',
-            'quantity' => 'nullable|integer|min:1',
+            'quantity' => 'nullable|integer|min:1|max:1000',
         ];
     }
 }

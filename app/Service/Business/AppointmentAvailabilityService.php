@@ -7,6 +7,7 @@ use App\Models\BranchSchedule;
 use App\Models\Facility;
 use App\Models\Staff;
 use App\Models\StaffSchedule;
+use App\Models\StaffTimeOff;
 use App\Models\TherapistAssignment;
 use App\Repository\Business\StaffServiceRepository;
 use App\Support\BranchClosures;
@@ -66,6 +67,11 @@ class AppointmentAvailabilityService
     // live.
     public function staffMatchesSchedule(int $staffId, string $date, string $startTime, int $durationMinutes): array
     {
+        // Time off (Employees → Schedule → Time off) wins over any shift.
+        if (StaffTimeOff::overlapping($staffId, $date, $date)->isNotEmpty()) {
+            return ['ok' => false, 'reason' => 'This staff member is on time off that day and cannot be assigned.'];
+        }
+
         $dayOfWeek = Carbon::parse($date)->format('l');
         $start = Carbon::parse("{$date} {$startTime}");
         $end = (clone $start)->addMinutes($durationMinutes);
@@ -134,6 +140,7 @@ class AppointmentAvailabilityService
     public function staffDaysOff(int $staffId, string $from, string $to): array
     {
         $rows = StaffSchedule::where('staff_id', $staffId)->get();
+        $timeOff = StaffTimeOff::overlapping($staffId, $from, $to);
 
         $daysOff = [];
         $cursor = Carbon::parse($from)->startOfDay();
@@ -151,7 +158,11 @@ class AppointmentAvailabilityService
                 fn ($row) => ! $row->is_day_off && $row->start_time && $row->end_time
             );
 
-            if (! $hasShift) {
+            $away = $timeOff->contains(
+                fn ($row) => $row->starts_on->toDateString() <= $date && $row->ends_on->toDateString() >= $date
+            );
+
+            if (! $hasShift || $away) {
                 $daysOff[] = $date;
             }
         }

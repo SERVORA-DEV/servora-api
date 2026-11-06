@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Rules\NoEmoji;
 use App\Models\Addon;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -34,6 +35,7 @@ class AddonRequest extends FormRequest
         return [
             'name' => [
                 $need, 'string', 'max:150',
+                new NoEmoji(),
                 Rule::unique('addons', 'name')
                     ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId())->whereNull('deleted_at'))
                     ->ignore($this->route('addon'), 'uuid'),

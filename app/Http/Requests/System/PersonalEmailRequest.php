@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\System;
 
+use App\Rules\ValidEmail;
 use App\Rules\NoEmoji;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -19,6 +20,7 @@ class PersonalEmailRequest extends FormRequest
             'personal_email' => [
                 'required',
                 'email',
+                new ValidEmail(),
                 // Must be a different address from the admin's own sign-in
                 // email — this is a separate recovery/verification contact,
                 // not a duplicate of the account email.

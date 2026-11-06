@@ -19,8 +19,8 @@ class AppointmentServiceRequest extends FormRequest
     {
         return [
             'service_variant_uuid' => 'required|uuid|exists:service_variants,uuid',
-            'quantity' => 'nullable|integer|min:1',
-            'discount_amount' => 'nullable|numeric|min:0',
+            'quantity' => 'nullable|integer|min:1|max:1000',
+            'discount_amount' => 'nullable|numeric|min:0|max:1000000|decimal:0,2',
             'notes' => 'nullable|string',
         ];
     }

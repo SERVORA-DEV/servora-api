@@ -2,7 +2,11 @@
 
 namespace App\Http\Requests;
 
+use App\Rules\ValidEmail;
+use App\Rules\PersonName;
 use App\Rules\NoEmoji;
+use App\Rules\PhMobile;
+use App\Support\Gender;
 use Illuminate\Validation\Rules\Password;
 
 use Illuminate\Foundation\Http\FormRequest;
@@ -42,25 +46,26 @@ class UserRequest extends FormRequest
                 Rule::unique('users', 'username')->ignore($userUuid, 'uuid'),
             ],
 
-            'first_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji()],
-            'middle_name' => ['nullable', 'string', 'max:100', new NoEmoji()],
-            'last_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji()],
-            'suffix' => ['nullable', 'string', 'max:20', new NoEmoji()],
+            'first_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji(), new PersonName()],
+            'middle_name' => ['nullable', 'string', 'max:100', new NoEmoji(), new PersonName()],
+            'last_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji(), new PersonName()],
+            'suffix' => ['nullable', 'string', 'max:20', new NoEmoji(), new PersonName()],
 
-            'gender' => [$isCreate ? 'required' : 'sometimes', Rule::in(['Male', 'Female'])],
+            'gender' => [$isCreate ? 'required' : 'sometimes', Rule::in(Gender::CHOICES)],
             'birth_date' => [$isCreate ? 'required' : 'sometimes', 'date', 'before:today'],
 
             'phone_number' => [
                 $isCreate ? 'required' : 'sometimes',
                 'string',
                 new NoEmoji(),
-                'regex:/^\+[1-9]\d{6,14}$/',
+                new PhMobile(),
                 Rule::unique('users', 'phone_number')->ignore($userUuid, 'uuid'),
             ],
 
             'email' => [
                 $isCreate ? 'required' : 'sometimes',
                 'email',
+                new ValidEmail(),
                 new NoEmoji(),
                 Rule::unique('users', 'email')
                     ->where('audience', 'web')
@@ -82,6 +87,21 @@ class UserRequest extends FormRequest
             ],
 
             ...$permissionRules,
+        ];
+    }
+
+    // An old 'Other' reads as "Prefer not to say" (App\Support\Gender).
+    protected function prepareForValidation(): void
+    {
+        if ($this->filled('gender')) {
+            $this->merge(['gender' => Gender::forUsers($this->input('gender'))]);
+        }
+    }
+
+    public function messages(): array
+    {
+        return [
+            'gender.in' => 'Choose Male, Female or Prefer not to say.',
         ];
     }
 }

@@ -23,7 +23,7 @@ class StaffResource extends JsonResource
             'suffix' => $this->suffix,
             'email' => $this->email,
             'phone_number' => $this->phone_number,
-            'gender' => $this->gender,
+            'gender' => \App\Support\Gender::clean($this->gender) ?? $this->gender,
             'birth_date' => $this->birth_date,
             'hire_date' => $this->hire_date,
             'role' => $this->role,

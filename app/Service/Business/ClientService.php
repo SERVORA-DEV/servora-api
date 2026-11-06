@@ -196,7 +196,7 @@ class ClientService
         }
 
         if (array_key_exists('gender', $payload)) {
-            $payload['gender'] = ClientProfile::gender($payload['gender']);
+            $payload['gender'] = ClientProfile::storedGender($payload['gender']);
         }
         if ($hasAge) {
             $payload['birth_year'] = ClientProfile::birthYear($age, (int) now()->year);

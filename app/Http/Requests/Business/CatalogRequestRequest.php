@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Rules\NoEmoji;
 use App\Support\ServiceKind;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -27,7 +28,7 @@ class CatalogRequestRequest extends FormRequest
     {
         return [
             'kind' => 'required|string|in:service,package,addon',
-            'name' => 'required|string|min:2|max:120',
+            'name' => ['required', 'string', 'min:2', 'max:120', new NoEmoji()],
             // The same list a service itself is held to (ServiceRequest).
             'category' => ['nullable', Rule::in(config('service_categories'))],
             'details' => 'nullable|string|max:1000',

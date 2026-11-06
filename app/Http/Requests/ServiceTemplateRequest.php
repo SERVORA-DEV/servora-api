@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Rules\NoEmoji;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -24,6 +25,7 @@ class ServiceTemplateRequest extends FormRequest
             // repository scopes its queries.
             'name' => [
                 $isCreate ? 'required' : 'sometimes', 'string', 'max:150',
+                new NoEmoji(),
                 Rule::unique('services', 'name')
                     ->whereNull('spa_business_id')
                     ->whereNull('deleted_at')
@@ -52,8 +54,8 @@ class ServiceTemplateRequest extends FormRequest
             // adopted copy reuses them verbatim.
             'variants' => [$isCreate ? 'required' : 'sometimes', 'array', 'min:1'],
             'variants.*.uuid' => 'nullable|uuid',
-            'variants.*.duration_minutes' => 'required_with:variants|integer|min:1',
-            'variants.*.price' => 'required_with:variants|numeric|min:0',
+            'variants.*.duration_minutes' => 'required_with:variants|integer|min:1|max:720',
+            'variants.*.price' => 'required_with:variants|numeric|min:0|max:1000000|decimal:0,2',
         ];
     }
 

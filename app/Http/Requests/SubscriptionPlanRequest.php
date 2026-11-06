@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Rules\NoEmoji;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 
@@ -25,7 +26,7 @@ class SubscriptionPlanRequest extends FormRequest
         return [
             'category' => 'required|in:Basic,Premium,Enterprise,Trial',
 
-            'name' => 'required|string|max:100',
+            'name' => ['required', 'string', 'max:100', new NoEmoji()],
             'description' => 'nullable|string',
 
             'billing_cycle' => 'required|in:Monthly,Yearly,Both',
@@ -34,6 +35,8 @@ class SubscriptionPlanRequest extends FormRequest
                 'nullable',
                 'numeric',
                 'min:0',
+                'max:1000000',
+                'decimal:0,2',
                 'required_if:billing_cycle,Monthly,Both',
             ],
 
@@ -41,11 +44,13 @@ class SubscriptionPlanRequest extends FormRequest
                 'nullable',
                 'numeric',
                 'min:0',
+                'max:1000000',
+                'decimal:0,2',
                 'required_if:billing_cycle,Yearly,Both',
             ],
 
-            'max_branches' => 'required|integer|min:1',
-            'max_user_accounts' => 'required|integer|min:1',
+            'max_branches' => 'required|integer|min:1|max:1000',
+            'max_user_accounts' => 'required|integer|min:1|max:1000',
 
             'package_access' => 'sometimes|boolean',
 

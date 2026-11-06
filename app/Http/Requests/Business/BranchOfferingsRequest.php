@@ -23,12 +23,12 @@ class BranchOfferingsRequest extends FormRequest
             'services' => 'present|array|max:500',
             'services.*.variant_uuid' => 'required|uuid|distinct',
             'services.*.is_available' => 'required|boolean',
-            'services.*.custom_price' => 'nullable|numeric|min:0',
+            'services.*.custom_price' => 'nullable|numeric|min:0|max:1000000|decimal:0,2',
 
             'packages' => 'present|array|max:500',
             'packages.*.package_uuid' => 'required|uuid|distinct',
             'packages.*.is_available' => 'required|boolean',
-            'packages.*.custom_price' => 'nullable|numeric|min:0',
+            'packages.*.custom_price' => 'nullable|numeric|min:0|max:1000000|decimal:0,2',
         ];
     }
 }

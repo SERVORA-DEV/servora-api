@@ -727,7 +727,7 @@ class SpaBranchService
      * as the business registration document. Same Unregistered/Rejected
      * guard as saveLocation.
      */
-    public function savePermit(User $user, string $uuid, array $payload, UploadedFile $permitFile, ?Request $request = null)
+    public function savePermit(User $user, string $uuid, array $payload, ?UploadedFile $permitFile, ?Request $request = null)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
 
@@ -747,11 +747,13 @@ class SpaBranchService
 
         $oldValues = $branch->only(['permit_number', 'permit_confirmed']);
 
-        $path = $this->documentUploadService->replace(
-            $branch->permit_document_path,
-            $permitFile,
-            "verification/branch/{$branch->uuid}/permit"
-        );
+        // No new file: the details are corrected and the permit on file is kept.
+        if (! $permitFile && ! $branch->permit_document_path) {
+            return response()->json(['message' => 'Upload the permit document.'], 422);
+        }
+        $path = $permitFile
+            ? $this->documentUploadService->replace($branch->permit_document_path, $permitFile, "verification/branch/{$branch->uuid}/permit")
+            : $branch->permit_document_path;
 
         $branch = $this->spaBranchRepository->update($uuid, [
             'permit_document_path' => $path,

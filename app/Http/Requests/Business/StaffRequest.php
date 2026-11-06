@@ -2,9 +2,13 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Rules\ValidEmail;
+use App\Rules\PersonName;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use App\Rules\NoEmoji;
+use App\Rules\PhMobile;
+use App\Support\Gender;
 
 // Validates POST/PATCH /business/staff. email/phone_number are optional —
 // only required once this staff member is granted a login account (see
@@ -25,13 +29,13 @@ class StaffRequest extends FormRequest
         return [
             'employee_number' => ['nullable', 'string', 'max:50', Rule::unique('staff', 'employee_number')->where(fn ($q) => $q->where('spa_branch_id', $this->resolvedBranchId()))->ignore($this->route('staff'), 'uuid'), new NoEmoji()],
 
-            'first_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji()],
-            'last_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji()],
-            'middle_name' => ['nullable', 'string', 'max:100', new NoEmoji()],
-            'suffix' => ['nullable', 'string', 'max:20', new NoEmoji()],
+            'first_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji(), new PersonName()],
+            'last_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji(), new PersonName()],
+            'middle_name' => ['nullable', 'string', 'max:100', new NoEmoji(), new PersonName()],
+            'suffix' => ['nullable', 'string', 'max:20', new NoEmoji(), new PersonName()],
 
-            'email' => ['nullable', 'email', 'max:255', new NoEmoji()],
-            'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji()],
+            'email' => ['nullable', 'email', new ValidEmail(), 'max:255', new NoEmoji()],
+            'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji(), new PhMobile()],
 
             // Both are asked for when someone is added, and can't be emptied later.
             'gender' => [$isCreate ? 'required' : 'sometimes', 'required', Rule::in(['Male', 'Female', 'Other'])],
@@ -56,11 +60,26 @@ class StaffRequest extends FormRequest
             'employment_type' => [$isCreate ? 'required' : 'sometimes', Rule::in(['Full-Time', 'Part-Time', 'Contractual'])],
             'status' => ['sometimes', Rule::in(['active', 'inactive', 'on-leave', 'terminated'])],
 
-            'emergency_contact_name' => 'nullable|string|max:150',
-            'emergency_contact_number' => ['nullable', 'string', 'max:20', new NoEmoji()],
+            'emergency_contact_name' => ['nullable', 'string', 'max:150', new PersonName()],
+            'emergency_contact_number' => ['nullable', 'string', 'max:20', new NoEmoji(), new PhMobile()],
             'notes' => 'nullable|string',
 
             'spa_branch_uuid' => [$isCreate ? 'required' : 'sometimes', 'uuid', 'exists:spa_branches,uuid'],
+        ];
+    }
+
+    // "Prefer not to say" is kept as 'Other' (App\Support\Gender: staff.gender predates it).
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('gender')) {
+            $this->merge(['gender' => Gender::forShortColumn($this->input('gender'))]);
+        }
+    }
+
+    public function messages(): array
+    {
+        return [
+            'gender.in' => 'Choose Male, Female or Prefer not to say.',
         ];
     }
 

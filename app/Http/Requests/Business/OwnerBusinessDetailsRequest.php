@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Rules\NoEmoji;
 use App\Repository\SpaBusinessRepository;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -29,7 +30,7 @@ class OwnerBusinessDetailsRequest extends FormRequest
         $business = app(SpaBusinessRepository::class)->findForUser($this->user());
 
         return [
-            'business_name' => 'required|string|max:150',
+            'business_name' => ['required', 'string', 'max:150', new NoEmoji()],
             // The business's email and phone are no part of the verification:
             // they are set (and the email confirmed) in Business Settings.
             'business_description' => 'nullable|string',

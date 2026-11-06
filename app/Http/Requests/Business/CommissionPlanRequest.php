@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Rules\NoEmoji;
 use Illuminate\Foundation\Http\FormRequest;
 
 // A commission plan's name and rate. Whether the rate fits the kind Staff
@@ -19,7 +20,7 @@ class CommissionPlanRequest extends FormRequest
         $isCreate = $this->isMethod('post');
 
         return [
-            'name' => [$isCreate ? 'required' : 'sometimes', 'string', 'min:1', 'max:40'],
+            'name' => [$isCreate ? 'required' : 'sometimes', 'string', 'min:1', 'max:40', new NoEmoji()],
             'rate' => [$isCreate ? 'required' : 'sometimes', 'numeric', 'min:0', 'max:1000000'],
         ];
     }
