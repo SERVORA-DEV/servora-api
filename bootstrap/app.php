@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\CapitalizeNames;
 use App\Http\Middleware\EnsureBusinessSubscribed;
 use App\Http\Middleware\EnsureBusinessUsable;
 use App\Http\Middleware\EnsurePermission;
@@ -40,6 +41,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->append(ServerTime::class);
         // Plain text only: no emoji in anything that is kept (promo banner excepted).
         $middleware->append(RejectEmoji::class);
+        // A person's name keeps a capital first letter on every word, however it was typed.
+        $middleware->append(CapitalizeNames::class);
         // Links handed to the browser follow the address the site was opened
         // at (localhost, LAN, a forwarded port, the hosted domain).
         $middleware->append(FrontendOrigin::class);
