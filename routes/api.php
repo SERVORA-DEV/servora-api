@@ -37,6 +37,7 @@ use App\Http\Controllers\Business\ProgramRequestController;
 use App\Http\Controllers\Business\QueueController;
 use App\Http\Controllers\Business\RefundPolicyController;
 use App\Http\Controllers\Business\ServiceController;
+use App\Http\Controllers\Business\SetupGuideController;
 use App\Http\Controllers\Business\SpaBranchController;
 use App\Http\Controllers\Business\SpaBusinessController;
 use App\Http\Controllers\Business\StaffController;
@@ -420,6 +421,9 @@ Route::middleware('auth:sanctum')->group(function () {
             // unaffected here exactly like today.
             Route::middleware(['role:business_owner,manager', 'business.usable', 'subscribed.business'])->group(function () {
                 Route::get('plan-access', [PlanAccessController::class, 'show']);
+                // The setup guide's progress, kept for the whole business (SetupGuideController).
+                Route::get('setup-guide', [SetupGuideController::class, 'show']);
+                Route::put('setup-guide', [SetupGuideController::class, 'update'])->middleware('throttle:30,1');
                 Route::get('reports/export-data', [PlanAccessController::class, 'export'])->middleware(['permission:report_view', 'permission:report_export']);
                 Route::post('reports/export-authorize', [PlanAccessController::class, 'authorizeExport'])->middleware('permission:report_export');
                 // Each staff action needs its own permission: the owner turns
