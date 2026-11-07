@@ -121,7 +121,6 @@ class PlanSwitchQuoteTest extends TestCase
         Schema::create('subscription_plans', function (Blueprint $table) {
             $table->id();
             $table->boolean('mobile_app_access');
-            $table->integer('app_booking_limit');
             $table->softDeletes();
         });
         Schema::create('subscriptions', function (Blueprint $table) {
@@ -148,39 +147,29 @@ class PlanSwitchQuoteTest extends TestCase
             $table->timestamps();
             $table->softDeletes();
         });
-        DB::table('subscription_plans')->insert(['id' => 1, 'mobile_app_access' => true, 'app_booking_limit' => 30]);
+        DB::table('subscription_plans')->insert(['id' => 1, 'mobile_app_access' => true]);
         DB::table('subscriptions')->insert(['id' => 1, 'spa_business_id' => 1, 'subscription_plan_id' => 1, 'status' => 'Active', 'expires_at' => now()->addMonth(), 'created_at' => now()]);
         DB::table('spa_branches')->insert([['id' => 1, 'spa_business_id' => 1], ['id' => 2, 'spa_business_id' => 1], ['id' => 3, 'spa_business_id' => 2]]);
     }
 
-    public function test_the_thirtieth_booking_uses_the_last_slot_across_branches(): void
+    // App bookings have no monthly limit: a plan with the client app listing takes as many as come.
+    public function test_app_bookings_have_no_monthly_limit(): void
     {
         $this->quotaFixture();
-        for ($i = 0; $i < 29; $i++) {
+        for ($i = 0; $i < 40; $i++) {
             DB::table('appointments')->insert(['spa_branch_id' => 1, 'source' => 'Mobile', 'created_at' => now()]);
         }
-        $access = app(PlanAccessService::class);
-        $access->assertCanBook(1);
-        $this->assertSame(29, $access->bookingUsage(1)['used']);
-        DB::table('appointments')->insert(['spa_branch_id' => 2, 'source' => 'Mobile', 'created_at' => now()]);
-        $this->assertSame(30, $access->bookingUsage(1)['used']);
-        $this->expectException(HttpException::class);
-        $access->assertCanBook(1);
+
+        app(PlanAccessService::class)->assertCanBook(1);
+        $this->addToAssertionCount(1);
     }
 
-    public function test_allowance_uses_manila_calendar_month_and_retains_deleted_bookings(): void
+    public function test_a_plan_without_the_client_app_listing_still_takes_no_app_bookings(): void
     {
-        $this->travelTo(Carbon::parse('2026-10-01 00:05', 'Asia/Manila'));
         $this->quotaFixture();
-        DB::table('appointments')->insert([
-            ['spa_branch_id' => 1, 'source' => 'Mobile', 'created_at' => '2026-09-30 23:59:59', 'deleted_at' => null],
-            ['spa_branch_id' => 1, 'source' => 'Mobile', 'created_at' => now(), 'deleted_at' => now()],
-            ['spa_branch_id' => 2, 'source' => 'Mobile', 'created_at' => now(), 'deleted_at' => null],
-            ['spa_branch_id' => 1, 'source' => 'Front Desk', 'created_at' => now(), 'deleted_at' => null],
-            ['spa_branch_id' => 3, 'source' => 'Mobile', 'created_at' => now(), 'deleted_at' => null],
-        ]);
-        $usage = app(PlanAccessService::class)->bookingUsage(1);
-        $this->assertSame(2, $usage['used']);
-        $this->assertStringStartsWith('2026-11-01T00:00:00+08:00', $usage['resets_at']);
+        DB::table('subscription_plans')->update(['mobile_app_access' => false]);
+
+        $this->expectException(HttpException::class);
+        app(PlanAccessService::class)->assertCanBook(1);
     }
 }

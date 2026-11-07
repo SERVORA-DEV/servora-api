@@ -48,7 +48,7 @@ class SubscriptionEntitlementsTest extends TestCase
             'name' => 'Basic', 'category' => 'Basic', 'monthly_price' => 499, 'yearly_price' => 4990,
             'billing_cycle' => 'Both', 'max_branches' => 1, 'max_user_accounts' => 3,
             'mobile_app_access' => true, 'report_access' => true, 'report_export' => true,
-            'export_mode' => 'csv', 'export_days' => 30, 'app_booking_limit' => 30,
+            'export_mode' => 'csv', 'export_days' => 30,
             'extra_account_price' => 49, 'is_active' => true,
         ], $overrides));
     }
@@ -118,17 +118,16 @@ class SubscriptionEntitlementsTest extends TestCase
         $this->assertSame(1, $sub->fresh()->scheduled_extras['extra_accounts']);
     }
 
-    public function test_monthly_allowance_counts_cancelled_mobile_bookings_and_survives_plan_changes(): void
+    public function test_app_bookings_have_no_monthly_limit(): void
     {
-        $this->travelTo(now('Asia/Manila')->startOfMonth()->addDays(10));
         [, $business, $branch] = $this->business();
-        $plan = $this->plan(['app_booking_limit' => 1]);
-        $sub = $this->subscribe($business, $plan);
+        $this->subscribe($business, $this->plan());
         $client = Client::factory()->create(['spa_business_id' => $business->id]);
-        Appointment::create(['client_id' => $client->id, 'spa_branch_id' => $branch->id, 'appointment_number' => 'QUOTA-1', 'appointment_date' => now()->addDay(), 'appointment_time' => '10:00', 'appointment_type' => 'Reservation', 'source' => 'Mobile', 'status' => 'cancelled']);
-        $access = app(PlanAccessService::class);
-        $this->assertSame(1, $access->bookingUsage($business->id)['used']);
-        $this->expectException(HttpException::class);
-        $access->assertCanBook($business->id);
+        foreach (range(1, 35) as $n) {
+            Appointment::create(['client_id' => $client->id, 'spa_branch_id' => $branch->id, 'appointment_number' => "APP-{$n}", 'appointment_date' => now()->addDay(), 'appointment_time' => '10:00', 'appointment_type' => 'Reservation', 'source' => 'Mobile', 'status' => 'scheduled']);
+        }
+
+        app(PlanAccessService::class)->assertCanBook($business->id);
+        $this->assertArrayNotHasKey('booking_usage', app(PlanAccessService::class)->present($business->id));
     }
 }

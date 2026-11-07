@@ -11,6 +11,7 @@ use App\Repository\AuditLogRepository;
 use App\Repository\System\SecurityRepository;
 use App\Repository\UserRepository;
 use App\Service\Concerns\SendsOtpMail;
+use App\Support\RememberedSession;
 use App\Support\UserAgentParser;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -451,9 +452,19 @@ class UserService
     // session's device in Login History rather than the revoker's.
     // $method (password / authenticator / recovery_code / email_code) is
     // recorded on the Login history row.
+    //
+    // `remember` (the "Remember me" tick; the phone app always sends it) makes
+    // it a remembered sign-in: the token gets its own end date a year ahead,
+    // pushed forward whenever the device uses it, instead of the 30 days every
+    // plain sign-in has. See App\Support\RememberedSession.
     private function issueLoginToken(User $user, Request $request, string $method): string
     {
-        $newToken = $user->createToken(UserAgentParser::describe($request->userAgent()));
+        $remember = $request->boolean('remember');
+        $newToken = $user->createToken(
+            UserAgentParser::describe($request->userAgent()),
+            ['*'],
+            $remember ? RememberedSession::expiresAt(now()) : null,
+        );
 
         $newToken->accessToken->forceFill([
             'ip_address' => $request->ip(),
@@ -463,7 +474,7 @@ class UserService
         $this->auditLogRepository->recordAuthEvent(
             $user->id,
             'Login',
-            ['method' => $method, 'token_id' => $newToken->accessToken->id],
+            ['method' => $method, 'token_id' => $newToken->accessToken->id, 'remember' => $remember],
             $request->ip(),
             $request->userAgent(),
         );

@@ -17,6 +17,17 @@ class SubscriptionPlanRequest extends FormRequest
     }
 
     /**
+     * Every paid plan is sold both monthly and yearly (the business picks at checkout), so both
+     * prices are required. Only the Free Trial keeps its own setting, as it is never charged.
+     */
+    protected function prepareForValidation(): void
+    {
+        if ($this->input('category') !== 'Trial') {
+            $this->merge(['billing_cycle' => 'Both']);
+        }
+    }
+
+    /**
      * Get the validation rules that apply to the request.
      *
      * @return array<string, ValidationRule|array<mixed>|string>
@@ -55,14 +66,14 @@ class SubscriptionPlanRequest extends FormRequest
             'package_access' => 'sometimes|boolean',
 
             'reward_access' => 'sometimes|boolean',
-            'review_access' => 'sometimes|boolean',
+            // Reviews come with every plan, and app bookings have no monthly limit: neither is a
+            // plan setting any more. An older screen that still sends them is ignored.
 
             'report_access' => 'sometimes|boolean',
             'report_export' => 'sometimes|boolean',
 
             'mobile_app_access' => 'sometimes|boolean',
 
-            'app_booking_limit' => 'nullable|integer|min:1|max:1000000',
             'export_mode' => 'nullable|in:none,csv,full',
             'export_days' => 'nullable|integer|min:1|max:36500',
             'extra_branch_price' => 'nullable|numeric|min:0.01|max:1000000',

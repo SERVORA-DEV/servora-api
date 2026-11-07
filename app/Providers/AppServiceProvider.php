@@ -50,6 +50,30 @@ class AppServiceProvider extends ServiceProvider
         // Skips Sanctum's last_used_at UPDATE when it was touched recently.
         \Laravel\Sanctum\Sanctum::usePersonalAccessTokenModel(\App\Models\PersonalAccessToken::class);
 
+        // "Remember me" sign-ins (App\Support\RememberedSession): their own
+        // end date decides, not the 30-day lifetime of a plain sign-in, and
+        // each day the device is used moves that date a year ahead again.
+        // Plain sign-ins are left exactly as Sanctum judged them.
+        \Laravel\Sanctum\Sanctum::authenticateAccessTokensUsing(function ($token, bool $isValid) {
+            if (! \App\Support\RememberedSession::isRemembered($token->expires_at)) {
+                return $isValid;
+            }
+
+            $now = now();
+            if (! \App\Support\RememberedSession::valid($token->expires_at, $now) || $token->tokenable === null) {
+                return false;
+            }
+
+            if (\App\Support\RememberedSession::shouldExtend($token->expires_at, $now)) {
+                $token->forceFill([
+                    'expires_at' => \App\Support\RememberedSession::expiresAt($now),
+                    'last_used_at' => $now,
+                ])->save();
+            }
+
+            return true;
+        });
+
         // Site-wide default for every password rule (Password::defaults()).
         Password::defaults(fn () => Password::min(10)->mixedCase()->numbers());
 

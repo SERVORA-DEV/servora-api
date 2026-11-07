@@ -35,13 +35,16 @@ class SessionActivity
     /**
      * Past its own end date, or older than the lifetime every token has
      * (config sanctum.expiration, in minutes; null: tokens don't expire).
+     * A token with its own end date is a "Remember me" sign-in
+     * (RememberedSession): only that date counts, not the lifetime.
      */
     public static function expired(DateTimeInterface|string|null $createdAt, DateTimeInterface|string|null $expiresAt, DateTimeInterface $now, ?int $lifetimeMinutes): bool
     {
-        $now = Carbon::instance($now);
-        if ($expiresAt !== null && Carbon::parse($expiresAt)->lte($now)) {
-            return true;
+        if (RememberedSession::isRemembered($expiresAt)) {
+            return ! RememberedSession::valid($expiresAt, $now);
         }
+
+        $now = Carbon::instance($now);
 
         return $lifetimeMinutes !== null && $lifetimeMinutes > 0 && $createdAt !== null
             && Carbon::parse($createdAt)->lte($now->copy()->subMinutes($lifetimeMinutes));

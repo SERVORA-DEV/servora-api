@@ -16,8 +16,6 @@ use App\Service\Business\AppointmentAvailabilityService;
 use App\Service\Business\AppointmentService;
 use App\Service\Business\MarketplaceReadiness;
 use App\Service\Business\StaffNotifier;
-use App\Service\PlanAccessService;
-use App\Support\AppCache;
 use App\Support\BusinessDay;
 use App\Support\Suspension;
 use Carbon\Carbon;
@@ -170,7 +168,7 @@ class ClientBookingService
                 ])->values()
             : collect();
 
-        return ['plan_booking_usage' => app(PlanAccessService::class)->bookingUsage($branch->spa_business_id), 'data' => BookingPolicy::missedBookingsNotice($policy, $missed, (string) $branch->business?->business_name) + ['booked_dates' => $busy, 'bookings' => $upcoming]];
+        return ['data' => BookingPolicy::missedBookingsNotice($policy, $missed, (string) $branch->business?->business_name) + ['booked_dates' => $busy, 'bookings' => $upcoming]];
     }
 
     public function reschedule(User $user, string $uuid, array $payload)
@@ -329,7 +327,6 @@ class ClientBookingService
     public function review(User $user, string $uuid, array $payload)
     {
         $appointment = $this->findMine($user, $uuid);
-        abort_unless(AppCache::planAllows($appointment->branch->spa_business_id, 'review_access'), 403, 'Reviews are not included in this spa’s current plan.');
 
         if ($appointment->status !== Appointment::STATUS_COMPLETED) {
             return response()->json(['message' => 'You can review a visit once it is completed.'], 422);

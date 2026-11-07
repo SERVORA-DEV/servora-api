@@ -778,7 +778,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::patch('branch/{uuid}/photos/order', [BranchSettingsController::class, 'reorderPhotos'])->middleware('permission:branch_update');
                 Route::patch('branch/{uuid}/booking-policy', [BranchSettingsController::class, 'updateBookingPolicy'])->middleware('permission:branch_update');
                 Route::post('branch/{uuid}/email/resend', [ContactEmailController::class, 'resendBranch'])->middleware(['permission:branch_update', 'throttle:6,1']);
-                Route::get('branch/{uuid}/reviews-summary', [BranchSettingsController::class, 'reviewsSummary'])->middleware(['permission:review_view', 'plan.feature:review_access']);
+                Route::get('branch/{uuid}/reviews-summary', [BranchSettingsController::class, 'reviewsSummary'])->middleware('permission:review_view');
 
                 // Read side of Business Settings. A manager gets only what a
                 // branch inherits (identity + booking defaults); every write

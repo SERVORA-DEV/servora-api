@@ -31,7 +31,6 @@ class SubscriptionPlanSeeder extends Seeder
 
                 'package_access' => false,
                 'reward_access' => false,
-                'review_access' => true,
                 'report_access' => true,
                 'report_export' => false,
                 'mobile_app_access' => false,
@@ -54,7 +53,6 @@ class SubscriptionPlanSeeder extends Seeder
 
                 'package_access' => false,
                 'reward_access' => false,
-                'review_access' => true,
                 'report_access' => true,
                 'report_export' => false,
                 'mobile_app_access' => false,
@@ -77,7 +75,6 @@ class SubscriptionPlanSeeder extends Seeder
 
                 'package_access' => true,
                 'reward_access' => true,
-                'review_access' => true,
                 'report_access' => true,
                 'report_export' => true,
                 'mobile_app_access' => true,
@@ -100,7 +97,6 @@ class SubscriptionPlanSeeder extends Seeder
 
                 'package_access' => true,
                 'reward_access' => true,
-                'review_access' => true,
                 'report_access' => true,
                 'report_export' => true,
                 'mobile_app_access' => true,
@@ -127,7 +123,6 @@ class SubscriptionPlanSeeder extends Seeder
             $plan = array_merge($plan, [
                 'billing_cycle' => 'Both', 'mobile_app_access' => true, 'report_export' => true,
                 'export_mode' => $basic ? 'csv' : 'full', 'export_days' => $basic ? 30 : null,
-                'app_booking_limit' => $basic ? 30 : null,
                 'extra_account_price' => 49, 'extra_branch_price' => $plan['category'] === 'Enterprise' ? 199 : null,
             ]);
             $current = SubscriptionPlan::where('category', $plan['category'])->where('is_active', true)->first();

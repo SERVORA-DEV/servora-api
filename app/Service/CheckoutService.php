@@ -833,7 +833,6 @@ class CheckoutService
             'max_user_accounts' => (int) $plan->max_user_accounts,
             'package_access' => (bool) $plan->package_access,
             'reward_access' => (bool) $plan->reward_access,
-            'review_access' => (bool) $plan->review_access,
             'report_access' => (bool) $plan->report_access,
             'report_export' => (bool) $plan->report_export,
             'mobile_app_access' => (bool) $plan->mobile_app_access,

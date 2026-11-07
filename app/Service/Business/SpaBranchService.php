@@ -855,7 +855,7 @@ class SpaBranchService
         // Branch Settings → Marketplace → Reviews: hidden reviews come back as
         // an empty page (the app drops the section), and without the rating
         // badge the average isn't shared either.
-        if (! $display['show_reviews'] || ! AppCache::planAllows($branch->spa_business_id, 'review_access')) {
+        if (! $display['show_reviews']) {
             return response()->json(['data' => [], 'meta' => ['rating_avg' => null, 'rating_count' => 0, 'hidden' => true]]);
         }
 

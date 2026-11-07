@@ -10,7 +10,6 @@ use App\Models\Staff;
 use App\Models\StaffSchedule;
 use App\Service\Business\AppointmentAvailabilityService;
 use App\Service\Business\HomeServiceRules;
-use App\Service\PlanAccessService;
 use App\Support\BranchClosures;
 use App\Support\HourlyCapacity;
 use Carbon\Carbon;
@@ -61,14 +60,6 @@ class BookingSlotService
         $policy = BookingPolicy::for($branch);
         $result = ['date' => $date, 'duration_minutes' => $duration, 'closed_reason' => null, 'slots' => [], 'hours' => []];
 
-        if ($excludeAppointmentId === null) {
-            $usage = app(PlanAccessService::class)->bookingUsage($branch->spa_business_id);
-            if ($usage['limit'] !== null && $usage['used'] >= $usage['limit']) {
-                $result['closed_reason'] = 'This spa has reached its app booking allowance for this month. Please contact the spa or try again next month.';
-
-                return $result;
-            }
-        }
         $day = $this->dayWindow($branch->id, $date);
         if ($day['closed']) {
             $result['closed_reason'] = $day['reason'] ?? 'The spa is closed on this day.';
