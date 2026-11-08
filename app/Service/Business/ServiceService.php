@@ -277,11 +277,23 @@ class ServiceService
         // file around would only ever leave it orphaned.
         $this->imageUploadService->delete($service->image_path);
 
-        $this->serviceRepository->delete($uuid);
+        // Asked before deleting: once its branch listings go too, nothing says where it was offered.
+        $branches = $this->branchesOffering($service->id);
+
+        // Its lengths and branch listings go with it. Left behind, they showed on the admin's
+        // branch page as "Unknown Service", one row per length.
+        \Illuminate\Support\Facades\DB::transaction(function () use ($uuid, $service) {
+            $this->serviceRepository->delete($uuid);
+            $variantIds = \App\Models\ServiceVariant::where('service_id', $service->id)->pluck('id');
+            BranchService::whereIn('service_variant_id', $variantIds)->delete();
+            \App\Models\ServiceVariant::whereIn('id', $variantIds)->delete();
+        });
+        // Bulk deletes fire no model events, so clear what clients see of this business here.
+        \App\Support\AppCache::bumpBusiness($business->id);
 
         $this->managerChanges->tellCatalog(
             $user, $business->id,
-            fn () => $this->branchesOffering($service->id),
+            fn () => $branches,
             "removed {$service->name} from the catalog.",
         );
 

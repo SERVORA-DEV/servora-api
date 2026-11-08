@@ -163,11 +163,21 @@ class PackageService
         }
 
         $package = $this->packageRepository->findByUuidForBusiness($uuid, $business->id);
-        $this->packageRepository->delete($uuid);
+
+        // Asked before deleting: once its branch listings go too, nothing says where it was offered.
+        $branches = $this->branchesOffering($package->id);
+
+        // Its branch listings go with it, so no screen lists a package that is gone.
+        \Illuminate\Support\Facades\DB::transaction(function () use ($uuid, $package) {
+            $this->packageRepository->delete($uuid);
+            \App\Models\BranchPackage::where('package_id', $package->id)->delete();
+        });
+        // Bulk deletes fire no model events, so clear what clients see of this business here.
+        \App\Support\AppCache::bumpBusiness($business->id);
 
         $this->managerChanges->tellCatalog(
             $user, $business->id,
-            fn () => $this->branchesOffering($package->id),
+            fn () => $branches,
             "removed the package {$package->name} from the catalog.",
         );
 

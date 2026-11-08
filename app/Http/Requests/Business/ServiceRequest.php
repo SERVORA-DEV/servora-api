@@ -31,9 +31,11 @@ class ServiceRequest extends FormRequest
             'name' => [
                 $isCreate ? 'required' : 'sometimes', 'string', 'max:150',
                 new NoEmoji(),
+                // A deleted service no longer holds its name or code (the indexes are over live rows only).
                 Rule::unique('services', 'name')
                     ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
                     ->whereNotNull('spa_business_id')
+                    ->whereNull('deleted_at')
                     ->ignore($this->route('service'), 'uuid'),
             ],
             // Business-scoped like `name` above — identifies the service
@@ -43,6 +45,7 @@ class ServiceRequest extends FormRequest
                 Rule::unique('services', 'code')
                     ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
                     ->whereNotNull('spa_business_id')
+                    ->whereNull('deleted_at')
                     ->ignore($this->route('service'), 'uuid'),
             ],
             // Optional here, unlike on a template (see ServiceTemplateRequest,
@@ -133,6 +136,14 @@ class ServiceRequest extends FormRequest
                 }
             }
         });
+    }
+
+    public function messages(): array
+    {
+        return [
+            'name.unique' => 'You already have a service with this name.',
+            'code.unique' => 'Another service already uses this code.',
+        ];
     }
 
     private function resolvedBusinessId(): ?int

@@ -75,6 +75,19 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('programs:daily')->dailyAt('00:10')->withoutOverlapping();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        // A refused form says each problem once ("You already have a service with this name.
+        // Another service already uses this code."), not Laravel's "… (and 1 more error)".
+        // `errors` is unchanged, so screens that mark fields still can.
+        $exceptions->render(function (\Illuminate\Validation\ValidationException $e, Request $request) {
+            if (! $request->expectsJson() && ! $request->is('api/*')) {
+                return null;
+            }
+            $messages = collect($e->errors())->flatten()->unique()->values();
+            $message = $messages->take(3)->implode(' ')
+                . ($messages->count() > 3 ? ' (and ' . ($messages->count() - 3) . ' more)' : '');
+
+            return response()->json(['message' => $message !== '' ? $message : $e->getMessage(), 'errors' => $e->errors()], $e->status);
+        });
         $exceptions->render(function (InvalidArgumentException $e, Request $request) {
             if ($request->is('api/business/subscription/*') || $request->is('api/business/checkout*')) {
                 return response()->json(['message' => $e->getMessage()], 422);
