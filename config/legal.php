@@ -40,33 +40,36 @@ return [
         // ─────────────────────────────────────────────────────────────────
         'terms' => [
             'title' => 'Terms of Service',
-            'intro' => 'These terms are the agreement between you and {operator} ("Servora", "we", "us") for using the Servora web app, the Servora mobile app and related services. By creating an account or using Servora, you agree to them. If you do not agree, please do not use Servora.',
+            'revision_date' => '2026-11-08',
+            'intro' => 'SERVORA is a Spa Management Platform for spa businesses, their staff and their clients. These Terms describe the use of the SERVORA web app, mobile app and related services. In these Terms, "SERVORA", "we", "us" and "our" refer to the team operating the platform. Account registration requires acceptance of the Terms of Service and Privacy Policy.',
             'summary' => [
-                'Servora provides the software. Each spa provides its own treatments and sets its own prices and policies.',
-                'Clients pay the spa directly. Servora does not take payment from clients in the app.',
-                'You must be at least 18 years old and give accurate information.',
-                'Spa owners verify their identity and business before operating, and need an active subscription plan. Payments are not refunded.',
-                'Loyalty points and vouchers have no cash value and are honoured only by the spa that issued them.',
-                'Clients can delete their account in the mobile app. Owners write to {email}.',
+                'SERVORA provides management and reservation software. Each spa provides its treatments and manages its services, prices and booking policies.',
+                'Clients pay the spa directly. SERVORA records spa payments and receipts; subscription payments for using the platform are separate.',
+                'Business features depend on subscription or trial access, plan features, account permissions and applicable restrictions. Public marketplace listing requires verification.',
+                'Clients can change eligible scheduled bookings within the spa\'s rules, before check-in and before the scheduled start time.',
+                'Each spa configures its rewards within SERVORA\'s program rules and available features.',
+                'Client account deletion anonymizes and deactivates the platform login. Spa visit and payment records may remain. For account or platform questions, contact servoraofcl@gmail.com.',
             ],
             'sections' => [
                 [
-                    'heading' => 'What Servora is',
+                    'heading' => 'What SERVORA is',
                     'body' => [
-                        'Servora is a platform for spa businesses and their clients. Spa owners and their staff use the web app to manage branches, services, staff, appointments, walk-in queues, billing and customer programs. Clients use the mobile app to find verified spas, book services, follow the queue and see their receipts and rewards.',
-                        'Servora provides the software. The spa provides the treatment. We are not a party to the services a spa provides to its clients.',
+                        'SERVORA brings spa reservations and day-to-day management into a shared digital record. Owners and authorized staff use the web app to manage branches, services, facilities, staff, appointments, walk-in queues, billing, customer programs and performance reports, according to their access.',
+                        'Platform administrators manage subscription plan offerings, review owner, business and branch verification, and manage marketplace visibility through the available platform controls.',
+                        'Clients use the mobile app to discover available spa listings through maps and search, view service and therapist availability, book appointments, follow queue progress, and view receipts, notifications and rewards. Available services may include visits at the spa and home-service appointments.',
+                        'SERVORA provides the software functions. Each spa provides its treatments and manages its service information, prices, staff and operating policies.',
                     ],
                 ],
                 [
                     'heading' => 'Your account',
                     'body' => [
                         [
-                            'You must give accurate information when you sign up and keep it up to date.',
-                            // TODO(counsel): confirm the minimum age for client accounts.
+                            'Give accurate account information and keep it up to date.',
+                            // Existing eligibility policy; age enforcement remains a separate review item.
                             'You must be at least 18 years old to create an account.',
-                            'You must verify your email address before you can sign in.',
-                            'Keep your password private. You are responsible for what is done through your account. Tell us at {email} if you think someone else has used it.',
-                            'One person per account. Do not share a login; owners can create separate accounts for their managers and front-desk staff.',
+                            'Email-and-password registration requires email verification before sign-in. Supported Google sign-in uses the verified email confirmed by Google. Additional sign-in verification applies where enabled.',
+                            'Keep your password and sign-in credentials private. If you suspect unauthorized access, contact servoraofcl@gmail.com.',
+                            'Do not share a login. Owners can create separate manager and front-desk accounts, subject to plan capacity and permissions. Therapist records and assignments are managed separately from these login accounts.',
                         ],
                     ],
                 ],
@@ -74,9 +77,10 @@ return [
                     'heading' => 'Spa owners: verification',
                     'audience' => 'owner',
                     'body' => [
-                        'Before a business can use Servora\'s modules, the owner must verify their identity and the business. This includes a government-issued ID, a face scan to confirm the ID belongs to you, the business\'s DTI Business Name Certificate, and each branch\'s mayor\'s permit.',
-                        'You confirm that the documents you submit are genuine, belong to you or your business, and are current. We may approve, reject or ask you to resubmit them, and we may suspend a business or branch whose documents are false, expired or no longer valid.',
-                        'You are responsible for the accounts you create for your staff and for what they do in your business\'s workspace.',
+                        'Business setup, verification and subscription access are separate parts of using SERVORA. Business features depend on subscription or trial access, account permissions and applicable restrictions. The web onboarding flow may direct a new owner to complete verification before opening plans or other modules.',
+                        'Public marketplace listing requires verification of the owner\'s identity, the business and the branch, together with the required plan access and listing readiness. Having access to internal business features does not by itself make a business publicly listed.',
+                        'Owner verification includes government-issued identification and face images captured through the verification flow for review. Business registration documents depend on business type: DTI documentation for a sole proprietorship, or SEC documentation for a corporation or partnership. Branch verification includes the required mayor\'s permit.',
+                        'Submit accurate, genuine and current information and documents. Submissions may be approved, rejected or returned for resubmission. Owners manage the staff accounts and permissions available within their business.',
                     ],
                 ],
                 [
@@ -84,15 +88,20 @@ return [
                     'audience' => 'owner',
                     'body' => [
                         [
-                            'Access to Servora\'s modules requires an active subscription plan. Each plan sets how many branches and user accounts you may have and which features are included. Current plans and prices are shown on the pricing page.',
-                            'Plans are billed monthly or yearly, in advance, through our payment provider. Prices are in Philippine pesos.',
-                            'You may turn automatic renewal on or off. With it on, your saved payment method is charged when the plan is due.',
-                            'If a payment is missed, you keep access for a short grace period set by us. After that, access to the modules is paused until you renew.',
-                            'For a limited period after you subscribe or renew, you may upgrade or downgrade your plan. An upgrade is charged the difference and applies immediately. A downgrade applies from your next due date. After that period, your plan stays as it is until its due date, when you may choose any plan.',
-                            // TODO(counsel): confirm the refund position.
-                            'Payments are not refunded, and we do not offer cancellation with a refund for the unused part of a term.',
-                            'If your business is over the limits of the plan you choose, you may need to reduce branches or accounts before you can renew on it.',
-                            'We may change plans and prices. A change applies to you from your next term, and we will tell you before then.',
+                            'Business features require an active paid subscription, an active free trial, or an applicable paid-subscription grace period. Access also depends on the plan, account permissions and business or branch restrictions.',
+                            'Plans define included features and capacity, including branches and manager/front-desk login accounts. Available plans, prices, capacity options and billing choices are shown in SERVORA.',
+                            'Paid plans support monthly or yearly billing where offered. Prices are displayed in Philippine pesos. Subscription payments are processed through the platform\'s payment provider. A paid term or upgrade takes effect after payment confirmation.',
+                            'Where available, an eligible owner may explicitly start a free trial. It does not start automatically at registration. Its duration is shown before it starts. Eligibility checks include previous trial use by the owner and previous subscriptions for the business.',
+                            'A free trial is not charged automatically and has no post-trial grace period. Purchasing a paid plan ends the trial immediately; unused trial days are not added to the paid term.',
+                            'Automatic renewal can be enabled with an eligible saved payment method. GCash checkout is one-time only. Cards and Maya are supported reusable payment choices in the current checkout.',
+                            'When automatic renewal is enabled, SERVORA attempts payment when the subscription becomes due. Failed attempts may be retried during the applicable grace period. Renewal depends on payment-method validity, plan availability and capacity requirements. Suspended businesses are excluded from automatic renewal charges.',
+                            'Turning automatic renewal off stops future automatic renewal attempts. It does not immediately end the current paid term or itself issue a refund.',
+                            'When plan changes are enabled, an owner may request a change while the paid term remains active. An eligible upgrade applies after payment confirmation, using the displayed price difference, while retaining the existing billing cycle and due date. There is no separate short post-purchase window for requesting a change.',
+                            'Downgrades and billing-cycle changes are scheduled for the next term. A scheduled change may be changed or withdrawn before the current term ends. The next term begins only after the applicable payment is confirmed.',
+                            'A smaller plan may require the owner to choose which branches and staff logins to retain. Other branches or logins may be placed on hold rather than deleted. Included features may also change with the new plan.',
+                            'Paid subscriptions may receive a configured grace period after expiry. Trials and subscriptions ended by declining updated plan terms do not receive that grace period. When access ends, the owner can use the available subscription and payment screens to arrange continued access.',
+                            'Owners may accept or decline a notified replacement plan. Declining lets the current term end at expiry without automatic renewal into that replacement plan. The existing term is not replaced immediately by the new plan terms.',
+                            'SERVORA does not provide automated subscription-refund requests or a self-service feature for immediately cancelling a paid term. For subscription payment concerns or refund requests, contact servoraofcl@gmail.com. This describes the available platform features and does not exclude any rights available under applicable law.',
                         ],
                     ],
                 ],
@@ -101,11 +110,14 @@ return [
                     'audience' => 'client',
                     'body' => [
                         [
-                            'A booking made through Servora is an agreement between you and the spa. The spa sets its own services, prices, opening hours, booking rules and policies.',
-                            'A spa may reschedule or cancel a booking. You will be notified in the app when it does. You may reschedule or cancel a booking that has not started, subject to the spa\'s rules.',
-                            'Walk-in queue numbers and waiting times shown in the app are estimates.',
-                            'Servora does not take payment from clients in the app. You pay the spa directly, using the methods the spa accepts. Receipts the spa records appear in your account.',
-                            'Questions or complaints about a treatment, a price or a refund from a spa should be raised with that spa.',
+                            'Each spa manages its available services, prices, opening hours and booking policies. Booking choices depend on service, therapist and branch availability.',
+                            'Clients can cancel or reschedule eligible reservations through the app only while the booking remains scheduled, before check-in and before its scheduled start time, and within the spa\'s permitted change window and rescheduling limits. When app changes are unavailable, contact the spa.',
+                            'Authorized spa staff may update or cancel bookings through their available workflows. Booking changes are recorded in SERVORA, with notifications generated through the applicable notification features.',
+                            'Repeated missed bookings may pause further app bookings under the spa\'s booking policy. Contact the spa when this restriction applies.',
+                            'Staff manage therapist schedules, availability and assignments through SERVORA. Queue progress follows check-in and service updates. Queue positions and waiting times are estimates and may change as visits progress.',
+                            'For home-service bookings, clients provide the service address and map pin. These details are available to the spa for arranging and providing the visit. Applicable home-service charges appear in the booking.',
+                            'Clients pay the spa directly using the methods it accepts. SERVORA records payments, receipts and applicable adjustments entered by authorized spa staff. These treatment payments are separate from the spa\'s subscription payments to use SERVORA.',
+                            'Questions about treatments, spa prices, booking arrangements or treatment refunds should be raised with the spa. SERVORA does not collect client treatment payments through the app.',
                         ],
                     ],
                 ],
@@ -113,78 +125,81 @@ return [
                     'heading' => 'Loyalty points, vouchers, discounts and memberships',
                     'audience' => 'client',
                     'body' => [
-                        'These programs are created and run by each spa, not by Servora. The spa decides how points are earned and what they are worth, when they expire, and the terms of its vouchers, discounts and memberships. Points and vouchers have no cash value, cannot be transferred, and are honoured only by the spa that issued them.',
+                        'Each spa configures its customer programs within the options available in SERVORA. Eligibility, earning rules, redemption conditions, branch or booking-channel restrictions, and expiry depend on the applicable program.',
+                        'Loyalty points are earned by eligible app-linked clients under the spa\'s configured rules. Vouchers, discounts and memberships may have separate eligibility and usage conditions. Rewards are associated with the spa business that issued them.',
+                        'Voiding, reopening or refunding a bill may reverse earned points or cancel unused rewards generated by that bill. Applicable refund processing may restore a voucher previously used on the bill.',
+                        'Program availability also depends on the business\'s settings and plan features. When those features are unavailable, balances may remain stored while earning or redemption is unavailable. Program expiry conditions still apply.',
                     ],
                 ],
                 [
                     'heading' => 'Listings and reviews',
                     'body' => [
-                        [
-                            'A verified branch may be shown to clients in the mobile app with its photos, services, prices, promotions and reviews. The spa is responsible for keeping that information accurate and for having the right to use the photos it uploads.',
-                            'Reviews must be about a real visit and must not be abusive, misleading or unrelated to the visit. A spa may hide a review that breaks these rules, and so may we.',
-                            'By posting a review or uploading content, you allow us to display it in Servora.',
-                        ],
+                        'Marketplace visibility depends on verification, plan access, branch operating status and listing readiness. Each spa maintains its listing information, services, prices and uploaded images, and must have permission to use the content it uploads.',
+                        'Clients can submit a review through an eligible completed appointment. The current system limits repeat ratings of the same branch by the same client.',
+                        'Reviews should describe an actual visit and must not contain abusive, misleading or unrelated content. To report a concern about a review, contact servoraofcl@gmail.com.',
                     ],
                 ],
                 [
-                    'heading' => 'What you must not do',
+                    'heading' => 'Appropriate use of SERVORA',
                     'body' => [
                         [
-                            'Use Servora for anything unlawful, or to offer or request unlawful services.',
-                            'Submit false information or documents, or pretend to be someone else.',
-                            'Try to access accounts, businesses or data that are not yours.',
-                            'Interfere with, overload, probe or reverse-engineer the service.',
-                            'Copy or resell Servora, or use it to build a competing service.',
-                            'Upload content that is abusive, obscene, or infringes someone else\'s rights.',
+                            'Use SERVORA only for lawful spa management and reservation activities.',
+                            'Do not submit false information or documents, impersonate another person, or misrepresent a business.',
+                            'Do not access accounts, businesses or records without authorization. Use staff access only within the permissions assigned to you.',
+                            'Do not disrupt the service, bypass access restrictions or misuse another person\'s sign-in credentials.',
+                            'Do not upload abusive content or content that infringes someone else\'s rights.',
                         ],
                     ],
                 ],
                 [
-                    'heading' => 'Data that businesses put into Servora',
+                    'heading' => 'Data that businesses put into SERVORA',
                     'audience' => 'owner',
                     'body' => [
-                        'A spa business decides what staff and client records it keeps in Servora and is responsible for having the right to collect and use that information. We process it on the business\'s behalf to provide the service. How we handle personal information is explained in the Privacy Policy.',
+                        'Spa businesses enter and manage staff, client, appointment and billing records in SERVORA. Access to those records depends on business association, branch access, roles and permissions. Businesses should enter only information they are authorized to collect and use.',
+                        'The Privacy Policy explains personal information handled through the platform, its uses, sharing and available privacy requests. For privacy questions, contact servoraofcl@gmail.com.',
                     ],
                 ],
                 [
                     'heading' => 'Suspension and closing an account',
                     'body' => [
-                        [
-                            'We may suspend or close an account, business or branch that breaks these terms, submits false documents, or puts other users or the service at risk.',
-                            'Clients can delete their account from the mobile app. Owners who want to close their business account can write to {email}.',
-                            'Closing an account does not cancel amounts already due, and does not entitle you to a refund.',
-                        ],
+                        'Account, business or branch restrictions can limit sign-in, operations or marketplace availability. Subscription expiry and plan-capacity holds are separate restrictions. Contact servoraofcl@gmail.com with questions about a platform restriction.',
+                        'Clients can delete their account through the mobile app after password confirmation. The process anonymizes and deactivates the platform login, revokes its sign-in tokens and unlinks it from spa client records. Spa visit and payment records may remain; account deletion does not erase all records held by a spa.',
+                        'Owners who want to close a business account should contact servoraofcl@gmail.com. Submitting a closure request is not confirmation that the business has been closed or that automatic renewal has been disabled. Automatic renewal can be managed through the subscription settings.',
                     ],
                 ],
                 [
                     'heading' => 'Availability and changes to the service',
                     'body' => [
-                        'We work to keep Servora available and your data safe, but we do not promise that it will be uninterrupted or free of errors. We may change, add or remove features. We will try to give notice of changes that significantly affect how you use Servora.',
+                        'SERVORA\'s available features depend on the plan, permissions, business settings and current service availability. Booking availability and queue information change as staff and clients update operational records.',
+                        'If you encounter a platform problem, contact servoraofcl@gmail.com. For immediate questions about a visit or booking, contact the spa.',
                     ],
                 ],
                 [
-                    'heading' => 'Our responsibility to you',
+                    'heading' => 'SERVORA and spa responsibilities',
                     'body' => [
-                        // TODO(counsel): confirm this section, including the three-month cap.
-                        'Servora is provided "as is". To the extent the law allows, we are not liable for the services, conduct or content of spas, clients or other users; for lost profits, lost revenue or lost data; or for indirect or consequential loss. To the extent the law allows, our total liability to you for any claim about the service is limited to the amount you paid us in the three months before the claim arose. Nothing in these terms limits liability that cannot be limited under Philippine law.',
+                        'SERVORA provides software for reservations, therapist and queue management, transaction recording, customer programs and business reporting. Each spa manages its staff, service delivery, prices, booking policies and the accuracy of the records it enters.',
+                        'Platform questions can be sent to servoraofcl@gmail.com. Questions about spa operations and treatments should be raised with the spa. This description does not remove responsibilities imposed by applicable law.',
                     ],
                 ],
                 [
                     'heading' => 'Governing law',
                     'body' => [
-                        'These terms are governed by the laws of the Republic of the Philippines. Disputes will be brought before the proper courts of {venue}.',
+                        'These Terms are governed by the laws of the Republic of the Philippines. They do not designate a particular court location or limit rights available under applicable law.',
                     ],
                 ],
                 [
-                    'heading' => 'Changes to these terms',
+                    'heading' => 'Changes to these Terms',
                     'body' => [
-                        'We may update these terms. The date at the top shows when they last changed. If a change is significant, we will tell you in the app or by email. Continuing to use Servora after a change takes effect means you accept the updated terms.',
+                        'The revision date at the top identifies when these Terms were last updated. Review the current Terms when using SERVORA. For questions about a change, contact servoraofcl@gmail.com.',
                     ],
                 ],
                 [
-                    'heading' => 'Contact',
+                    'heading' => 'Contact Us',
                     'body' => [
-                        '{operator}, {address}. Email: {email}.',
+                        'If you have questions, concerns, or requests regarding these Terms of Service or the use of SERVORA, please contact:',
+                        'SERVORA',
+                        'Spa Management Platform',
+                        'Email: servoraofcl@gmail.com',
                     ],
                 ],
             ],
@@ -193,13 +208,13 @@ return [
         // ─────────────────────────────────────────────────────────────────
         'privacy' => [
             'title' => 'Privacy Policy',
-            'intro' => 'This policy explains what personal information {operator} ("Servora", "we", "us") collects through the Servora web app and mobile app, why, who it is shared with, and the choices you have. We handle personal information in line with the Philippine Data Privacy Act of 2012 (Republic Act No. 10173).',
+            'intro' => 'SERVORA is a Spa Management Platform. This policy explains what personal information is collected through the SERVORA web app and mobile app, why it is collected, who it is shared with, and the choices you have. In this policy, "we", "us" and "our" refer to the team operating SERVORA. We handle personal information in line with the Philippine Data Privacy Act of 2012 (Republic Act No. 10173).',
             'summary' => [
                 'We do not sell personal information.',
                 'A client\'s location is used only to show spas nearby, and only if allowed. It is not shared with spas.',
                 'When a client books, the spa sees the client\'s name, phone number and booking details.',
                 'Owners\' IDs, face scans and business documents are stored privately. Only the owner and the Servora administrators who review verifications can open them.',
-                'You may access, correct and ask to erase your information, and complain to the National Privacy Commission. Write to {email}.',
+                'You may access, correct and ask to erase your information, and complain to the National Privacy Commission. Write to servoraofcl@gmail.com.',
             ],
             'sections' => [
                 [
@@ -290,7 +305,7 @@ return [
                     'heading' => 'Your rights',
                     'body' => [
                         'Under the Data Privacy Act you have the right to be informed, to access your personal information, to correct it, to object to or withdraw consent for its processing, to have it erased or blocked where the law allows, to receive a copy in a portable format, and to complain to the National Privacy Commission.',
-                        'You can see and change most of your details in your profile. For anything else, write to {email}. If your information was entered by a spa (for example as its client or staff member), we may refer your request to that spa, which decides how its records are kept.',
+                        'You can see and change most of your details in your profile. For anything else, write to servoraofcl@gmail.com. If your information was entered by a spa (for example as its client or staff member), we may refer your request to that spa, which decides how its records are kept.',
                     ],
                 ],
                 [
@@ -312,9 +327,12 @@ return [
                     ],
                 ],
                 [
-                    'heading' => 'Contact',
+                    'heading' => 'Contact Us',
                     'body' => [
-                        'For privacy questions or requests, contact our Data Protection Officer: {dpo}, {operator}, {address}. Email: {email}.',
+                        'If you have questions, concerns, or requests regarding this Privacy Policy or the processing of your personal information, please contact:',
+                        'SERVORA',
+                        'Spa Management Platform',
+                        'Email: servoraofcl@gmail.com',
                     ],
                 ],
             ],
