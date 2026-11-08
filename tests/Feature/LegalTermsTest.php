@@ -2,7 +2,9 @@
 
 namespace Tests\Feature;
 
+use App\Mail\RegistrationLinkMail;
 use App\Models\User;
+use App\Support\LegalDocuments;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;
@@ -37,9 +39,11 @@ class LegalTermsTest extends TestCase
             ->assertJsonPath('data.documents.terms.title', 'Terms of Service')
             ->assertJsonPath('data.documents.privacy.title', 'Privacy Policy');
 
-        // Placeholders are filled in, not shown to readers.
+        // Public wording identifies the platform without claiming a legal entity.
         $text = json_encode($response->json('data.documents'));
-        $this->assertStringContainsString('Servora Inc.', $text);
+        $this->assertStringContainsString('SERVORA', $text);
+        $this->assertStringContainsString('servoraofcl@gmail.com', $text);
+        $this->assertStringNotContainsString('Servora Inc.', $text);
         $this->assertStringNotContainsString('{operator}', $text);
         $this->assertStringNotContainsString('{email}', $text);
     }
@@ -68,18 +72,17 @@ class LegalTermsTest extends TestCase
             'dpo' => 'A. Dela Cruz', 'venue' => 'Davao City',
         ]]);
 
-        $this->assertSame([], \App\Support\LegalDocuments::unresolved());
+        $this->assertSame([], LegalDocuments::unresolved());
         $this->artisan('legal:check')->assertSuccessful();
     }
 
     public function test_the_check_names_every_placeholder_still_showing(): void
     {
-        config(['legal.operator' => [
-            'name' => '[Company name]', 'address' => 'Davao City', 'email' => 'hello@example.com',
-            'dpo' => 'A. Dela Cruz', 'venue' => 'Davao City',
-        ]]);
+        // Neither published document needs operator placeholders now. Inject an
+        // unfinished draft to keep verifying the release check itself.
+        config(['legal.documents.terms.intro' => 'Draft for [Company name]']);
 
-        $this->assertContains('terms intro: [Company name]', \App\Support\LegalDocuments::unresolved());
+        $this->assertContains('terms intro: [Company name]', LegalDocuments::unresolved());
         $this->artisan('legal:check')->assertFailed();
     }
 
@@ -103,7 +106,7 @@ class LegalTermsTest extends TestCase
 
         // No account until the link in the email is pressed.
         $this->assertDatabaseMissing('users', ['email' => 'owner@example.com']);
-        $link = Mail::sent(\App\Mail\RegistrationLinkMail::class)->first()->url;
+        $link = Mail::sent(RegistrationLinkMail::class)->first()->url;
         $this->get($link)->assertRedirect();
 
         $owner = User::where('email', 'owner@example.com')->firstOrFail();

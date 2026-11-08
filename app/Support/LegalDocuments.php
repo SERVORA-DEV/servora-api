@@ -24,6 +24,8 @@ class LegalDocuments
             $documents[$key] = [
                 'title' => $document['title'],
                 'intro' => $fill($document['intro']),
+                // A document may be revised without changing the other document's date.
+                ...(isset($document['revision_date']) ? ['revision_date' => $document['revision_date']] : []),
                 // The few facts a reader most needs, before the full text.
                 'summary' => array_map($fill, $document['summary'] ?? []),
                 'sections' => array_map(fn (array $section) => [
