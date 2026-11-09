@@ -166,9 +166,32 @@ class AssignmentPlanner
             // A home visit is held at the client's home, never in a room, even an optional one.
             'takes_facility' => ! $isHome,
             'staff' => $staffed?->staff ? ['uuid' => $staffed->staff->uuid, 'name' => $staffed->staff->first_name . ' ' . $staffed->staff->last_name] : null,
+            // Done by several staff at once: who does each part (empty for a one-person service).
+            'parts' => $this->partsRow($service),
             'facility' => $roomed?->facility ? ['uuid' => $roomed->facility->uuid, 'name' => $roomed->facility->name] : null,
             'assigned' => $current !== null,
         ];
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    private function partsRow(AppointmentServiceItem $service): array
+    {
+        $parts = \App\Support\ServiceParts::forLine($service);
+        if ($parts->isEmpty()) {
+            return [];
+        }
+        $rows = $service->therapistAssignments->filter(fn (TherapistAssignment $a) => in_array($a->assignment_status, ['Assigned', 'In Progress'], true) && $a->staff_id !== null);
+
+        return $parts->map(function ($part) use ($rows) {
+            $row = $rows->firstWhere('service_part_id', $part->id);
+
+            return [
+                'uuid' => $part->uuid,
+                'name' => $part->name,
+                'share_percent' => (float) $part->share_percent,
+                'staff' => $row?->staff ? ['uuid' => $row->staff->uuid, 'name' => $row->staff->first_name . ' ' . $row->staff->last_name] : null,
+            ];
+        })->values()->all();
     }
 
     /** @return array<int, array<string, mixed>> */

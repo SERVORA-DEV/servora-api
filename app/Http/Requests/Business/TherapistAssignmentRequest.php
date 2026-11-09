@@ -20,6 +20,8 @@ class TherapistAssignmentRequest extends FormRequest
             // be present.
             'staff_uuid' => 'nullable|required_without:facility_uuid|uuid|exists:staff,uuid',
             'facility_uuid' => 'nullable|required_without:staff_uuid|uuid|exists:facilities,uuid',
+            // For a service done by several staff at once: which part this person does.
+            'part_uuid' => 'nullable|uuid',
         ];
     }
 }

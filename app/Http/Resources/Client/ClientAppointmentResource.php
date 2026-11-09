@@ -91,11 +91,12 @@ class ClientAppointmentResource extends JsonResource
             ? (float) $billing->payments->where('payment_status', 'Paid')->sum(fn ($p) => (float) $p->amount - (float) ($p->refunded_amount ?? 0))
             : 0.0;
 
+        // Each therapist once, with the part they do of a service done by several at once
+        // ("Upper body"); part is null otherwise.
         $therapists = $this->services
-            ->flatMap(fn ($s) => $s->therapistAssignments->whereNotIn('assignment_status', ['Cancelled'])->map(fn ($a) => $a->staff))
-            ->filter()
-            ->unique('id')
-            ->map(fn ($staff) => ['uuid' => $staff->uuid, 'name' => trim("{$staff->first_name} {$staff->last_name}")])
+            ->flatMap(fn ($s) => $s->therapistAssignments->whereNotIn('assignment_status', ['Cancelled'])->filter(fn ($a) => $a->staff)->map(fn ($a) => ['staff' => $a->staff, 'part' => $a->part_name]))
+            ->unique(fn ($row) => $row['staff']->id)
+            ->map(fn ($row) => ['uuid' => $row['staff']->uuid, 'name' => trim("{$row['staff']->first_name} {$row['staff']->last_name}"), 'part' => $row['part']])
             ->values();
 
         return [

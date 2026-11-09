@@ -348,6 +348,7 @@ class SpaBranchService
             $therapist,
             $excludeId,
             $home,
+            \App\Support\ServiceParts::needOfVariants($query['service_variant_uuids'] ?? []),
         )];
     }
 

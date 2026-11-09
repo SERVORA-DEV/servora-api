@@ -52,6 +52,7 @@ use App\Support\History;
 use App\Support\HomeVisitStart;
 use App\Support\HourlyCapacity;
 use App\Support\PackageShare;
+use App\Support\ServiceParts;
 use App\Support\ProgramChannel;
 use App\Support\ReservationHold;
 use App\Support\RotationTurn;
@@ -376,7 +377,13 @@ class AppointmentService
             foreach (array_values($payload['services'] ?? []) as $index => $item) {
                 $service = $this->addServiceInternal($appointment, $branch->id, $item, null, $index + 1);
 
-                if (! empty($payload['requested_therapist_uuid'])) {
+                // Done by several staff at once: who the desk picked for each part. A warning, not a
+                // refusal, like the requested therapist; empty parts are filled below.
+                if (! empty($item['staff'])) {
+                    foreach ($this->chooseParts($appointment, $branch->id, $service, $item['staff']) as $problem) {
+                        $warnings[] = $problem;
+                    }
+                } elseif (! empty($payload['requested_therapist_uuid'])) {
                     $this->applyRequestedTherapist($appointment, $branch->id, $service, $payload['requested_therapist_uuid'], $warnings);
                 }
             }
@@ -408,6 +415,9 @@ class AppointmentService
                 $autoStaff = empty($payload['requested_therapist_uuid']) && ($policy['auto_assign_staff'] ?? true);
                 $warnings = array_merge($warnings, $this->autoAssign($appointment, $autoStaff ? 'missing' : 'facility_only'));
             }
+            // A service done by several staff where someone was picked for a part: the other parts
+            // get someone now, so picking one is enough.
+            $warnings = array_merge($warnings, $this->fillPickedParts($appointment));
 
             if ($isWalkIn) {
                 $this->addToQueueInternal($appointment);
@@ -572,14 +582,20 @@ class AppointmentService
 
             $serviceItems = [];
 
+            $picks = [];
             foreach (array_values($payload['services'] ?? []) as $index => $item) {
-                $serviceItems[] = $this->addServiceInternal(
+                $serviceItems[] = $line = $this->addServiceInternal(
                     $appointment,
                     $branch->id,
                     ['service_variant_uuid' => $item['service_variant_uuid']],
                     null,
                     $index + 1,
                 );
+                // Done by several staff at once: who the client picked for each part (only where
+                // the spa lets clients choose their therapist).
+                if (! empty($item['staff']) && BookingPolicy::clientMayChooseTherapist($branch)) {
+                    $picks[] = [$line, $item['staff']];
+                }
             }
 
             if (! empty($payload['package_uuid'])) {
@@ -639,8 +655,19 @@ class AppointmentService
                 $requestedStaff,
                 $appointment->id,
                 (bool) $home,
+                ServiceParts::needOf($appointment),
             );
             abort_if($slotProblem !== null, 422, (string) $slotProblem);
+
+            // The people picked for each part: free and able to do it (a hard gate, as for the
+            // requested therapist below), then put on their parts.
+            foreach ($picks as [$line, $chosen]) {
+                foreach ($chosen as $pick) {
+                    $this->assertRequestedTherapistIsFree($appointment, $branch->id, $pick['staff_uuid'], $payload['appointment_date'], $payload['appointment_time'], $line);
+                }
+                $problems = $this->chooseParts($appointment, $branch->id, $line, $chosen);
+                abort_if((bool) $problems, 422, implode(' ', $problems));
+            }
 
             if (! empty($payload['requested_therapist_uuid'])) {
                 // Unlike the front-desk path, a client's requested therapist
@@ -675,6 +702,8 @@ class AppointmentService
             // about it: the warnings are for the desk.
             // The facility is picked either way: a named therapist (or automatic staff turned off) still gets a room.
             $this->autoAssign($appointment, empty($payload['requested_therapist_uuid']) && ($policy['auto_assign_staff'] ?? true) ? 'missing' : 'facility_only');
+            // A part the client (or the requested therapist) took: the other parts get someone now.
+            $this->fillPickedParts($appointment);
 
             $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
 
@@ -740,12 +769,14 @@ class AppointmentService
         }
     }
 
+    // $only: someone picked for a part of one service only has to be able to do that one.
     private function assertRequestedTherapistIsFree(
         Appointment $appointment,
         int $branchId,
         string $staffUuid,
         string $date,
         string $time,
+        ?AppointmentServiceItem $only = null,
     ): void {
         $staff = $this->resolveStaffForBranch($staffUuid, $branchId);
 
@@ -766,7 +797,7 @@ class AppointmentService
         // They have to be able to perform what is booked (a client can't be
         // given someone the owner has not qualified for it).
         foreach ($appointment->services as $item) {
-            if (! ServiceKind::needsTherapist($item->kind())) {
+            if (! ServiceKind::needsTherapist($item->kind()) || ($only && $item->id !== $only->id)) {
                 continue;
             }
             $serviceId = $item->serviceVariant?->service_id;
@@ -2249,7 +2280,11 @@ class AppointmentService
                 return response()->json(['message' => 'Staff member not found or inactive at this branch.'], 422);
             }
 
-            $result = $this->assignTherapistInternal($service, $service->appointment, $staff);
+            $part = $this->partFor($service, $payload['part_uuid'] ?? null);
+            if ($part === false) {
+                return response()->json(['message' => 'That part isn\'t part of this service.'], 422);
+            }
+            $result = $this->assignTherapistInternal($service, $service->appointment, $staff, $part);
             if (! $result['ok']) {
                 return response()->json(['message' => $result['reason']], 422);
             }
@@ -2358,7 +2393,95 @@ class AppointmentService
             }
         }
 
+        if (! $facilityOnly) {
+            $warnings = array_merge($warnings, $this->fillParts($appointment, $staff, $services));
+        }
+
         return array_values(array_unique($warnings));
+    }
+
+    // Puts the people picked for a service's parts on them ([{part_uuid, staff_uuid}]).
+    //
+    // @return array<int, string> what could not be done, naming the service and part
+    private function chooseParts(Appointment $appointment, int $branchId, AppointmentServiceItem $line, array $picks): array
+    {
+        $problems = [];
+        $name = $line->displayName() ?: 'A service';
+        foreach ($picks as $pick) {
+            $part = $this->partFor($line, $pick['part_uuid'] ?? null);
+            $person = $this->resolveStaffForBranch($pick['staff_uuid'] ?? '', $branchId);
+            if (! $part || ! $person) {
+                $problems[] = "{$name}: ".(! $part ? 'that part isn\'t part of this service.' : 'that staff member wasn\'t found at this branch.');
+                continue;
+            }
+            $result = $this->assignTherapistInternal($line, $appointment, $person, $part);
+            if (! $result['ok']) {
+                $problems[] = "{$name} ({$part->name}): {$result['reason']}";
+            }
+        }
+
+        return $problems;
+    }
+
+    // Every service done by several staff where at least one part has someone (picked by the
+    // desk or the client, or the requested therapist) gets the rest filled now.
+    //
+    // @return array<int, string> warnings for the desk
+    private function fillPickedParts(Appointment $appointment): array
+    {
+        if (! \App\Models\Service::hasParts()) {
+            return [];
+        }
+        $plan = app(AssignmentPlanner::class)->plan($appointment);
+        $rows = array_values(array_filter($plan['services'] ?? [], fn (array $s) => ! empty($s['parts'])
+            && collect($s['parts'])->contains(fn ($p) => $p['staff'] !== null)
+            && collect($s['parts'])->contains(fn ($p) => $p['staff'] === null)));
+
+        return $rows ? $this->fillParts($appointment, $this->rankable($plan), $rows) : [];
+    }
+
+    // AssignmentPlanner's staff, in the shape AutoAssignment ranks.
+    private function rankable(array $plan): array
+    {
+        return array_map(fn (array $p) => [
+            'uuid' => $p['uuid'], 'name' => $p['name'],
+            'workload' => $p['workload'] ?? 0, 'position' => $p['queue_position'] ?? null,
+            'warning' => ($p['warning']['kind'] ?? null) === 'late',
+            'busy' => ($plan['mode'] ?? 'reserve') === 'now' && ($p['state'] ?? '') === 'busy',
+            'can' => array_map(fn ($c) => (bool) $c['ok'], $p['can']),
+        ], $plan['staff'] ?? []);
+    }
+
+    // A service done by several staff at once gets someone for every part still empty: the best
+    // ranked who can do it and isn't already on it (AutoAssignment::bestFor). A part the desk or
+    // the client already chose stays as it is, so choosing one is enough.
+    //
+    // @return array<int, string> warnings for the desk
+    private function fillParts(Appointment $appointment, array $staff, array $services): array
+    {
+        $warnings = [];
+        $items = $appointment->services()->with('serviceVariant')->get()->keyBy('uuid');
+        foreach ($services as $row) {
+            $item = $items->get($row['uuid']);
+            if (! $item || ! $row['needs_staff'] || $item->status !== 'Pending') {
+                continue;
+            }
+            $missing = ServiceParts::missing($item);
+            foreach ($missing as $part) {
+                $on = ServiceParts::staffedRows($item)->pluck('staff_id')->all();
+                $taken = Staff::whereIn('id', $on)->pluck('uuid')->all();
+                $uuid = AutoAssignment::bestFor($row['uuid'], $staff, $taken);
+                $person = $uuid ? $this->resolveStaffForBranch($uuid, $appointment->spa_branch_id) : null;
+                $result = $person
+                    ? $this->assignTherapistInternal($item, $appointment, $person, $part)
+                    : ['ok' => false, 'reason' => 'nobody else free can do it.'];
+                if (! $result['ok']) {
+                    $warnings[] = ($row['name'] ?: 'A service').' ('.$part->name.'): '.$result['reason'];
+                }
+            }
+        }
+
+        return $warnings;
     }
 
     // The Assign drawer's Auto-assign: the same, for a booking that already exists.
@@ -2440,7 +2563,11 @@ class AppointmentService
                     if (! $staff) {
                         $fail("{$name}: that staff member wasn't found or isn't active at this branch.");
                     }
-                    $result = $this->assignTherapistInternal($service, $appointment, $staff);
+                    $part = $this->partFor($service, $item['part_uuid'] ?? null);
+                    if ($part === false) {
+                        $fail("{$name}: that part isn't part of this service.");
+                    }
+                    $result = $this->assignTherapistInternal($service, $appointment, $staff, $part);
                     if (! $result['ok']) {
                         $fail("{$name}: {$result['reason']}");
                     }
@@ -2466,6 +2593,17 @@ class AppointmentService
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));
         });
+    }
+
+    // The part a request names, for a service done by several staff: null when none was named,
+    // false when it isn't one of this service's parts.
+    private function partFor(AppointmentServiceItem $service, ?string $partUuid): \App\Models\ServicePart|false|null
+    {
+        if (! $partUuid) {
+            return null;
+        }
+
+        return ServiceParts::forLine($service)->firstWhere('uuid', $partUuid) ?? false;
     }
 
     public function cancelAssignment(User $user, string $assignmentUuid)
@@ -2609,6 +2747,8 @@ class AppointmentService
             $assignment->update($assignment->staff_id
                 ? ['facility_id' => null]
                 : ['facility_id' => null, 'assignment_status' => 'Cancelled']);
+            // A service done by several staff at once leaves the room together.
+            $this->roomForEveryPart($service, $assignment->id, null);
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($assignment->appointmentService->appointment->uuid));
         });
@@ -2899,6 +3039,10 @@ class AppointmentService
         $activeAssignments = $service->therapistAssignments->where('assignment_status', 'Assigned');
         if (ServiceKind::needsTherapist($kind) && $activeAssignments->whereNotNull('staff_id')->isEmpty()) {
             return ['ok' => false, 'reason' => 'Assign at least one staff member before starting this service.'];
+        }
+        // Done by several staff at once: everyone starts together, so every part needs someone.
+        if (ServiceKind::needsTherapist($kind) && ($missing = ServiceParts::missing($service))->isNotEmpty()) {
+            return ['ok' => false, 'reason' => 'Pick who does '.ServiceParts::names($missing).' of '.($service->displayName() ?? 'this service').' before starting it.'];
         }
         if ($service->needsFacility() && ! $service->appointment->isHomeService() && $activeAssignments->whereNotNull('facility_id')->isEmpty()) {
             return ['ok' => false, 'reason' => 'Choose a facility for '.($service->displayName() ?? 'this service').' before starting it.'];
@@ -3596,6 +3740,11 @@ class AppointmentService
     {
         $variant = ServiceVariant::where('uuid', $item['service_variant_uuid'])->firstOrFail();
 
+        // Done by several staff at once: the branch must have that many who can do it.
+        if ($shortage = ServiceParts::shortage($branchId, $variant)) {
+            abort(422, $shortage);
+        }
+
         $branchService = BranchService::where('service_variant_id', $variant->id)
             ->where('spa_branch_id', $branchId)
             ->where('is_available', true)
@@ -3669,7 +3818,9 @@ class AppointmentService
     // regardless of what their configured schedule says. Qualification is
     // never bypassed this way — that's a hard skill requirement, not a
     // presence one.
-    private function assignTherapistInternal(AppointmentServiceItem $service, Appointment $appointment, Staff $staff): array
+    // $part: for a service done by several staff at once (Service::parts), which part this person
+    // takes; left out, they take the first part nobody has yet.
+    private function assignTherapistInternal(AppointmentServiceItem $service, Appointment $appointment, Staff $staff, ?\App\Models\ServicePart $part = null): array
     {
         if ($staff->role !== 'therapist') {
             return ['ok' => false, 'reason' => 'This employee doesn\'t perform services.', 'assignment' => null];
@@ -3705,6 +3856,12 @@ class AppointmentService
             }
         }
 
+        // Done by several staff at once: one person per part, each on their own row.
+        $parts = ServiceParts::forLine($service);
+        if ($parts->isNotEmpty()) {
+            return $this->assignPart($service, $staff, $parts, $part);
+        }
+
         // One staff member per service: someone already on it who hasn't
         // started is replaced (their row, and the room on it, are kept);
         // once it is under way the staff can't be changed here.
@@ -3734,6 +3891,57 @@ class AppointmentService
         return ['ok' => true, 'reason' => null, 'assignment' => $assignment];
     }
 
+    // One part of a service done by several staff at once. Whoever is on that part and hasn't
+    // started is replaced; one person can't do two parts of the same service. The row keeps the
+    // part, its name and its share of the commission, and takes the room the other parts are in.
+    private function assignPart(AppointmentServiceItem $service, Staff $staff, \Illuminate\Support\Collection $parts, ?\App\Models\ServicePart $part): array
+    {
+        $rows = ServiceParts::staffedRows($service);
+        if ($part && ! $parts->contains('id', $part->id)) {
+            return ['ok' => false, 'reason' => 'That part isn\'t part of this service.', 'assignment' => null];
+        }
+
+        $already = $rows->firstWhere('staff_id', $staff->id);
+        if (! $part) {
+            // Already on it: nothing to do. Else the first part nobody has yet.
+            if ($already) {
+                return ['ok' => true, 'reason' => null, 'assignment' => $already];
+            }
+            $part = ServiceParts::missing($service, $parts)->first();
+            if (! $part) {
+                return ['ok' => false, 'reason' => 'Every part of this service already has someone. Choose which part to change.', 'assignment' => null];
+            }
+        }
+        if ($already && $already->service_part_id !== $part->id) {
+            $theirs = $already->part_name ?: 'another part';
+
+            return ['ok' => false, 'reason' => "This staff member is already doing {$theirs} of this service. One person can't do two parts.", 'assignment' => null];
+        }
+
+        $partValues = ['service_part_id' => $part->id, 'part_name' => $part->name, 'commission_share' => $part->share_percent];
+        $current = $rows->firstWhere('service_part_id', $part->id);
+        if ($current) {
+            if ($current->assignment_status === 'In Progress') {
+                return ['ok' => false, 'reason' => "{$part->name} has already started with its staff member.", 'assignment' => null];
+            }
+            if ($current->staff_id !== $staff->id) {
+                $current->update(['staff_id' => $staff->id, 'assigned_at' => now()] + $partValues);
+            }
+
+            return ['ok' => true, 'reason' => null, 'assignment' => $current->fresh()];
+        }
+
+        // A room held for the service before anyone was picked is claimed by the first part.
+        $unclaimed = $this->therapistAssignmentRepository->findUnclaimedForService($service->id);
+        $assignment = $unclaimed
+            ? $this->therapistAssignmentRepository->claim($unclaimed, $staff->id)
+            : $this->therapistAssignmentRepository->assign($service->id, $staff->id);
+        $room = $assignment->facility_id ?? $rows->whereNotNull('facility_id')->first()?->facility_id;
+        $assignment->update($partValues + ($room ? ['facility_id' => $room] : []));
+
+        return ['ok' => true, 'reason' => null, 'assignment' => $assignment->fresh()];
+    }
+
     // Unlike assignTherapistInternal() above, rooms ARE time-blocked: a
     // physical room can't serve two appointments at once, so both the
     // service-support check and isFacilityAvailable() are hard gates here,
@@ -3751,8 +3959,23 @@ class AppointmentService
         }
 
         $this->therapistAssignmentRepository->assignFacility($assignment, $facility->id);
+        $this->roomForEveryPart($service, $assignment->id, $facility);
 
         return ['ok' => true, 'reason' => null];
+    }
+
+    // A service done by several staff at once happens in one room: the others' rows follow.
+    private function roomForEveryPart(AppointmentServiceItem $service, int $exceptId, ?Facility $facility): void
+    {
+        if (! \App\Models\Service::hasParts()) {
+            return;
+        }
+        TherapistAssignment::where('appointment_service_id', $service->id)
+            ->where('id', '!=', $exceptId)
+            ->whereNotNull('service_part_id')
+            ->where('assignment_status', 'Assigned')
+            ->get()
+            ->each(fn (TherapistAssignment $row) => $row->update(['facility_id' => $facility?->id]));
     }
 
     // Reserves a room for a service with no therapist assigned yet (rule:

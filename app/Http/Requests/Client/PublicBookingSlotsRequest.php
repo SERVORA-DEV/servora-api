@@ -25,6 +25,10 @@ class PublicBookingSlotsRequest extends FormRequest
             'exclude_appointment_uuid' => 'nullable|uuid',
             // A home service visit: only the staff who take home service count.
             'home_service' => 'nullable|boolean',
+            // What is being booked, so a service done by several staff at once is only offered
+            // at times when that many are free.
+            'service_variant_uuids' => 'nullable|array|max:20',
+            'service_variant_uuids.*' => 'uuid',
         ];
     }
 

@@ -78,7 +78,8 @@ class ServiceService
         }
 
         $variants = $payload['variants'] ?? [];
-        unset($payload['variants']);
+        $parts = $payload['parts'] ?? [];
+        unset($payload['variants'], $payload['parts']);
         $payload = $this->withKind($payload, null);
 
         if (! empty($payload['image'])) {
@@ -104,8 +105,9 @@ class ServiceService
 
         $service = $this->serviceRepository->create($payload);
         $this->serviceVariantRepository->syncForService($service->id, $variants);
+        $this->syncParts($service, $parts);
 
-        return new ServiceResource($service->load('variants'));
+        return new ServiceResource($service->load(Service::hasParts() ? ['variants', 'parts'] : ['variants']));
     }
 
     // The service's type (ServiceKind) on its way to the database: left out
@@ -159,7 +161,8 @@ class ServiceService
         $service = $this->serviceRepository->findByUuidForBusiness($uuid, $business->id);
 
         $variants = $payload['variants'] ?? null;
-        unset($payload['variants']);
+        $parts = $payload['parts'] ?? null;
+        unset($payload['variants'], $payload['parts']);
         $payload = $this->withKind($payload, $service);
 
         // Only touch image_path when a new file was actually uploaded — an
@@ -179,6 +182,9 @@ class ServiceService
         $syncedVariants = null;
 
         $model = $this->serviceRepository->update($uuid, $payload);
+        if ($parts !== null) {
+            $this->syncParts($model, $parts);
+        }
 
         if ($variants !== null) {
             $syncedVariants = $this->serviceVariantRepository->syncForService($service->id, $variants);
@@ -202,7 +208,30 @@ class ServiceService
             fn () => $this->catalogChange($model, $wasActive, $before, $syncedVariants),
         );
 
-        return new ServiceResource($model->load('variants'));
+        return new ServiceResource($model->load(Service::hasParts() ? ['variants', 'parts'] : ['variants']));
+    }
+
+    /**
+     * Saves a service's parts as sent: kept ones by uuid, new ones added, missing ones removed
+     * (soft-deleted, so bookings already on them keep their part). An empty list makes it a
+     * one-person service again. ServiceRequest checked the set (2-4 parts, shares total 100).
+     */
+    private function syncParts(Service $service, array $parts): void
+    {
+        if (! Service::hasParts()) {
+            return;
+        }
+        $keep = [];
+        foreach (array_values($parts) as $i => $part) {
+            $values = ['name' => trim($part['name']), 'share_percent' => $part['share_percent'], 'sort' => $i];
+            $row = ! empty($part['uuid'])
+                ? \App\Models\ServicePart::where('service_id', $service->id)->where('uuid', $part['uuid'])->first()
+                : null;
+            $row ? $row->update($values) : $row = \App\Models\ServicePart::create($values + ['service_id' => $service->id]);
+            $keep[] = $row->id;
+        }
+        \App\Models\ServicePart::where('service_id', $service->id)->whereNotIn('id', $keep)->delete();
+        $service->unsetRelation('parts');
     }
 
     // The branches where at least one length of this service is on.

@@ -232,6 +232,7 @@ class ClientBookingService
                 $staffIds->isNotEmpty() ? Staff::find($staffIds->first()) : null,
                 $appointment->id,
                 $appointment->isHomeService(),
+                \App\Support\ServiceParts::needOf($appointment->loadMissing('services.serviceVariant')),
             );
             if ($slotProblem) {
                 return response()->json(['message' => $slotProblem], 422);

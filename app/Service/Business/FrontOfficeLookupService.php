@@ -186,9 +186,16 @@ class FrontOfficeLookupService
         // Each service carries the vouchers and discounts that cover it (a small mark on the
         // menu; the Programs page has the details).
         $promos = $this->promotions($user, $branchIds);
+        // A service done by several staff at once: its parts, so the desk can pick who does each
+        // (one query for all of them).
+        $parts = \App\Models\Service::hasParts()
+            ? \App\Models\ServicePart::whereIn('service_id', $rows->map(fn ($r) => $r->serviceVariant?->service_id)->filter()->unique())
+                ->orderBy('sort')->orderBy('id')->get()->groupBy('service_id')
+            : collect();
         foreach ($rows as $row) {
             $service = $row->serviceVariant?->service;
             $row->setAttribute('promotions', ServicePromotions::forService($promos, $service?->uuid, $service?->category, $service?->name));
+            $row->setAttribute('parts', ($parts[$service?->id] ?? collect())->map(fn ($p) => ['uuid' => $p->uuid, 'name' => $p->name, 'share_percent' => (float) $p->share_percent])->values()->all());
         }
 
         return LookupServiceResource::collection($rows);

@@ -72,6 +72,11 @@ class AppointmentRequest extends FormRequest
             'services.*.quantity' => 'nullable|integer|min:1|max:1000',
             'services.*.discount_amount' => 'nullable|numeric|min:0|max:1000000|decimal:0,2',
             'services.*.notes' => 'nullable|string',
+            // A service done by several staff at once: who does which part. Parts left out are
+            // filled with whoever is free.
+            'services.*.staff' => 'sometimes|array|max:4',
+            'services.*.staff.*.part_uuid' => 'required|uuid',
+            'services.*.staff.*.staff_uuid' => 'required|uuid|exists:staff,uuid',
 
             // A package booked with the appointment (the New Appointment
             // page's menu lists them beside the services).

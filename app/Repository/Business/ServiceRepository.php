@@ -18,6 +18,7 @@ class ServiceRepository
     public function paginateForBusiness(int $spaBusinessId, array $branchIds, int $perPage = 15)
     {
         return Service::with(['variants' => fn ($q) => $q->with(['branchServices' => fn ($q2) => $q2->whereIn('spa_branch_id', $branchIds)->with('branch')])])
+            ->with(Service::hasParts() ? ['parts'] : [])
             ->where('spa_business_id', $spaBusinessId)
             ->latest()
             ->paginate($perPage);
@@ -48,6 +49,9 @@ class ServiceRepository
             $query->with(['variants' => fn ($q) => $q->with(['branchServices' => fn ($q2) => $q2->whereIn('spa_branch_id', $branchIds)->with('branch')])]);
         } else {
             $query->with('variants');
+        }
+        if (Service::hasParts()) {
+            $query->with('parts');
         }
 
         return $query->firstOrFail();

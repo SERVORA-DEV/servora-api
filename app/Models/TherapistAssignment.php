@@ -23,6 +23,11 @@ class TherapistAssignment extends Model
         'appointment_service_id',
         'staff_id',
         'facility_id',
+        // For a service done by several staff at once: which part this person does, its name
+        // and its share of the commission (percent) at the time. Null for a one-person service.
+        'service_part_id',
+        'part_name',
+        'commission_share',
         // Their names at the time, and what the therapist earned for it when
         // it was completed (App\Support\History).
         'staff_name',
@@ -98,5 +103,10 @@ class TherapistAssignment extends Model
     public function facility()
     {
         return $this->belongsTo(Facility::class, 'facility_id');
+    }
+
+    public function part()
+    {
+        return $this->belongsTo(ServicePart::class, 'service_part_id')->withTrashed();
     }
 }

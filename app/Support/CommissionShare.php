@@ -52,8 +52,11 @@ class CommissionShare
      * @param  int  $sharedBy  how many completed it
      * @param  ?float  $ownRate  the rate of this person's commission plan; null: the standard
      * @param  bool  $home  the service was done on a home visit: the home service commission replaces the plan's rate when the owner turned it on
+     * @param  ?float  $sharePercent  for a service done by several staff at once, this person's part's share
+     *                                (percent; the parts total 100). It replaces the equal split by $sharedBy:
+     *                                at ₱500 and 50%, a 60/40 split pays ₱150 and ₱100.
      */
-    public static function amount(?array $policy, float $price, float $listPrice, bool $fromPackage, int $sharedBy = 1, ?float $ownRate = null, bool $home = false): float
+    public static function amount(?array $policy, float $price, float $listPrice, bool $fromPackage, int $sharedBy = 1, ?float $ownRate = null, bool $home = false, ?float $sharePercent = null): float
     {
         if ($policy === null || ! ($policy['commission_enabled'] ?? true)) {
             return 0.0;
@@ -65,15 +68,15 @@ class CommissionShare
         }
 
         $rate = self::rate($policy, $ownRate, $home);
-        $sharedBy = max(1, $sharedBy);
+        $fraction = $sharePercent !== null ? max(0.0, $sharePercent) / 100 : 1 / max(1, $sharedBy);
 
         if (self::type($policy, $home) === 'fixed') {
-            return $rate / $sharedBy;
+            return $rate * $fraction;
         }
 
         $base = $price > 0 ? $price : $listPrice;
 
-        return $base * $rate / 100 / $sharedBy;
+        return $base * $rate / 100 * $fraction;
     }
 
     /** Whether a service done at home earns the home service commission instead of the plan's rate. */

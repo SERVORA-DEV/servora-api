@@ -248,7 +248,8 @@ class FrontOfficeDashboardService
             'time' => substr($appointment->appointment_time, 0, 5),
             'clientName' => trim("{$appointment->client?->first_name} {$appointment->client?->last_name}"),
             'service' => $serviceLabel,
-            'therapistName' => $therapistNames->count() > 1 ? 'Multiple' : ($therapistNames->first() ?? 'Unassigned'),
+            // Several on one visit (or a service done by several staff at once): every name.
+            'therapistName' => $therapistNames->count() > 1 ? $therapistNames->implode(' + ') : ($therapistNames->first() ?? 'Unassigned'),
             'room' => $roomNames->first() ?? '',
             'channel' => $appointment->appointment_type === 'Walk-in' ? 'Walk-in' : 'Reservation',
             'status' => $appointment->status,

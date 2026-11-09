@@ -152,6 +152,11 @@ class BranchDetailResource extends JsonResource
                         'description' => $service->description,
                         // Bookable as a home visit (the owner's tick).
                         'home_service_available' => (bool) $service->home_service_available,
+                        // Done by several staff at once: one part each, so the client can pick who
+                        // does which (empty for a one-person service).
+                        'parts' => $service->relationLoaded('parts')
+                            ? $service->parts->map(fn ($p) => ['uuid' => $p->uuid, 'name' => $p->name, 'share_percent' => (float) $p->share_percent])->values()
+                            : [],
                         // Ascending by duration: that is the axis the app's
                         // dropdown labels, and sorting by price instead would let
                         // a custom_price override reorder it in a way that reads
