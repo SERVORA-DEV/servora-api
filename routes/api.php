@@ -755,6 +755,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('frontoffice/facilities', [FrontOfficeLookupController::class, 'facilities'])->middleware('permission:appointment_view');
                 Route::get('frontoffice/services', [FrontOfficeLookupController::class, 'services'])->middleware('permission:appointment_view');
                 Route::get('frontoffice/packages', [FrontOfficeLookupController::class, 'packages'])->middleware('permission:appointment_view');
+                // Packages booked for several clients that day, for adding the others (SharedPackages).
+                Route::get('frontoffice/shared-packages', [FrontOfficeLookupController::class, 'sharedPackages'])->middleware('permission:appointment_view');
                 Route::get('frontoffice/addons', [FrontOfficeLookupController::class, 'addons'])->middleware('permission:appointment_view');
                 Route::get('frontoffice/schedule', [FrontOfficeLookupController::class, 'schedule'])->middleware('permission:appointment_view');
                 // The branch's scanner link (staff start a home visit by

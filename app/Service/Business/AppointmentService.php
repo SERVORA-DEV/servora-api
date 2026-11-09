@@ -219,6 +219,24 @@ class AppointmentService
         $branchIds = $branches->pluck('id')->all();
 
         return DB::transaction(function () use ($user, $business, $branches, $branchIds, $payload) {
+            // Joining a package Client A booked for several clients: same branch, date and time
+            // as Client A, and a place still open (SharedPackages).
+            $joining = null;
+            if (! empty($payload['join_package_uuid'])) {
+                $joining = AppointmentPackage::where('uuid', $payload['join_package_uuid'])->whereNull('shared_from_id')
+                    ->whereHas('appointment', fn ($q) => $q->whereIn('spa_branch_id', $branchIds))
+                    ->with(['appointment.branch', 'package' => fn ($q) => $q->withTrashed()])
+                    ->lockForUpdate()->first();
+                abort_if(! $joining || $joining->status === 'Cancelled' || \App\Support\SharedPackages::clientsOf($joining) < 2, 422, 'That package booking was not found.');
+                abort_if(in_array($joining->appointment->status, [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW, Appointment::STATUS_COMPLETED], true), 422, 'That booking is no longer open, so no one can join its package.');
+                abort_if(\App\Support\SharedPackages::nextSlot($joining) === null, 422, "{$joining->displayName()} already has all its " . \App\Support\SharedPackages::clientsOf($joining) . ' clients.');
+                $payload['spa_branch_uuid'] = $joining->appointment->branch->uuid;
+                $payload['appointment_date'] = $joining->appointment->appointment_date->format('Y-m-d');
+                $payload['appointment_time'] = substr((string) $joining->appointment->appointment_time, 0, 5);
+                $payload['appointment_type'] = $joining->appointment->appointment_type === 'Walk-in' ? 'Walk-in' : 'Reservation';
+                unset($payload['package_uuid']);
+            }
+
             if (! empty($payload['spa_branch_uuid'])) {
                 $branch = $this->spaBranchRepository->findByUuidForBranches($payload['spa_branch_uuid'], $branchIds);
             } elseif ($branches->count() === 1) {
@@ -324,6 +342,9 @@ class AppointmentService
                 $client = $this->clientService->completeProfile($client, $payload['client_update']);
             }
 
+            abort_if($joining && $client->id === $joining->appointment->client_id, 422,
+                'That is the client who booked the package. Choose the other client.');
+
             // A reservation needs a way to reach the client (a change of plan,
             // a reminder, a no-show): a phone number on record, or given with
             // the booking just above. A walk-in is here, so it can do without.
@@ -398,6 +419,11 @@ class AppointmentService
                         $this->applyRequestedTherapist($appointment, $branch->id, $service, $payload['requested_therapist_uuid'], $warnings);
                     }
                 }
+            }
+
+            // Their place in the package Client A booked: their own services, nothing to pay.
+            if ($joining) {
+                $this->addPackageInternal($appointment, $business->id, $joining->package->uuid, 1, false, $joining);
             }
 
             // Every service on a home visit must be one the owner marked for
@@ -637,13 +663,6 @@ class AppointmentService
             );
             abort_if($serviceTimeProblem !== null, 422, (string) $serviceTimeProblem);
 
-            // A home visit has to be long enough to be worth the trip — again
-            // a hard stop only here; the front desk is warned.
-            $homeMinimumProblem = $home ? HomeServiceRules::minimumProblem(
-                BookingPolicy::for($branch),
-                $this->availabilityService->estimatedDurationMinutes($appointment),
-            ) : null;
-            abort_if($homeMinimumProblem !== null, 422, (string) $homeMinimumProblem);
             $requestedStaff = ! empty($payload['requested_therapist_uuid'])
                 ? $this->resolveStaffForBranch($payload['requested_therapist_uuid'], $branch->id)
                 : null;
@@ -707,6 +726,9 @@ class AppointmentService
 
             $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
 
+            // A package bought for several clients: the others, each their own appointment.
+            $this->bookCompanions($appointment, $branch, $payload, $appointmentPackage ?? null, $home, $policy, $warnings);
+
             $appointment->setRelation('branch', $branch);
             $this->clientNotifier->appointment(
                 $appointment,
@@ -734,6 +756,59 @@ class AppointmentService
 
             return $warnings ? $resource->additional(['warnings' => $warnings]) : $resource;
         });
+    }
+
+    // The other clients of a package the client booked for several (a Couples Massage): each gets
+    // their own appointment at the same date and time, joined to the package Client A paid for
+    // (SharedPackages), with their own staff. With two clients each may name a therapist (where the
+    // spa lets clients choose); with more, the spa assigns them. abort() rolls everything back.
+    private function bookCompanions(Appointment $appointment, SpaBranch $branch, array $payload, ?AppointmentPackage $bought, ?array $home, array $policy, array &$warnings): void
+    {
+        $companions = array_values($payload['companions'] ?? []);
+        $clients = $bought ? \App\Support\SharedPackages::clientsOf($bought->loadMissing('package')) : 1;
+        if ($clients < 2) {
+            abort_if((bool) $companions, 422, 'Only a package for several clients can be booked with others.');
+
+            return;
+        }
+        $others = $clients - 1;
+        abort_if(count($companions) !== $others, 422, "{$bought->displayName()} is for {$clients} clients: add the details of the other " . ($others === 1 ? 'one' : $others) . '.');
+
+        $mayChoose = $clients === 2 && BookingPolicy::clientMayChooseTherapist($branch);
+        $time = substr((string) $appointment->appointment_time, 0, 5);
+        foreach ($companions as $companion) {
+            $client = $this->clientService->findOrCreate($branch->spa_business_id, array_filter([
+                'first_name' => $companion['first_name'],
+                'last_name' => $companion['last_name'],
+                'phone_number' => $companion['phone_number'] ?? null,
+                'gender' => $companion['gender'] ?? null,
+            ], fn ($v) => $v !== null && $v !== ''), $branch->id);
+            abort_if($client->id === $appointment->client_id, 422, 'Your companion\'s details match yours. Please enter theirs.');
+
+            $theirs = $this->appointmentRepository->create([
+                'spa_branch_id' => $branch->id,
+                'client_id' => $client->id,
+                'appointment_number' => $this->appointmentRepository->generateAppointmentNumber(),
+                'appointment_date' => $appointment->appointment_date->format('Y-m-d'),
+                'appointment_time' => $time,
+                'appointment_type' => 'Reservation',
+                'source' => 'Mobile',
+                'status' => Appointment::STATUS_SCHEDULED,
+            ] + ($home ? HomeServiceRules::attributes($payload, $home) : []) + $this->startAttributes($payload, (bool) $home));
+            $this->addPackageInternal($theirs, $branch->spa_business_id, $bought->package->uuid, 1, false, $bought);
+
+            $named = $mayChoose && ! empty($companion['therapist_uuid']) ? $companion['therapist_uuid'] : null;
+            if ($named) {
+                $this->assertRequestedTherapistIsFree($theirs, $branch->id, $named, $theirs->appointment_date->format('Y-m-d'), $time);
+                $this->rememberRequestedTherapist($theirs, $branch->id, $named);
+                foreach ($theirs->services()->get() as $line) {
+                    $this->applyRequestedTherapist($theirs, $branch->id, $line, $named, $warnings);
+                }
+            }
+            $this->autoAssign($theirs, ! $named && ($policy['auto_assign_staff'] ?? true) ? 'missing' : 'facility_only');
+            $this->fillPickedParts($theirs);
+            $this->appointmentServiceRepository->recalculateAppointmentTotals($theirs);
+        }
     }
 
     // Client self-booking only. Runs the same schedule-then-booked checks,
@@ -815,7 +890,9 @@ class AppointmentService
             abort(422, $schedule['reason']);
         }
 
-        $booked = $this->availabilityService->isStaffAvailable($staff->id, $date, $time, $duration);
+        // A home visit keeps them for the trip there and back too.
+        [$from, $span] = HomeServiceRules::widen($appointment->isHomeService(), $branchId, $date, $time, $duration);
+        $booked = $this->availabilityService->isStaffAvailable($staff->id, $date, $from, $span);
         if (! $booked['ok']) {
             abort(422, $booked['reason']);
         }
@@ -2080,7 +2157,9 @@ class AppointmentService
         $isHome = $appointment->isHomeService();
 
         // Who is already booked over this time, and with whom (one query for everyone).
-        $conflicts = $this->availabilityService->staffConflicts($therapists->pluck('id')->all(), $date, $time, $duration, $appointment->id);
+        // A home visit keeps them for the trip there and back too.
+        [$from, $span] = HomeServiceRules::widen($appointment->isHomeService(), (int) $appointment->spa_branch_id, $date, $time, $duration);
+        $conflicts = $this->availabilityService->staffConflicts($therapists->pluck('id')->all(), $date, $from, $span, $appointment->id);
 
         $options = $therapists->map(function (Staff $staff) use ($attendanceByStaffId, $date, $time, $duration, $branchSchedule, $serviceId, $rotationByStaffId, $grace, $isHome, $conflicts) {
             $attendance = $attendanceByStaffId->get($staff->id);
@@ -3562,7 +3641,9 @@ class AppointmentService
     // addServiceInternal(). See addPackage() for why packages explode into
     // per-component service lines.
     // $openWork: added to a visit that is already open, which may be finished just after the plan ends.
-    private function addPackageInternal(Appointment $appointment, int $businessId, string $packageUuid, int $quantity, bool $openWork = false): AppointmentPackage
+    // $sharedFrom: Client B (C…) joining the package Client A bought (SharedPackages): this
+    // appointment gets that client's services and no price; Client A paid for it.
+    private function addPackageInternal(Appointment $appointment, int $businessId, string $packageUuid, int $quantity, bool $openWork = false, ?AppointmentPackage $sharedFrom = null): AppointmentPackage
     {
         // Every way a package gets onto an appointment (a client's booking,
         // the front desk) passes here: the plan has to include packages.
@@ -3594,13 +3675,27 @@ class AppointmentService
 
         $price = (float) ($branchPackage->custom_price ?? $package->default_price);
 
+        // A package for several clients (a Couples Massage): Client A books and pays for it, and
+        // holds the staff for the others until they are added (SharedPackages). This appointment
+        // gets only its own client's services.
+        $clients = $package->clients();
+        $slot = 1;
+        if ($sharedFrom) {
+            $slot = \App\Support\SharedPackages::nextSlot($sharedFrom) ?? abort(422, "{$package->name} already has all its {$clients} clients.");
+            [$price, $quantity] = [0.0, 1];
+        } elseif ($clients > 1) {
+            $quantity = 1;
+            $staff = \App\Models\Staff::where('spa_branch_id', $appointment->spa_branch_id)->where('role', 'therapist')->where('status', 'active')->count();
+            abort_if($staff < $clients, 422, "{$package->name} is for {$clients} clients, each with their own staff, and only {$staff} work at this branch.");
+        }
+
         $appointmentPackage = AppointmentPackage::create([
             'appointment_id' => $appointment->id,
             'package_id' => $package->id,
             'quantity' => $quantity,
             'unit_price' => $price,
             'subtotal' => $price * $quantity,
-        ]);
+        ] + ($clients > 1 ? ['client_slot' => $slot, 'shared_from_id' => $sharedFrom?->id] : []));
 
         $nextSort = (int) ($appointment->services()->max('sort_order') ?? 0);
         // The line made for each of the package's services, for hanging its
@@ -3608,6 +3703,10 @@ class AppointmentService
         $lineOf = [];
 
         foreach ($package->packageServiceItems as $index => $item) {
+            // Several clients: only what this client gets.
+            if ($clients > 1 && ! $item->isFor($slot)) {
+                continue;
+            }
             // A package names the service and gives it its own minutes
             // (App\Support\PackagePlan). The line still points at the menu
             // length nearest those minutes — only so the rest of the visit

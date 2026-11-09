@@ -62,6 +62,14 @@ class ClientAppointmentRequest extends FormRequest
                 Rule::in(ClientProfile::GENDERS),
             ],
             'client.age' => 'nullable|integer|min:0|max:' . ClientProfile::OLDEST,
+            // A package for several clients (a Couples Massage): the others, each booked as their
+            // own appointment at the same time (AppointmentService::bookCompanions).
+            'companions' => 'sometimes|array|max:3',
+            'companions.*.first_name' => ['required', 'string', 'max:100', new NoEmoji(), new PersonName()],
+            'companions.*.last_name' => ['required', 'string', 'max:100', new NoEmoji(), new PersonName()],
+            'companions.*.phone_number' => ['nullable', 'string', 'max:20', new NoEmoji()],
+            'companions.*.gender' => [Client::hasProfile() ? 'required' : 'nullable', Rule::in(ClientProfile::GENDERS)],
+            'companions.*.therapist_uuid' => 'nullable|uuid',
         ];
     }
 

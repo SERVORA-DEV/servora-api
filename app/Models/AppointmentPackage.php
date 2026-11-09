@@ -28,6 +28,10 @@ class AppointmentPackage extends Model
         'discount_amount',
         'subtotal',
         'status',
+        // A package for several clients: which client this appointment is (1 = Client A, who
+        // pays), and on Client B's (C's…) appointment the package Client A bought.
+        'client_slot',
+        'shared_from_id',
     ];
 
     protected function casts(): array
@@ -73,5 +77,17 @@ class AppointmentPackage extends Model
     public function explodedServices()
     {
         return $this->hasMany(AppointmentServiceItem::class, 'source_appointment_package_id');
+    }
+
+    /** On Client B's appointment: the package Client A bought (and paid for). */
+    public function sharedFrom()
+    {
+        return $this->belongsTo(self::class, 'shared_from_id');
+    }
+
+    /** On Client A's appointment: the other clients' places in this package. */
+    public function joined()
+    {
+        return $this->hasMany(self::class, 'shared_from_id');
     }
 }

@@ -188,6 +188,9 @@ class BranchDetailResource extends JsonResource
                     'name' => $bp->package->name,
                     'duration_minutes' => $bp->package->totalMinutes(),
                     'price' => $price($bp->custom_price ?? $bp->package->default_price),
+                    // How many clients one booking of it is for (a Couples Massage: 2): the app
+                    // then asks for the others' details.
+                    'client_count' => $bp->package->clients(),
                     // Each service in it, with what it is worth in the package:
                     // a voucher for that service takes that much off.
                     'services' => $items->map(fn ($i) => [

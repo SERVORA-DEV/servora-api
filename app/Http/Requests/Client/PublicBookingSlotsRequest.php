@@ -29,6 +29,8 @@ class PublicBookingSlotsRequest extends FormRequest
             // at times when that many are free.
             'service_variant_uuids' => 'nullable|array|max:20',
             'service_variant_uuids.*' => 'uuid',
+            // A package for several clients (a Couples Massage) needs that many staff at once.
+            'package_uuid' => 'nullable|uuid',
         ];
     }
 

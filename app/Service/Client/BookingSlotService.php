@@ -153,8 +153,10 @@ class BookingSlotService
     //
     // @param  list<int>  $staffIds
     // @return array<int, ?string>
-    public function nextFreeStarts(SpaBranch $branch, string $date, string $time, int $duration, array $staffIds): array
+    // $home: a home visit, which keeps its staff for the trip there and back too.
+    public function nextFreeStarts(SpaBranch $branch, string $date, string $time, int $duration, array $staffIds, bool $home = false): array
     {
+        $travel = $home ? \App\Service\Business\HomeServiceRules::travelMinutes($branch->id) : 0;
         $duration = max($duration, 1);
         $result = array_fill_keys($staffIds, null);
         $day = $this->dayWindow($branch->id, $date);
@@ -182,12 +184,13 @@ class BookingSlotService
                 continue;
             }
 
+            [$from, $to] = [$start->copy()->subMinutes($travel), $end->copy()->addMinutes($travel)];
             $taken = $ctx['busy']
-                ->filter(fn ($b) => $start->lt($b['end']) && $end->gt($b['start']))
+                ->filter(fn ($b) => $from->lt($b['end']) && $to->gt($b['start']))
                 ->flatMap(fn ($b) => $b['staff'])->unique()->all();
 
             foreach ($left as $key => $id) {
-                if ($this->onShift($ctx, $id, $date, $start, $end) && ! in_array($id, $taken, true)) {
+                if ($this->onShift($ctx, $id, $date, $from, $to) && ! in_array($id, $taken, true)) {
                     $result[$id] = $start->format('H:i');
                     unset($left[$key]);
                 }
@@ -206,8 +209,10 @@ class BookingSlotService
     //
     // @param  list<int>  $staffIds
     // @return array<int, list<array{from: string, to: string}>>
-    public function freeWindows(SpaBranch $branch, string $date, int $duration, array $staffIds): array
+    // $home: a home visit, which keeps its staff for the trip there and back too.
+    public function freeWindows(SpaBranch $branch, string $date, int $duration, array $staffIds, bool $home = false): array
     {
+        $travel = $home ? \App\Service\Business\HomeServiceRules::travelMinutes($branch->id) : 0;
         $duration = max($duration, 1);
         $result = array_fill_keys($staffIds, []);
         $day = $this->dayWindow($branch->id, $date);
@@ -235,12 +240,13 @@ class BookingSlotService
                 && ! BookingPolicy::startTimeProblem($policy, $start)
                 && ! $this->closureProblem($day, $start, $end)
                 && ! HourlyCapacity::isFull($hourLimit, $hourCounts[$start->hour] ?? 0);
+            [$from, $to] = [$start->copy()->subMinutes($travel), $end->copy()->addMinutes($travel)];
             $taken = $dayOk
-                ? $ctx['busy']->filter(fn ($b) => $start->lt($b['end']) && $end->gt($b['start']))->flatMap(fn ($b) => $b['staff'])->unique()->all()
+                ? $ctx['busy']->filter(fn ($b) => $from->lt($b['end']) && $to->gt($b['start']))->flatMap(fn ($b) => $b['staff'])->unique()->all()
                 : [];
 
             foreach ($staffIds as $id) {
-                if ($dayOk && $this->onShift($ctx, $id, $date, $start, $end) && ! in_array($id, $taken, true)) {
+                if ($dayOk && $this->onShift($ctx, $id, $date, $from, $to) && ! in_array($id, $taken, true)) {
                     $open[$id] = [$open[$id][0] ?? $start->copy(), $start->copy()];
                 } else {
                     $close($id);
@@ -333,15 +339,18 @@ class BookingSlotService
             ->get();
         // How many staff each booking needs at once (a service done by several staff).
         $needs = \App\Models\Service::staffNeededFor($busy->flatMap(fn (Appointment $a) => $a->services->map(fn ($s) => $s->serviceVariant?->service_id)));
+        // A package bought for several clients holds the staff for those not added yet.
+        $open = \App\Support\SharedPackages::openSlotsFor($busy->pluck('id'));
         $busy = $busy
-            ->map(function (Appointment $a) use ($date, $needs) {
-                $start = Carbon::parse("{$date} ".substr((string) $a->appointment_time, 0, 5));
-                $need = (int) $a->services->map(fn ($s) => $needs[$s->serviceVariant?->service_id] ?? 1)->push(1)->max();
+            ->map(function (Appointment $a) use ($date, $needs, $open) {
+                // A home visit keeps its staff for the trip there and back too (HomeServiceRules).
+                [$start, $end] = \App\Service\Business\HomeServiceRules::blockedWindow($a, max($this->availabilityService->estimatedDurationMinutes($a), 30));
+                $need = max((int) $a->services->map(fn ($s) => $needs[$s->serviceVariant?->service_id] ?? 1)->push(1)->max(), 1 + ($open[$a->id] ?? 0));
 
                 return [
                     'need' => $need,
                     'start' => $start,
-                    'end' => $start->copy()->addMinutes(max($this->availabilityService->estimatedDurationMinutes($a), 30)),
+                    'end' => $end,
                     'home' => $a->isHomeService(),
                     'staff' => $a->services
                         ->flatMap(fn ($s) => $s->therapistAssignments->whereIn('assignment_status', ['Assigned', 'In Progress'])->pluck('staff_id'))
@@ -349,7 +358,10 @@ class BookingSlotService
                 ];
             });
 
-        return ['therapists' => $therapists, 'others' => $others, 'home' => $home, 'schedules' => $schedules, 'onLeave' => $onLeave, 'busy' => $busy];
+        // A home visit being booked keeps its staff for the trip there and back too.
+        $travel = $home ? \App\Service\Business\HomeServiceRules::travelMinutes($branch->id) : 0;
+
+        return ['therapists' => $therapists, 'others' => $others, 'home' => $home, 'travel' => $travel, 'schedules' => $schedules, 'onLeave' => $onLeave, 'busy' => $busy];
     }
 
     // null = bookable; 'full' = no therapist left; 'therapist_unavailable'
@@ -359,6 +371,9 @@ class BookingSlotService
     {
         /** @var Collection $therapists */
         $therapists = $ctx['therapists'];
+        // A home visit keeps its staff from the travel time before it to the travel time after it.
+        $start = $start->copy()->subMinutes($ctx['travel'] ?? 0);
+        $end = $end->copy()->addMinutes($ctx['travel'] ?? 0);
 
         $overlapping = $ctx['busy']->filter(fn ($b) => $start->lt($b['end']) && $end->gt($b['start']));
         $takenStaff = $overlapping->flatMap(fn ($b) => $b['staff'])->unique()->all();

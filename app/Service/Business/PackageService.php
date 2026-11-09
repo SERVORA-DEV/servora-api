@@ -74,6 +74,9 @@ class PackageService
 
         $items = $payload['services'] ?? [];
         unset($payload['services']);
+        if (! Package::hasSharing()) {
+            unset($payload['client_count']);
+        }
 
         $rows = $this->plan($business->id, $items);
         if (! is_array($rows)) {
@@ -122,6 +125,9 @@ class PackageService
 
         $items = $payload['services'] ?? null;
         unset($payload['services']);
+        if (! Package::hasSharing()) {
+            unset($payload['client_count']);
+        }
 
         $rows = $items !== null ? $this->plan($business->id, $items) : null;
         if ($rows !== null && ! is_array($rows)) {
@@ -297,6 +303,8 @@ class PackageService
                 'quantity' => max(1, (int) ($item['quantity'] ?? 1)),
                 'price' => isset($item['price']) && $item['price'] !== '' ? round((float) $item['price'], 2) : null,
                 'addons' => $addons,
+                // Which clients get it (a package for several); null: every client.
+                'slots' => empty($item['client_slots']) ? null : array_values(array_unique(array_map('intval', $item['client_slots']))),
             ];
         }
 
@@ -334,17 +342,25 @@ class PackageService
                 'duration_minutes' => $row['minutes'],
                 'quantity' => $row['quantity'],
                 'sort_order' => $index + 1,
-            ] + (Package::hasLinePrice() ? ['price' => $row['price'] ?? null] : []));
+            ] + (Package::hasLinePrice() ? ['price' => $row['price'] ?? null] : [])
+              + (Package::hasSharing() ? ['client_slots' => $row['slots'] ?? null] : []));
             foreach ($row['addons'] as $addon) {
                 PackageAddon::create(['package_id' => $package->id, 'addon_id' => $addon->id, 'service_id' => $row['service']->id]);
             }
         }
 
         if ($byService) {
-            $package->update(['duration_minutes' => PackagePlan::totalMinutes(
-                array_map(fn ($row) => ['minutes' => $row['minutes'], 'quantity' => $row['quantity']], $rows),
-                array_merge(...array_map(fn ($row) => array_map(fn ($addon) => $addon->duration_minutes, $row['addons']), $rows ?: [['addons' => []]])),
-            ) ?: null]);
+            // For several clients each is there at the same time: the longest any one of them stays.
+            $clients = $package->fresh()->clients();
+            $longest = 0;
+            foreach (range(1, $clients) as $slot) {
+                $mine = array_values(array_filter($rows, fn ($row) => $row['slots'] === null || in_array($slot, $row['slots'], true)));
+                $longest = max($longest, PackagePlan::totalMinutes(
+                    array_map(fn ($row) => ['minutes' => $row['minutes'], 'quantity' => $row['quantity']], $mine),
+                    array_merge(...array_map(fn ($row) => array_map(fn ($addon) => $addon->duration_minutes, $row['addons']), $mine ?: [['addons' => []]])),
+                ));
+            }
+            $package->update(['duration_minutes' => $longest ?: null]);
         }
     }
 }

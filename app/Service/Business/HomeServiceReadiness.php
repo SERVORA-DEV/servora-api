@@ -96,7 +96,7 @@ class HomeServiceReadiness
                         'bookable' => $on && $hasPin && $goOut->isNotEmpty(),
                         'fee' => (float) $policy['home_service_fee'],
                         'radius_km' => (int) $policy['home_service_radius_km'],
-                        'min_minutes' => (int) $policy['home_service_min_minutes'],
+                        'travel_minutes' => (int) $policy['home_service_travel_minutes'],
                         'services' => [
                             'offered' => $here->count(),
                             'home' => $here->intersect($homeServiceIds)->count(),

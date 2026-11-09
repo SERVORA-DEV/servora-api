@@ -18,6 +18,9 @@ class AppointmentPackageResource extends JsonResource
             'discount_amount' => (float) $this->discount_amount,
             'subtotal' => (float) $this->subtotal,
             'status' => $this->status,
+            // A package for several clients (a Couples Massage): how many have it, who, and on the
+            // other clients' bookings who paid ("covered by"). Null for an ordinary package.
+            'shared' => \App\Support\SharedPackages::summary($this->resource),
         ];
     }
 }

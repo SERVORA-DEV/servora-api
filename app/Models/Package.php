@@ -27,6 +27,8 @@ class Package extends Model
         'default_price',
         'loyalty_points',
         'is_active',
+        // How many clients one booking of it is for (a Couples Massage: 2). 1 = one client.
+        'client_count',
     ];
 
     protected function casts(): array
@@ -34,7 +36,37 @@ class Package extends Model
         return [
             'default_price' => 'decimal:2',
             'is_active' => 'boolean',
+            'client_count' => 'integer',
         ];
+    }
+
+    /**
+     * Whether shared packages exist yet (migration 2026_11_17_090000): packages.client_count,
+     * package_services.client_slots and appointment_packages.client_slot / shared_from_id. Until
+     * then every package is for one client.
+     */
+    public static function hasSharing(): bool
+    {
+        $known = Cache::get('schema:shared_packages');
+        if (is_bool($known)) {
+            return $known;
+        }
+        $ready = Schema::hasColumn('packages', 'client_count') && Schema::hasColumn('appointment_packages', 'shared_from_id');
+        $ready ? Cache::forever('schema:shared_packages', true) : Cache::put('schema:shared_packages', false, 60);
+
+        return $ready;
+    }
+
+    /** How many clients one booking of it is for (1 until shared packages exist). */
+    public function clients(): int
+    {
+        return self::hasSharing() ? max(1, (int) $this->client_count) : 1;
+    }
+
+    /** "Client A", "Client B"… for a client slot (1-based). */
+    public static function slotName(int $slot): string
+    {
+        return 'Client ' . chr(64 + max(1, min(26, $slot)));
     }
 
     public function uniqueIds()
@@ -130,13 +162,16 @@ class Package extends Model
             return (int) ($this->duration_minutes ?? 0);
         }
 
-        $total = PackagePlan::totalMinutes(
-            $this->packageServiceItems
-                ->filter(fn (PackageServiceItem $item) => $item->theService() !== null)
-                ->map(fn (PackageServiceItem $item) => ['minutes' => $item->minutes(), 'quantity' => $item->quantity])
-                ->all(),
-            $this->includedAddons()->map(fn (PackageAddon $row) => $row->addon->duration_minutes)->all(),
-        );
+        $total = 0;
+        // For several clients each is there at the same time: the longest any one of them stays.
+        foreach (range(1, $this->clients()) as $slot) {
+            $items = $this->packageServiceItems->filter(fn (PackageServiceItem $item) => $item->theService() !== null && $item->isFor($slot));
+            $serviceIds = $items->map(fn (PackageServiceItem $item) => $item->theService()->id)->all();
+            $total = max($total, PackagePlan::totalMinutes(
+                $items->map(fn (PackageServiceItem $item) => ['minutes' => $item->minutes(), 'quantity' => $item->quantity])->all(),
+                $this->includedAddons()->filter(fn (PackageAddon $row) => in_array($row->service_id, $serviceIds, true))->map(fn (PackageAddon $row) => $row->addon->duration_minutes)->all(),
+            ));
+        }
 
         return $total > 0 ? $total : (int) ($this->duration_minutes ?? 0);
     }

@@ -59,8 +59,44 @@ class PackageRequest extends FormRequest
             // What this service is worth in the package, per one (blank: its menu price).
             'services.*.price' => 'nullable|numeric|min:0|max:10000000',
             'services.*.addon_uuids' => 'sometimes|array',
+            // A package for several clients (a Couples Massage: 2), and which of them get each
+            // service ([1] = Client A, [2] = Client B, [1, 2] = both; left out: every client).
+            // Every client must get something (withValidator).
+            'client_count' => 'sometimes|integer|min:1|max:4',
+            'services.*.client_slots' => 'nullable|array',
+            'services.*.client_slots.*' => 'integer|min:1|max:4',
             'services.*.addon_uuids.*' => 'uuid|distinct',
         ];
+    }
+
+    public function withValidator($validator): void
+    {
+        $validator->after(function ($validator) {
+            if (! \App\Models\Package::hasSharing() || ! $this->has('services')) {
+                return;
+            }
+            $existing = $this->route('package') ? \App\Models\Package::where('uuid', $this->route('package'))->value('client_count') : null;
+            $clients = max(1, (int) ($this->input('client_count') ?? $existing ?? 1));
+            $services = collect($this->input('services', []));
+            foreach ($services as $row) {
+                foreach ((array) ($row['client_slots'] ?? []) as $slot) {
+                    if ((int) $slot > $clients) {
+                        $validator->errors()->add('services', \App\Models\Package::slotName((int) $slot) . " isn't in this package — it is for {$clients} " . ($clients === 1 ? 'client' : 'clients') . '.');
+
+                        return;
+                    }
+                }
+            }
+            if ($clients < 2) {
+                return;
+            }
+            foreach (range(1, $clients) as $slot) {
+                $has = $services->contains(fn ($row) => empty($row['client_slots']) || in_array($slot, array_map('intval', (array) $row['client_slots']), true));
+                if (! $has) {
+                    $validator->errors()->add('services', \App\Models\Package::slotName($slot) . ' has no service in this package.');
+                }
+            }
+        });
     }
 
     public function messages(): array

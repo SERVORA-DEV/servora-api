@@ -127,6 +127,17 @@ class Appointment extends Model
         return ['uuid'];
     }
 
+    protected static function booted(): void
+    {
+        // Client A's booking cancelled: the package they bought for several clients goes too, on
+        // the others' appointments (they were covered by it). However it was cancelled.
+        static::updated(function (self $appointment) {
+            if ($appointment->wasChanged('status') && $appointment->status === self::STATUS_CANCELLED) {
+                \App\Support\SharedPackages::cancelJoined($appointment);
+            }
+        });
+    }
+
     public function isHomeService(): bool
     {
         return $this->service_location === 'Home Service';

@@ -168,6 +168,8 @@ class ClientAppointmentResource extends JsonResource
             'packages' => $this->packages->map(fn ($p) => [
                 'uuid' => $p->uuid,
                 'name' => $p->displayName(),
+                // A package for several clients: who else is booked with it, and who paid.
+                'shared' => \App\Support\SharedPackages::summary($p),
             ])->values(),
             'therapists' => $therapists,
 

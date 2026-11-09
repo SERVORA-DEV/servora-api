@@ -6,32 +6,45 @@ use App\Service\Business\HomeServiceRules;
 use Tests\TestCase;
 
 // The parts of home service that are plain arithmetic: how far a client's
-// pin is from the branch, how one booking's fee is shared, and whether a
-// booking is long enough to be worth the trip.
+// pin is from the branch, how one booking's fee is shared, and how long a
+// home visit keeps its staff (the travel time each way).
 //
 // No database.
 //   php artisan test --filter=HomeServiceRulesTest
 class HomeServiceRulesTest extends TestCase
 {
-    public function test_no_minimum_means_any_length_can_be_a_home_visit(): void
+    private function travelTime(int $branchId, int $minutes): void
     {
-        $this->assertNull(HomeServiceRules::minimumProblem(['home_service_min_minutes' => 0], 15));
-        $this->assertNull(HomeServiceRules::minimumProblem([], 15));
+        // The branch's travel time, remembered for the request (no database).
+        app()->scoped('home-service.travel', fn () => new \ArrayObject([$branchId => $minutes]));
     }
 
-    public function test_a_home_visit_at_or_over_the_minimum_is_fine(): void
+    public function test_a_home_visit_keeps_its_staff_for_the_trip_there_and_back(): void
     {
-        $this->assertNull(HomeServiceRules::minimumProblem(['home_service_min_minutes' => 60], 60));
-        $this->assertNull(HomeServiceRules::minimumProblem(['home_service_min_minutes' => 60], 90));
+        $this->travelTime(7, 20);
+        // Booked at 10:00 PM, an hour of services, 20 minutes each way: 9:40 PM to 11:20 PM.
+        [$from, $to] = HomeServiceRules::span(true, 7, \Carbon\Carbon::parse('2026-11-20 22:00'), 60);
+
+        $this->assertSame('21:40', $from->format('H:i'));
+        $this->assertSame('23:20', $to->format('H:i'));
     }
 
-    public function test_a_home_visit_under_the_minimum_is_explained_in_plain_time(): void
+    public function test_a_visit_at_the_spa_has_no_travel_time(): void
     {
-        $message = HomeServiceRules::minimumProblem(['home_service_min_minutes' => 60], 30);
+        $this->travelTime(7, 20);
+        [$from, $to] = HomeServiceRules::span(false, 7, \Carbon\Carbon::parse('2026-11-20 22:00'), 60);
 
-        $this->assertNotNull($message);
-        $this->assertStringContainsString('at least 1 hour of services', $message);
-        $this->assertStringContainsString('30 minutes', $message);
+        $this->assertSame('22:00', $from->format('H:i'));
+        $this->assertSame('23:00', $to->format('H:i'));
+    }
+
+    public function test_no_travel_time_set_keeps_just_the_visit(): void
+    {
+        $this->travelTime(7, 0);
+        [$from, $to] = HomeServiceRules::span(true, 7, \Carbon\Carbon::parse('2026-11-20 10:00'), 15);
+
+        $this->assertSame('10:00', $from->format('H:i'));
+        $this->assertSame('10:15', $to->format('H:i'));
     }
 
     public function test_distance_between_two_pins_is_straight_line_kilometres(): void

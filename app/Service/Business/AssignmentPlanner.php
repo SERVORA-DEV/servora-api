@@ -235,8 +235,10 @@ class AssignmentPlanner
         // Clashes per service, over that service's own length (one query for everyone each).
         // For "free now" someone mid-service is not a clash (their busy-until is shown); only reservations ahead are.
         $conflicts = [];
+        // A home visit keeps its staff for the trip there and back too (HomeServiceRules).
         foreach ($services as $service) {
-            $conflicts[$service->uuid] = $this->availability->staffConflicts($therapists->pluck('id')->all(), $date, $time, $service->lengthMinutes() ?? 30, $appointment->id, includeRunning: $mode === 'reserve');
+            [$from, $span] = HomeServiceRules::widen($isHome, (int) $appointment->spa_branch_id, $date, $time, $service->lengthMinutes() ?? 30);
+            $conflicts[$service->uuid] = $this->availability->staffConflicts($therapists->pluck('id')->all(), $date, $from, $span, $appointment->id, includeRunning: $mode === 'reserve');
         }
         $busyUntil = $this->freeAt('staff_id', $ids);
 

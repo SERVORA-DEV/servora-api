@@ -58,12 +58,11 @@ class AppointmentResource extends JsonResource
                 'branch',
                 fn () => $this->branch ? (int) \App\Service\Client\BookingPolicy::for($this->branch)['max_service_minutes_per_booking'] : 0
             ),
-            // For a home visit: the least service time the branch asks for
-            // (0 = none, and always 0 at the spa). The front desk is warned,
-            // not stopped, when total_duration_minutes is under it.
-            'home_service_min_minutes' => $this->whenLoaded(
+            // For a home visit: the travel time each way the branch counts (0 at the spa). The staff
+            // are kept that long before and after it (HomeServiceRules::blockedWindow).
+            'home_service_travel_minutes' => $this->whenLoaded(
                 'branch',
-                fn () => $this->branch && $this->isHomeService() ? (int) \App\Service\Client\BookingPolicy::for($this->branch)['home_service_min_minutes'] : 0
+                fn () => $this->branch && $this->isHomeService() ? (int) \App\Service\Client\BookingPolicy::for($this->branch)['home_service_travel_minutes'] : 0
             ),
             // Narrower sibling of total_duration_minutes — only services
             // still Pending/In Progress, for "how much is actually left"

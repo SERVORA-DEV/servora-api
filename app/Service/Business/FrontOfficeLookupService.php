@@ -178,6 +178,43 @@ class FrontOfficeLookupService
         return LookupFacilityResource::collection($rooms);
     }
 
+    /**
+     * Packages booked for several clients (a Couples Massage) on a day, and at a time when given:
+     * each with how many clients have it and who, so the front desk can add the others as their
+     * own appointments at the same time (AppointmentService::createAppointment join_package_uuid).
+     */
+    public function sharedPackages(User $user, array $query)
+    {
+        $branchIds = $this->branchIds($user);
+        $branchId = ! empty($query['spa_branch_uuid'])
+            ? \App\Models\SpaBranch::whereIn('id', $branchIds)->where('uuid', $query['spa_branch_uuid'])->value('id')
+            : ($branchIds[0] ?? null);
+        if (! $branchId) {
+            return ['data' => []];
+        }
+
+        $rows = \App\Support\SharedPackages::onDay((int) $branchId, $query['date'], $query['time'] ?? null);
+
+        return ['data' => $rows->map(function (\App\Models\AppointmentPackage $row) {
+            $summary = \App\Support\SharedPackages::summary($row);
+
+            return [
+                'uuid' => $row->uuid,
+                'package_name' => $row->displayName(),
+                'date' => $row->appointment->appointment_date->format('Y-m-d'),
+                'time' => substr((string) $row->appointment->appointment_time, 0, 5),
+                'client_count' => $summary['client_count'] ?? 2,
+                'availed' => $summary['availed'] ?? 1,
+                'open' => ($summary['availed'] ?? 1) < ($summary['client_count'] ?? 2),
+                'services' => $row->package?->packageServiceItems
+                    ->filter(fn ($item) => $item->theService() !== null)
+                    ->map(fn ($item) => $item->theService()->name . ' · ' . collect($item->client_slots ?: range(1, \App\Support\SharedPackages::clientsOf($row)))->map(fn ($s) => \App\Models\Package::slotName((int) $s))->implode(' & '))
+                    ->values()->all() ?? [],
+                'clients' => $summary['clients'] ?? [],
+            ];
+        })->values()];
+    }
+
     public function services(User $user)
     {
         $branchIds = $this->branchIds($user);
@@ -331,7 +368,7 @@ class FrontOfficeLookupService
                 ])) + ['can_override' => app(PolicyGate::class)->mayOverride($user)] : null,
                 // For the modal's Home service option: whether it's offered,
                 // the fee and area, and the branch's own pin to measure from.
-                'home_service' => $branch ? \App\Service\Business\HomeServiceRules::offer($branch) : ['enabled' => false, 'fee' => 0.0, 'radius_km' => 0, 'min_minutes' => 0],
+                'home_service' => $branch ? \App\Service\Business\HomeServiceRules::offer($branch) : ['enabled' => false, 'fee' => 0.0, 'radius_km' => 0, 'travel_minutes' => 0],
                 'branch_pin' => $branch && $branch->latitude !== null && $branch->longitude !== null
                     ? ['lat' => (float) $branch->latitude, 'lng' => (float) $branch->longitude]
                     : null,

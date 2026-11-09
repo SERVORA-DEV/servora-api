@@ -76,8 +76,17 @@ final class ServiceParts
             : "{$service->name} needs {$needed} staff working together, and only {$can} at this branch can do it.";
     }
 
-    /** How many staff a booking needs at once: the most any one of its services needs. */
+    /**
+     * How many staff a booking needs at once: the most any one of its services needs, or more
+     * while a package it bought for several clients still waits for the others (SharedPackages):
+     * their staff are held from Client A's booking.
+     */
     public static function needOf(\App\Models\Appointment $appointment): int
+    {
+        return max(self::lineNeedOf($appointment), 1 + \App\Support\SharedPackages::openSlots($appointment));
+    }
+
+    private static function lineNeedOf(\App\Models\Appointment $appointment): int
     {
         $ids = $appointment->services
             ->filter(fn ($s) => ! in_array($s->status, ['Cancelled'], true))

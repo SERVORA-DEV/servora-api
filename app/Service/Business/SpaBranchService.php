@@ -190,15 +190,18 @@ class SpaBranchService
         $duration = (int) ($query['duration_minutes'] ?? 60);
 
         $therapists = $this->choosableTherapists($branch, $query);
+        // A home visit keeps its staff for the trip there and back too (HomeServiceRules).
+        $home = ! empty($query['home_service']);
+        [$from, $span] = HomeServiceRules::widen($home, $branch->id, $date, $time, $duration);
 
-        $rows = $therapists->map(function ($staff) use ($date, $time, $duration) {
+        $rows = $therapists->map(function ($staff) use ($date, $time, $duration, $from, $span) {
             $schedule = $this->availabilityService->staffMatchesSchedule($staff->id, $date, $time, $duration);
 
             if (! $schedule['ok']) {
                 return ['staff' => $staff, 'available' => false, 'reason' => $schedule['reason']];
             }
 
-            $booked = $this->availabilityService->isStaffAvailable($staff->id, $date, $time, $duration);
+            $booked = $this->availabilityService->isStaffAvailable($staff->id, $date, $from, $span);
 
             if (! $booked['ok']) {
                 return ['staff' => $staff, 'available' => false, 'reason' => $booked['reason']];
@@ -210,7 +213,7 @@ class SpaBranchService
         // Who isn't free then, and when they next are that day.
         $busyIds = $rows->where('available', false)->map(fn ($row) => $row['staff']->id)->all();
         if ($busyIds) {
-            $next = app(BookingSlotService::class)->nextFreeStarts($branch, $date, $time, $duration, $busyIds);
+            $next = app(BookingSlotService::class)->nextFreeStarts($branch, $date, $time, $duration, $busyIds, $home);
             $rows = $rows->map(fn ($row) => $row['available'] ? $row : $row + ['next' => $next[$row['staff']->id] ?? null])->values();
         }
 
@@ -267,7 +270,7 @@ class SpaBranchService
                 if ($problem && ! str_starts_with($problem, 'Please book at least')) {
                     break;
                 }
-                foreach ($slots->freeWindows($branch, $date->toDateString(), $duration, $left) as $id => $windows) {
+                foreach ($slots->freeWindows($branch, $date->toDateString(), $duration, $left, ! empty($query['home_service'])) as $id => $windows) {
                     if ($windows) {
                         $found[$id] = ['date' => $date->toDateString(), 'windows' => $windows];
                         $left = array_values(array_diff($left, [$id]));
@@ -348,7 +351,13 @@ class SpaBranchService
             $therapist,
             $excludeId,
             $home,
-            \App\Support\ServiceParts::needOfVariants($query['service_variant_uuids'] ?? []),
+            max(
+                \App\Support\ServiceParts::needOfVariants($query['service_variant_uuids'] ?? []),
+                // A package for several clients holds a staff member for each of them.
+                ! empty($query['package_uuid'])
+                    ? (int) (\App\Models\Package::where('uuid', $query['package_uuid'])->where('spa_business_id', $branch->spa_business_id)->first()?->clients() ?? 1)
+                    : 1,
+            ),
         )];
     }
 

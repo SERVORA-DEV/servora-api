@@ -81,6 +81,9 @@ class AppointmentRequest extends FormRequest
             // A package booked with the appointment (the New Appointment
             // page's menu lists them beside the services).
             'package_uuid' => 'nullable|uuid|exists:packages,uuid',
+            // Another client joining a package Client A booked for several (a Couples Massage):
+            // Client A's appointment package. The booking is then at Client A's date and time.
+            'join_package_uuid' => 'nullable|uuid|prohibits:package_uuid',
         ];
     }
 

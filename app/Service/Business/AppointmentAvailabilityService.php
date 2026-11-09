@@ -305,9 +305,8 @@ class AppointmentAvailabilityService
             ->get();
 
         return $appointments->map(function (Appointment $appointment) {
-            $start = Carbon::parse($appointment->appointment_date->format('Y-m-d') . ' ' . $appointment->appointment_time);
-            $duration = max($this->estimatedDurationMinutes($appointment), 30);
-            $end = (clone $start)->addMinutes($duration);
+            // A home visit keeps its staff for the trip there and back too (HomeServiceRules).
+            [$start, $end] = HomeServiceRules::blockedWindow($appointment, max($this->estimatedDurationMinutes($appointment), 30));
             return ['start' => $start->format('H:i'), 'end' => $end->format('H:i')];
         })->values()->all();
     }
@@ -636,8 +635,8 @@ class AppointmentAvailabilityService
     /** @return array{0: int, 1: int} */
     private function windowWithin(Appointment $appointment, Carbon $start, Carbon $end): array
     {
-        $from = Carbon::parse($appointment->appointment_date->format('Y-m-d') . ' ' . $appointment->appointment_time);
-        $to = (clone $from)->addMinutes($this->estimatedDurationMinutes($appointment));
+        // A home visit keeps its staff for the trip there and back too (HomeServiceRules).
+        [$from, $to] = HomeServiceRules::blockedWindow($appointment, $this->estimatedDurationMinutes($appointment));
 
         return [max($from->getTimestamp(), $start->getTimestamp()), min($to->getTimestamp(), $end->getTimestamp())];
     }
@@ -655,8 +654,8 @@ class AppointmentAvailabilityService
             return null;
         }
 
-        $otherStart = Carbon::parse($appointment->appointment_date->format('Y-m-d') . ' ' . $appointment->appointment_time);
-        $otherEnd = (clone $otherStart)->addMinutes($this->estimatedDurationMinutes($appointment));
+        // A home visit keeps its staff for the trip there and back too (HomeServiceRules).
+        [$otherStart, $otherEnd] = HomeServiceRules::blockedWindow($appointment, $this->estimatedDurationMinutes($appointment));
 
         return $start->lt($otherEnd) && $end->gt($otherStart) ? $appointment : null;
     }
