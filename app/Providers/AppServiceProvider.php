@@ -109,5 +109,9 @@ class AppServiceProvider extends ServiceProvider
             Limit::perMinute(5)->by('otp:'.strtolower((string) $r->input('email')).'|'.$r->ip()),
             Limit::perMinute(20)->by('otp-ip:'.$r->ip()),
         ]);
+
+        // A home visit at the door (ScannerController): the page re-reads the visit every 30 s
+        // while it runs. Per link and phone; a wrong code is still stopped by the code's own length.
+        RateLimiter::for('scanner-visit', fn (Request $r) => Limit::perMinute(40)->by('door:'.substr((string) $r->route('token'), 0, 12).'|'.$r->ip()));
     }
 }

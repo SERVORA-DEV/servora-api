@@ -196,6 +196,12 @@ class TherapistQueueCalculator
             ->get(['staff_id', 'assignment_status']);
 
         $statuses = [];
+        // On the way back from a home visit: not free to take someone yet.
+        if ($date === now()->toDateString()) {
+            foreach (array_keys(HomeServiceRules::returnTrips($staffIds, now(), now()->copy()->addMinute())) as $staffId) {
+                $statuses[$staffId] = 'in_service';
+            }
+        }
 
         foreach ($rows as $row) {
             // In Progress outranks Assigned: a therapist mid-service who also

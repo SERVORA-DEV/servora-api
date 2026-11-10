@@ -116,6 +116,8 @@ class BookingBoardService
             $hourLimit > 0 ? HourlyCapacity::bookedByHour($branchId, $date, $excludeId) : [],
             $soonBefore,
             $home,
+            // The visit being booked, when a home one, keeps its staff for the trip there and back.
+            $home ? HomeServiceRules::travelMinutes($branchId) : 0,
         );
 
         $result['open'] = BookingBoard::clock($day['open']);
@@ -224,7 +226,10 @@ class BookingBoardService
             ->with(['services.serviceVariant', 'services.therapistAssignments'])
             ->get()
             ->map(function (Appointment $a) use ($remembers) {
-                $start = BookingBoard::minutes((string) $a->appointment_time);
+                // A home visit keeps its staff for the trip there and back, by its actual times once
+                // under way (HomeServiceRules::blockedWindow).
+                [$from, $to] = HomeServiceRules::blockedWindow($a, max($this->availabilityService->estimatedDurationMinutes($a), 30));
+                $start = BookingBoard::minutes($from->format('H:i'));
                 $staff = $a->services
                     ->flatMap(fn ($s) => $s->therapistAssignments->whereIn('assignment_status', ['Assigned', 'In Progress'])->pluck('staff_id'))
                     ->unique()->values()->all();
@@ -234,11 +239,21 @@ class BookingBoardService
 
                 return [
                     'start' => $start,
-                    'end' => $start + max($this->availabilityService->estimatedDurationMinutes($a), 30),
+                    'end' => $start + (int) $from->diffInMinutes($to),
                     'staff' => array_map('intval', $staff),
                     'home' => $a->isHomeService(),
                 ];
             })
+            // Staff on the way back from a home visit already done.
+            ->merge(collect(HomeServiceRules::returnTrips(
+                \App\Models\Staff::where('spa_branch_id', $branchId)->where('role', 'therapist')->pluck('id')->all(),
+                Carbon::parse($date)->startOfDay(), Carbon::parse($date)->endOfDay(),
+            ))->map(fn (array $trip, int $staffId) => [
+                'start' => BookingBoard::minutes($trip['from']->format('H:i')),
+                'end' => BookingBoard::minutes($trip['from']->format('H:i')) + (int) $trip['from']->diffInMinutes($trip['to']),
+                'staff' => [$staffId],
+                'home' => true,
+            ])->values())
             ->values()->all();
     }
 }

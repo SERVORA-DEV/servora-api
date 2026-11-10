@@ -272,6 +272,11 @@ class FrontOfficeDashboardService
             ->join('staff', 'staff.id', '=', 'therapist_assignments.staff_id')
             ->pluck('staff.uuid')
             ->all();
+        // On the way back from a home visit counts as busy too.
+        $returning = array_keys(HomeServiceRules::returnTrips(\App\Models\Staff::where('spa_branch_id', $branchId)->pluck('id')->all(), now(), now()->copy()->addMinute()));
+        if ($returning) {
+            $busyUuids = array_values(array_unique(array_merge($busyUuids, \App\Models\Staff::whereIn('id', $returning)->pluck('uuid')->all())));
+        }
 
         $onDuty = 0;
         $expected = 0;

@@ -313,6 +313,11 @@ class AppointmentAvailabilityService
             }
         }
 
+        // Back from a home visit only after the trip back.
+        if ($trip = HomeServiceRules::returnTrips([$staffId], $start, $end)[$staffId] ?? null) {
+            return ['ok' => false, 'reason' => HomeServiceRules::returningLine($trip['to']) . '.'];
+        }
+
         return ['ok' => true, 'reason' => null];
     }
 
@@ -355,9 +360,15 @@ class AppointmentAvailabilityService
             ->when($exceptServiceIds, fn ($q) => $q->whereNotIn('appointment_service_id', $exceptServiceIds))
             ->exists();
 
-        return $busy
-            ? ['ok' => false, 'reason' => 'This staff member is currently in another service.']
-            : ['ok' => true, 'reason' => null];
+        if ($busy) {
+            return ['ok' => false, 'reason' => 'This staff member is currently in another service.'];
+        }
+        // On the way back from a home visit.
+        if ($trip = HomeServiceRules::returnTrips([$staffId], now(), now()->copy()->addMinute())[$staffId] ?? null) {
+            return ['ok' => false, 'reason' => 'This staff member is ' . lcfirst(HomeServiceRules::returningLine($trip['to'])) . '.'];
+        }
+
+        return ['ok' => true, 'reason' => null];
     }
 
     // Held for a reservation (App\Support\ReservationHold): a staff member
@@ -783,6 +794,14 @@ class AppointmentAvailabilityService
             $client = trim(($other->client?->first_name ?? '') . ' ' . ($other->client?->last_name ?? '')) ?: 'another client';
             $at = Carbon::parse($other->appointment_date->format('Y-m-d') . ' ' . $other->appointment_time)->format('g:i A');
             $first[$id] = ($column === 'staff_id' ? 'Booked with ' : 'Booked for ') . "{$client} at {$at}";
+        }
+
+        // Staff on the way back from a home visit can't be booked before they are back.
+        if ($column === 'staff_id') {
+            foreach (HomeServiceRules::returnTrips($ids, $start, $end) as $id => $trip) {
+                $first[$id] ??= HomeServiceRules::returningLine($trip['to']);
+                $windows[$id]['back'] = [max($trip['from']->getTimestamp(), $start->getTimestamp()), min($trip['to']->getTimestamp(), $end->getTimestamp())];
+            }
         }
 
         // Staff do one thing at a time; a room holds as many as its limit says.

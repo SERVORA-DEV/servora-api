@@ -3685,6 +3685,141 @@ class AppointmentService
         });
     }
 
+    // ── A home visit at the client's door (HomeVisitDoorService) ─────────
+    // Nobody is signed in there: the branch's scanner link and the visit's code are the proof,
+    // the same as a scan. Each is called inside the door's transaction, the appointment locked.
+
+    // The door's "Start service": what a scan has always done.
+    public function startHomeVisitAtDoor(Appointment $appointment, SpaBranch $branch): array
+    {
+        return $this->startHomeVisit($appointment, $branch, null);
+    }
+
+    // The door's "Service done": what is running on the visit is completed as the desk's
+    // Complete does (add-ons with their service, earnings fixed). Then whatever is left that can
+    // start does, since everyone is already at the home; the rest wait for the desk.
+    public function completeHomeVisitServices(Appointment $appointment): void
+    {
+        $lines = fn (string $status) => AppointmentServiceItem::where('appointment_id', $appointment->id)
+            ->where('status', $status)
+            ->when(Addon::ready(), fn ($q) => $q->whereNull('parent_appointment_service_id'))
+            ->with('therapistAssignments')
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        $running = $lines('In Progress');
+        abort_if($running->isEmpty(), 422, 'Nothing is running on this visit to finish.');
+
+        $now = now();
+        foreach ($running as $line) {
+            $line->setRelation('appointment', $appointment);
+            $this->completeLine($line, $now);
+        }
+        foreach ($lines('Pending') as $next) {
+            $next->setRelation('appointment', $appointment);
+            $this->startServiceInternal($next);
+        }
+
+        if ($appointment->queue && ! $appointment->services()->whereIn('status', ['Pending', 'In Progress'])->exists()) {
+            $this->queueRepository->updateStatus($appointment->queue, 'Completed', ['completed_at' => $now]);
+        }
+    }
+
+    // The visit's bill, made the first time the door asks once every service is done (the desk's
+    // Proceed to Billing, with the voucher booked with). A visit with nothing to pay (a package
+    // another client paid for) is settled at once and completes.
+    public function billHomeVisit(Appointment $appointment): Billing
+    {
+        if ($billing = $this->billingRepository->findForAppointment($appointment->id)) {
+            return $billing;
+        }
+        abort_if(
+            $appointment->services()->whereNotIn('status', ['Completed', 'Cancelled'])->exists(),
+            422,
+            'Finish the services first (Service done), then check out.',
+        );
+
+        $amount = max(0, round((float) $appointment->fresh()->total_amount, 2));
+        $billing = $this->billingRepository->create([
+            'appointment_id' => $appointment->id,
+            'spa_business_id' => $appointment->branch->spa_business_id,
+            'spa_branch_id' => $appointment->spa_branch_id,
+            'billing_type' => 'Appointment',
+            'billing_number' => $this->billingRepository->generateBillingNumber(),
+            'subtotal' => $amount,
+            'amount' => $amount,
+            'status' => 'Pending',
+            'issued_at' => now(),
+        ]);
+        $this->billingService->applyReservedVoucher($billing);
+        $this->billingService->settle($billing->fresh());
+
+        return $this->billingRepository->findForAppointment($appointment->id);
+    }
+
+    // The payment the staff took at the door. Every check of the desk's (a method switched on
+    // in Settings → Payments, a reference for an e-wallet, no more than the balance, cash
+    // covering it), recorded as taken at the client's home by $by, with no account behind it.
+    // Paid in full: the bill is Paid and the visit completes (BillingService::settle).
+    public function payHomeVisit(Appointment $appointment, Billing $billing, array $payload, string $by): array
+    {
+        $billing = Billing::whereKey($billing->id)->lockForUpdate()->firstOrFail();
+        $business = SpaBusiness::findOrFail($billing->spa_business_id);
+        if ($rejection = $this->billingService->paymentRejection($billing, $business, $payload)) {
+            abort(422, (string) ($rejection->getData(true)['message'] ?? 'This payment can\'t be taken.'));
+        }
+
+        $amount = round((float) $payload['amount'], 2);
+        $tendered = isset($payload['amount_tendered']) ? round((float) $payload['amount_tendered'], 2) : null;
+        // No received_by at all (not even null): the Payment's own hook would name nobody over it.
+        $payment = $this->paymentRepository->create([
+            'billing_id' => $billing->id,
+            'spa_business_id' => $business->id,
+            'spa_branch_id' => $billing->spa_branch_id,
+            'payment_method' => $payload['payment_method'],
+            'reference_number' => $payload['reference_number'] ?? null,
+            'amount' => $amount,
+            'amount_tendered' => $tendered,
+            'change_given' => $tendered !== null ? round($tendered - $amount, 2) : null,
+            'payment_status' => 'Paid',
+            'paid_at' => now(),
+            'remarks' => "Received at the client's home by {$by}",
+        ] + (History::ready() ? ['received_by_name' => "{$by} at the client's home"] : []));
+
+        $money = '₱'.number_format($amount, 2);
+        $this->clientNotifier->appointment(
+            $appointment,
+            'Payment received',
+            "{$appointment->branch?->branch_name} received your payment of {$money} for booking {$appointment->appointment_number}. Thank you!",
+            'Payment',
+        );
+        // The desk reconciles it: the cash comes back with the staff.
+        $this->staffNotifier->appointment(
+            $appointment,
+            'Payment received at a home visit',
+            "{$by} received {$money} ({$payload['payment_method']}) at the client's home for booking {$appointment->appointment_number}.",
+            null,
+            'Payment',
+        );
+
+        $this->billingService->settle($billing);
+        $billing = $billing->fresh();
+
+        return [
+            'method' => $payment->payment_method,
+            'amount' => $amount,
+            'amount_tendered' => $tendered,
+            'change' => $payment->change_given !== null ? (float) $payment->change_given : null,
+            'reference_number' => $payment->reference_number,
+            'billing_number' => $billing->billing_number,
+            'billing_status' => $billing->status,
+            'balance' => $this->billingService->balance($billing),
+            'paid_at' => $payment->paid_at?->toIso8601String(),
+        ];
+    }
+
     // ── Internal helpers ─────────────────────────────────────────────────
 
     // Aborts the surrounding transaction (422) if the package isn't bookable

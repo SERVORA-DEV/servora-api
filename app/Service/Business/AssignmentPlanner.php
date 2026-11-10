@@ -136,15 +136,29 @@ class AssignmentPlanner
         TherapistAssignment::whereIn($column, $ids)
             ->where('assignment_status', 'In Progress')
             ->whereNotNull('started_at')
-            ->with('appointmentService.serviceVariant')
+            ->with('appointmentService.serviceVariant', 'appointmentService.appointment')
             ->get()
             ->each(function (TherapistAssignment $a) use (&$until, $column) {
                 $end = Carbon::parse($a->started_at)->addMinutes($a->appointmentService?->lengthMinutes() ?? 30);
+                // A home visit: the staff is back only after the trip back.
+                $visit = $a->appointmentService?->appointment;
+                if ($column === 'staff_id' && $visit?->isHomeService()) {
+                    $end->addMinutes(HomeServiceRules::travelMinutes((int) $visit->spa_branch_id));
+                }
                 $id = $a->{$column};
                 if (! isset($until[$id]) || $end->gt($until[$id])) {
                     $until[$id] = $end;
                 }
             });
+
+        // On the way back from a home visit already done.
+        if ($column === 'staff_id') {
+            foreach (HomeServiceRules::returnTrips($ids, now(), now()->copy()->addMinute()) as $id => $trip) {
+                if (! isset($until[$id]) || $trip['to']->gt($until[$id])) {
+                    $until[$id] = $trip['to'];
+                }
+            }
+        }
 
         return array_map(fn (Carbon $c) => $c->format('H:i'), $until);
     }

@@ -87,4 +87,74 @@ class HomeServiceRulesTest extends TestCase
         $this->assertFalse(HomeServiceRules::isHome(['service_location' => 'In Spa']));
         $this->assertFalse(HomeServiceRules::isHome([]));
     }
+
+    // A home visit as the booking board and the overlap checks see it (no database).
+    private function visit(string $time, array $attributes = [], ?array $services = null): \App\Models\Appointment
+    {
+        $visit = (new \App\Models\Appointment())->forceFill($attributes + [
+            'spa_branch_id' => 7,
+            'service_location' => 'Home Service',
+            'appointment_date' => '2026-11-20',
+            'appointment_time' => $time,
+        ]);
+        if ($services !== null) {
+            $visit->setRelation('services', collect($services)->map(function (array $line) {
+                $item = (new \App\Models\AppointmentServiceItem())->forceFill(['status' => $line[0]]);
+                $item->setRelation('therapistAssignments', collect([
+                    (new \App\Models\TherapistAssignment())->forceFill(['assignment_status' => $line[0], 'completed_at' => $line[1] ?? null]),
+                ]));
+
+                return $item;
+            }));
+        }
+
+        return $visit;
+    }
+
+    public function test_a_two_forty_visit_of_thirty_minutes_keeps_its_staff_until_three_thirty(): void
+    {
+        // The owner's example: booked 2:40 PM, 30 minutes, 20 minutes' travel. Free at 3:30, not 3:10.
+        $this->travelTime(7, 20);
+        [$from, $to] = HomeServiceRules::blockedWindow($this->visit('14:40'), 30);
+
+        $this->assertSame('14:20', $from->format('H:i'));
+        $this->assertSame('15:30', $to->format('H:i'));
+    }
+
+    public function test_a_visit_that_started_late_is_counted_from_the_arrival(): void
+    {
+        $this->travelTime(7, 20);
+        // Arrived (checked in) at 2:55 PM; the 30 minutes run from then. An extension is in the minutes.
+        [, $to] = HomeServiceRules::blockedWindow($this->visit('14:40', ['check_in_at' => '2026-11-20 14:55:00']), 45);
+
+        $this->assertSame('16:00', $to->format('H:i'));
+    }
+
+    public function test_an_early_arrival_still_counts_from_the_booked_time(): void
+    {
+        $this->travelTime(7, 20);
+        [, $to] = HomeServiceRules::blockedWindow($this->visit('14:40', ['check_in_at' => '2026-11-20 14:30:00']), 30);
+
+        $this->assertSame('15:30', $to->format('H:i'));
+    }
+
+    public function test_a_finished_visit_keeps_its_staff_for_the_trip_back_from_when_it_ended(): void
+    {
+        $this->travelTime(7, 20);
+        // Done at 3:20 PM (it ran over): back at the spa at 3:40 PM.
+        $visit = $this->visit('14:40', [], [['Completed', '2026-11-20 15:20:00'], ['Cancelled']]);
+        [, $to] = HomeServiceRules::blockedWindow($visit, 30);
+
+        $this->assertSame('15:40', $to->format('H:i'));
+    }
+
+    public function test_a_visit_still_running_is_judged_by_its_length_not_a_finished_part(): void
+    {
+        $this->travelTime(7, 20);
+        // One service done at 3:00 PM, another still going: the booked length still holds.
+        $visit = $this->visit('14:40', [], [['Completed', '2026-11-20 15:00:00'], ['In Progress']]);
+        [, $to] = HomeServiceRules::blockedWindow($visit, 60);
+
+        $this->assertSame('16:00', $to->format('H:i'));
+    }
 }

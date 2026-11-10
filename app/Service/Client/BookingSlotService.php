@@ -358,6 +358,12 @@ class BookingSlotService
                 ];
             });
 
+        // Staff on the way back from a home visit already done: busy until they are back.
+        $dayStart = Carbon::parse($date)->startOfDay();
+        foreach (\App\Service\Business\HomeServiceRules::returnTrips($all->pluck('id')->all(), $dayStart, $dayStart->copy()->endOfDay()) as $staffId => $trip) {
+            $busy->push(['need' => 1, 'start' => $trip['from'], 'end' => $trip['to'], 'home' => true, 'staff' => [$staffId]]);
+        }
+
         // A home visit being booked keeps its staff for the trip there and back too.
         $travel = $home ? \App\Service\Business\HomeServiceRules::travelMinutes($branch->id) : 0;
 

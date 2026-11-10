@@ -46,7 +46,14 @@ class ServiceExtensionService
     /** The longer lengths this service can be extended to, with what each adds and who it would keep waiting. */
     public function options(User $user, string $appointmentServiceUuid)
     {
-        $service = $this->find($user, $appointmentServiceUuid);
+        return $this->optionsFor($this->find($user, $appointmentServiceUuid), $user);
+    }
+
+    // The same for a line already found: the front desk's ($user), or the staff's at a home
+    // visit (no user: nothing can be overridden there; HomeVisitDoorService).
+    public function optionsFor(AppointmentServiceItem $service, ?User $user)
+    {
+        $service->loadMissing(['serviceVariant.service', 'appointment', 'therapistAssignments.staff:id,first_name,last_name', 'therapistAssignments.facility:id,name']);
         $appointment = $service->appointment;
 
         // An add-on is not a length of a service: there is nothing longer to move it to.
@@ -100,7 +107,7 @@ class ServiceExtensionService
             'started_at' => $startedAt?->toIso8601String(),
             'due_at' => $startedAt && $currentMinutes ? (clone $startedAt)->addMinutes($currentMinutes + $added)->toIso8601String() : null,
             // Whether this person may go ahead on a choice that needs an override.
-            'can_override' => app(PolicyGate::class)->mayOverride($user),
+            'can_override' => $user ? app(PolicyGate::class)->mayOverride($user) : false,
             'options' => array_map(function (array $option) use ($startedAt, $now, $staff, $rooms, $roomsHoldingOne, $bookings, $policy, $already, $added) {
                 $endsAt = $startedAt ? (clone $startedAt)->addMinutes($option['minutes'] + $added) : null;
                 // A new end past midnight still counts as later than everything today.
@@ -140,6 +147,17 @@ class ServiceExtensionService
     {
         return DB::transaction(function () use ($user, $appointmentServiceUuid, $payload) {
             $service = $this->find($user, $appointmentServiceUuid, lock: true);
+
+            return $this->extendLine($service, $payload, $user, $user->displayName());
+        });
+    }
+
+    // Extends a line already found (and locked). $user: the front desk, who may override the
+    // owner's rules with a reason; null at a home visit, where a rule that needs approval stops it
+    // (HomeVisitDoorService asks the desk instead). $by: who extended it, for the line's note.
+    public function extendLine(AppointmentServiceItem $service, array $payload, ?User $user, string $by)
+    {
+        return DB::transaction(function () use ($service, $payload, $user, $by) {
             $appointment = Appointment::whereKey($service->appointment_id)->lockForUpdate()->firstOrFail();
 
             if ($stale = AppointmentService::staleRefusal($appointment)) {
@@ -167,7 +185,7 @@ class ServiceExtensionService
 
             // Extra time in the owner's steps, not another length.
             if (! empty($payload['extra_minutes'])) {
-                return $this->extendByTime($user, $service, $appointment, $fromPackage, $currentMinutes, (int) $payload['extra_minutes']);
+                return $this->extendByTime($user, $by, $service, $appointment, $fromPackage, $currentMinutes, (int) $payload['extra_minutes']);
             }
 
             $target = ServiceVariant::where('uuid', $payload['service_variant_uuid'] ?? '')->first();
@@ -189,13 +207,12 @@ class ServiceExtensionService
             $extra = (int) $target->duration_minutes - $currentMinutes;
             $gate = app(PolicyGate::class);
             $overrides = $appointment->branch
-                ? $gate->check($user, FrontDeskPolicy::extension(BookingPolicy::for($appointment->branch), (int) ($service->extended_minutes ?? 0), $extra))
+                ? $this->checkRules($user, FrontDeskPolicy::extension(BookingPolicy::for($appointment->branch), (int) ($service->extended_minutes ?? 0), $extra))
                 : [];
             if (! is_array($overrides)) {
                 return $overrides;
             }
 
-            $by = $user->displayName();
             $price = (float) ($offered->custom_price ?? $target->price);
             $quantity = max(1, (int) $service->quantity);
 
@@ -220,17 +237,31 @@ class ServiceExtensionService
             if ($late = app(AppointmentAvailabilityService::class)->finishesPastClosing($appointment)) {
                 abort(422, $late);
             }
-            $gate->record($appointment, $overrides, $user);
+            if ($user) {
+                $gate->record($appointment, $overrides, $user);
+            }
             $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));
         });
     }
 
+    // The owner's extension rules: the front desk may override them (PolicyGate); with nobody
+    // signed in (a home visit) a rule that applies stops it.
+    private function checkRules(?User $user, array $problems)
+    {
+        if ($user) {
+            return app(PolicyGate::class)->check($user, $problems);
+        }
+        abort_if((bool) $problems, 422, collect($problems)->pluck('message')->filter()->first() ?? 'Extending this service needs the front desk.');
+
+        return [];
+    }
+
     // The line keeps its length (the same menu length, its own copy of the
     // minutes grows) and is charged the extra minutes at its per-minute rate —
     // on its own price, or for a package service on top of the package.
-    private function extendByTime(User $user, AppointmentServiceItem $service, Appointment $appointment, bool $fromPackage, int $currentMinutes, int $extra)
+    private function extendByTime(?User $user, string $by, AppointmentServiceItem $service, Appointment $appointment, bool $fromPackage, int $currentMinutes, int $extra)
     {
         if (! History::ready()) {
             return response()->json(['message' => 'Adding time needs the latest update — extend to a longer length instead.'], 422);
@@ -248,7 +279,7 @@ class ServiceExtensionService
         // The owner's extension settings: refused unless overridden with a
         // reason (PolicyGate) — kept on the booking below.
         $gate = app(PolicyGate::class);
-        $overrides = $policy ? $gate->check($user, FrontDeskPolicy::extension($policy, (int) ($service->extended_minutes ?? 0), $extra)) : [];
+        $overrides = $policy ? $this->checkRules($user, FrontDeskPolicy::extension($policy, (int) ($service->extended_minutes ?? 0), $extra)) : [];
         if (! is_array($overrides)) {
             return $overrides;
         }
@@ -260,7 +291,7 @@ class ServiceExtensionService
 
         $service->fill([
             'duration_minutes' => $currentMinutes + $extra,
-            'notes' => ServiceExtension::note($currentMinutes, $currentMinutes + $extra, $user->displayName(), $service->notes, $onTop),
+            'notes' => ServiceExtension::note($currentMinutes, $currentMinutes + $extra, $by, $service->notes, $onTop),
         ] + ($fromPackage
             ? ['extra_charge' => round((float) ($service->extra_charge ?? 0) + $onTop, 2)]
             : ['unit_price' => $unit, 'subtotal' => round($unit * $quantity, 2)])
@@ -271,7 +302,9 @@ class ServiceExtensionService
         if ($late = app(AppointmentAvailabilityService::class)->finishesPastClosing($appointment)) {
             abort(422, $late);
         }
-        $gate->record($appointment, $overrides, $user);
+        if ($user) {
+            $gate->record($appointment, $overrides, $user);
+        }
         $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
 
         return new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));

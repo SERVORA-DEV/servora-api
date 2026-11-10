@@ -159,6 +159,17 @@ Route::get('/spas/{uuid}/therapists/{staffUuid}/days-off', [SpaBranchController:
 // bookings can be started through it. Throttled against guessing codes.
 Route::get('/scanner/{token}', [ScannerController::class, 'show'])->middleware('throttle:60,1');
 Route::post('/scanner/{token}/start', [ScannerController::class, 'start'])->middleware('throttle:20,1');
+// The visit at the client's door, step by step: details, start, extend, done, payment. The
+// page re-reads the visit while it runs, so these get more room than a scan; named, so the
+// scan's own limit isn't shared with them (unnamed throttles share one counter).
+Route::prefix('/scanner/{token}/visit')->middleware('throttle:scanner-visit')->group(function () {
+    Route::post('/look', [ScannerController::class, 'look']);
+    Route::post('/start', [ScannerController::class, 'startVisit']);
+    Route::post('/extend-options', [ScannerController::class, 'extendOptions']);
+    Route::post('/extend', [ScannerController::class, 'extend']);
+    Route::post('/complete', [ScannerController::class, 'complete']);
+    Route::post('/checkout', [ScannerController::class, 'checkout']);
+});
 
 // Published reviews for a branch's page — first name + last initial only.
 Route::get('/spas/{uuid}/reviews', [SpaBranchController::class, 'publicReviews'])->whereUuid('uuid');
