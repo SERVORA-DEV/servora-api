@@ -53,6 +53,15 @@ class StaffTimeOffService
 
         $staff = $this->staffFor($user, $staffUuid);
 
+        // Someone timed in right now can't be put off today: the desk times them out first, so
+        // attendance, the queue and the dashboards never say "here" and "on leave" at once.
+        $today = \App\Support\BusinessDay::forBranch($staff->spa_branch_id ? (int) $staff->spa_branch_id : null);
+        if ($payload['starts_on'] <= $today && $payload['ends_on'] >= $today
+            && \App\Models\Attendance::where('staff_id', $staff->id)->where('attendance_date', $today)
+                ->whereNotNull('check_in_at')->whereNull('check_out_at')->exists()) {
+            return response()->json(['message' => trim("{$staff->first_name} {$staff->last_name}") . ' is timed in today. Time them out first (Attendance), then add the time off.'], 422);
+        }
+
         $row = StaffTimeOff::create([
             'staff_id' => $staff->id,
             'type' => $payload['type'],

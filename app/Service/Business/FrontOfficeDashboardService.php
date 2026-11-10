@@ -284,8 +284,10 @@ class FrontOfficeDashboardService
         $list = [];
 
         foreach ($rows as $row) {
-            $in = $row['check_in_at'] && ! $row['check_out_at'];
-            $leave = $row['status'] === 'On Leave';
+            // Off today in Employees (leave, sick, absent) counts as on leave even when timed in
+            // (a time in made before the leave was set): not on duty, not given clients.
+            $leave = $row['status'] === 'On Leave' || ! empty($row['time_off']);
+            $in = $row['check_in_at'] && ! $row['check_out_at'] && ! $leave;
             $scheduled = $row['scheduled_start'] && ! $row['is_day_off'];
 
             if ($leave) {
