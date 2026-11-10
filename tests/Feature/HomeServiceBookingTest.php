@@ -31,14 +31,21 @@ class HomeServiceBookingTest extends TestCase
 
     // The branch's own pin, a spot about 1 km away, and one about 30 km away.
     private const BRANCH = [7.07, 125.61];
+
     private const NEAR = [7.079, 125.61];
+
     private const FAR = [7.34, 125.61];
 
     private User $owner;
+
     private SpaBusiness $business;
+
     private SpaBranch $branch;
+
     private Service $service;
+
     private ServiceVariant $variant;
+
     private Staff $staff;
 
     protected function setUp(): void
@@ -59,7 +66,7 @@ class HomeServiceBookingTest extends TestCase
         $this->staff = Staff::factory()->create(['spa_branch_id' => $this->branch->id, 'role' => 'therapist', 'status' => 'active', 'home_service_available' => true]);
 
         $this->service = Service::factory()->create(['spa_business_id' => $this->business->id, 'name' => 'Swedish Massage', 'home_service_available' => true]);
-        $this->variant = ServiceVariant::factory()->create(['service_id' => $this->service->id, 'duration_minutes' => 60, 'price' => 700]);
+        $this->variant = ServiceVariant::factory()->create(['service_id' => $this->service->id, 'duration_minutes' => 60, 'price' => 700, 'service_location' => 'Home Service']);
         BranchService::factory()->create(['spa_branch_id' => $this->branch->id, 'service_variant_id' => $this->variant->id]);
         $this->makeBookable($this->branch);
     }
@@ -85,7 +92,7 @@ class HomeServiceBookingTest extends TestCase
             'appointment_date' => self::DATE,
             'appointment_time' => '10:00',
             'services' => [['service_variant_uuid' => $this->variant->uuid]],
-            'client' => ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => '0917' . random_int(1000000, 9999999)],
+            'client' => ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => '0917'.random_int(1000000, 9999999)],
             'service_location' => 'Home Service',
             'home_address' => '12 Acacia St, Davao City',
             'home_address_notes' => 'Blue gate',
@@ -100,7 +107,7 @@ class HomeServiceBookingTest extends TestCase
         $this->assertSame(0, Appointment::count());
     }
 
-    public function test_a_home_visit_inside_the_area_is_booked_with_the_fee_on_top(): void
+    public function test_a_home_visit_uses_the_home_price_without_a_visit_fee(): void
     {
         $this->offerHomeService(fee: 300);
 
@@ -108,8 +115,8 @@ class HomeServiceBookingTest extends TestCase
             ->assertSuccessful()
             ->assertJsonPath('data.is_home_service', true)
             ->assertJsonPath('data.home_address', '12 Acacia St, Davao City')
-            ->assertJsonPath('data.home_service_fee', 300.0)
-            ->assertJsonPath('data.total_amount', 1000.0);
+            ->assertJsonPath('data.home_service_fee', 0.0)
+            ->assertJsonPath('data.total_amount', 700.0);
 
         $appointment = Appointment::sole();
         $this->assertSame('Home Service', $appointment->service_location);
@@ -143,6 +150,7 @@ class HomeServiceBookingTest extends TestCase
     public function test_an_in_spa_booking_has_no_fee(): void
     {
         $this->offerHomeService(fee: 300);
+        $this->variant->update(['service_location' => 'In Spa']);
 
         $this->bookHome(self::NEAR, ['service_location' => 'In Spa'])
             ->assertSuccessful()
@@ -227,7 +235,7 @@ class HomeServiceBookingTest extends TestCase
         $this->getJson("/api/spas/{$this->branch->uuid}")
             ->assertOk()
             ->assertJsonPath('data.home_service.enabled', true)
-            ->assertJsonPath('data.home_service.fee', 250.0)
+            ->assertJsonPath('data.home_service.fee', 0.0)
             ->assertJsonPath('data.home_service.radius_km', 8)
             ->assertJsonPath('data.home_service.min_minutes', 60)
             ->assertJsonPath('data.services.0.home_service_available', true);

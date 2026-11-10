@@ -2,27 +2,31 @@
 
 namespace App\Service\Business;
 
+use App\Http\Resources\PackageResource;
 use App\Models\Addon;
+use App\Models\BranchPackage;
 use App\Models\Package;
 use App\Models\PackageAddon;
 use App\Models\PackageServiceItem;
 use App\Models\Service;
 use App\Models\ServiceVariant;
 use App\Models\User;
-use App\Support\PackagePlan;
-use App\Support\ServiceAddon;
-use Illuminate\Support\Facades\DB;
 use App\Repository\Business\BranchPackageRepository;
 use App\Repository\Business\PackageRepository;
 use App\Repository\Business\SpaBranchRepository;
 use App\Repository\SpaBusinessRepository;
-use App\Http\Resources\PackageResource;
+use App\Support\PackagePlan;
+use App\Support\ServiceAddon;
+use Illuminate\Support\Facades\DB;
 
 class PackageService
 {
     private PackageRepository $packageRepository;
+
     private SpaBusinessRepository $spaBusinessRepository;
+
     private SpaBranchRepository $spaBranchRepository;
+
     private BranchPackageRepository $branchPackageRepository;
 
     public function __construct(
@@ -53,6 +57,7 @@ class PackageService
         }
 
         $collection = $this->packageRepository->paginateForBusiness($business->id, $this->branchIds($user), $perPage);
+
         return PackageResource::collection($collection);
     }
 
@@ -103,6 +108,7 @@ class PackageService
         }
 
         $model = $this->packageRepository->findByUuidForBusiness($uuid, $business->id, $this->branchIds($user));
+
         return new PackageResource($model);
     }
 
@@ -139,10 +145,10 @@ class PackageService
                     $lines[] = $model->is_active ? 'switched it back on' : 'switched it off for every branch';
                 }
                 if ((float) $model->default_price !== $oldPrice) {
-                    $lines[] = 'price ' . ManagerChangeNotifier::peso($oldPrice) . ' → ' . ManagerChangeNotifier::peso($model->default_price);
+                    $lines[] = 'price '.ManagerChangeNotifier::peso($oldPrice).' → '.ManagerChangeNotifier::peso($model->default_price);
                 }
 
-                return $lines ? "changed the package {$model->name} in the catalog: " . implode('; ', $lines) . '.' : null;
+                return $lines ? "changed the package {$model->name} in the catalog: ".implode('; ', $lines).'.' : null;
             },
         );
 
@@ -177,7 +183,7 @@ class PackageService
     // The branches where this package is on.
     private function branchesOffering(int $packageId): array
     {
-        return \App\Models\BranchPackage::where('package_id', $packageId)
+        return BranchPackage::where('package_id', $packageId)
             ->where('is_available', true)
             ->distinct()
             ->pluck('spa_branch_id')
@@ -209,12 +215,14 @@ class PackageService
                 'spa_branch_id' => $spaBranch->id,
                 'is_available' => $branch['is_available'],
                 'custom_price' => $branch['custom_price'] ?? null,
+                ...(array_key_exists('home_custom_price', $branch) ? ['home_custom_price' => $branch['home_custom_price']] : []),
             ];
         }
 
         $this->branchPackageRepository->syncForPackage($package->id, $rows);
 
         $package = $this->packageRepository->findByUuidForBusiness($uuid, $business->id, $branchIds);
+
         return new PackageResource($package);
     }
 
@@ -253,7 +261,7 @@ class PackageService
                 return response()->json(['message' => "{$service->name} is in the package twice — use the quantity for more of the same."], 422);
             }
 
-            $lengths = $service->variants->values();
+            $lengths = $service->variants->filter(fn ($v) => ($v->service_location ?? 'In Spa') === 'In Spa')->values();
             $minutes = (int) ($item['duration_minutes'] ?? $variant?->duration_minutes ?? 0);
             if ($minutes <= 0) {
                 $at = PackagePlan::closest($lengths->map(fn ($v) => ['minutes' => $v->duration_minutes])->all(), null);
@@ -285,6 +293,8 @@ class PackageService
                 'variant' => $variant ?? (($at = PackagePlan::closest($lengths->map(fn ($v) => ['minutes' => $v->duration_minutes])->all(), $minutes)) === null ? null : $lengths[$at]),
                 'minutes' => $minutes,
                 'quantity' => max(1, (int) ($item['quantity'] ?? 1)),
+                'home_duration_minutes' => $item['home_duration_minutes'] ?? null,
+                'home_price' => $item['home_price'] ?? null,
                 'price' => isset($item['price']) && $item['price'] !== '' ? round((float) $item['price'], 2) : null,
                 'addons' => $addons,
             ];
@@ -315,6 +325,7 @@ class PackageService
                         'sort_order' => $index + 1,
                     ]);
                 }
+
                 continue;
             }
 
@@ -322,6 +333,8 @@ class PackageService
                 'package_id' => $package->id,
                 'service_id' => $row['service']->id,
                 'duration_minutes' => $row['minutes'],
+                'home_duration_minutes' => $row['home_duration_minutes'],
+                'home_price' => $row['home_price'],
                 'quantity' => $row['quantity'],
                 'sort_order' => $index + 1,
             ] + (Package::hasLinePrice() ? ['price' => $row['price'] ?? null] : []));

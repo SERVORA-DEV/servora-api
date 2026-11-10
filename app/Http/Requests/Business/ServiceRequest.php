@@ -2,8 +2,11 @@
 
 namespace App\Http\Requests\Business;
 
-use App\Rules\NoEmoji;
 use App\Models\Service;
+use App\Models\ServiceVariant;
+use App\Models\SpaBusiness;
+use App\Rules\NoEmoji;
+use App\Support\AccountScope;
 use App\Support\ServiceKind;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -30,7 +33,7 @@ class ServiceRequest extends FormRequest
             // owner's name collide with the global catalog.
             'name' => [
                 $isCreate ? 'required' : 'sometimes', 'string', 'max:150',
-                new NoEmoji(),
+                new NoEmoji,
                 Rule::unique('services', 'name')
                     ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
                     ->whereNotNull('spa_business_id')
@@ -90,6 +93,7 @@ class ServiceRequest extends FormRequest
             'variants' => [$isCreate ? 'required' : 'sometimes', 'array', 'min:1'],
             'variants.*.uuid' => 'nullable|uuid',
             'variants.*.duration_minutes' => 'required_with:variants|integer|min:1|max:720',
+            'variants.*.service_location' => ['sometimes', Rule::in(['In Spa', 'Home Service'])],
             'variants.*.price' => 'required_with:variants|numeric|min:0|max:1000000|decimal:0,2',
         ];
     }
@@ -99,7 +103,7 @@ class ServiceRequest extends FormRequest
         $validator->after(function ($validator) {
             $variants = collect($this->input('variants', []));
 
-            $durations = $variants->pluck('duration_minutes')->filter(fn ($d) => $d !== null);
+            $durations = $variants->map(fn ($v) => ($v['service_location'] ?? 'In Spa').':'.($v['duration_minutes'] ?? ''));
             if ($durations->count() !== $durations->unique()->count()) {
                 $validator->errors()->add('variants', 'Two options cannot share the same duration.');
             }
@@ -111,10 +115,39 @@ class ServiceRequest extends FormRequest
                 $kind = ServiceKind::of($this->input('service_type')
                     ?? ($serviceUuid ? Service::where('uuid', $serviceUuid)->value('service_type') : null));
                 $count = $this->has('variants')
-                    ? $variants->count()
-                    : ($serviceUuid ? \App\Models\ServiceVariant::whereHas('service', fn ($q) => $q->where('uuid', $serviceUuid))->count() : 0);
+                    ? $variants->where('service_location', '!=', 'Home Service')->count()
+                    : ($serviceUuid ? ServiceVariant::whereHas('service', fn ($q) => $q->where('uuid', $serviceUuid))->where('service_location', 'In Spa')->count() : 0);
+                $homeCount = $this->has('variants') ? $variants->where('service_location', 'Home Service')->count()
+                    : ($serviceUuid ? ServiceVariant::whereHas('service', fn ($q) => $q->where('uuid', $serviceUuid))->where('service_location', 'Home Service')->count() : 0);
+                if (! ServiceKind::hasLengths($kind) && $homeCount > 1) {
+                    $validator->errors()->add('variants', 'A procedure-based service has one home-service price — keep a single home option.');
+                }
                 if (! ServiceKind::hasLengths($kind) && $count !== 1) {
                     $validator->errors()->add('variants', 'A procedure-based service has one price — keep a single option.');
+                }
+            }
+
+            if ($this->hasAny(['variants', 'home_service_available', 'service_type', 'facility_required'])) {
+                $existing = $this->route('service') ? Service::where('uuid', $this->route('service'))->first() : null;
+                if (($this->input('home_service_available') ?? $existing?->home_service_available)
+                    && ServiceKind::needsFacility($this->input('service_type') ?? $existing?->service_type, (bool) ($this->input('facility_required') ?? $existing?->facility_required))) {
+                    $validator->errors()->add('home_service_available', 'A service requiring a facility cannot be offered at home.');
+                }
+                if (($this->input('home_service_available') ?? $existing?->home_service_available)
+                    && ($this->has('variants') ? $variants->where('service_location', 'Home Service')->isEmpty()
+                        : ! $existing?->variants()->where('service_location', 'Home Service')->exists())) {
+                    $validator->errors()->add('variants', 'Add home-service lengths and prices before enabling home service.');
+                }
+            }
+            if ($this->has('variants')) {
+                if ($variants->where('service_location', '!=', 'Home Service')->isEmpty()) {
+                    $validator->errors()->add('variants', 'Keep at least one in-spa option.');
+                }
+                foreach ($variants as $row) {
+                    if (! empty($row['uuid']) && ServiceVariant::where('uuid', $row['uuid'])
+                        ->where('service_location', '!=', $row['service_location'] ?? 'In Spa')->exists()) {
+                        $validator->errors()->add('variants', 'An existing option cannot change booking location.');
+                    }
                 }
             }
 
@@ -124,7 +157,7 @@ class ServiceRequest extends FormRequest
             if ($serviceUuid = $this->route('service')) {
                 $variantUuids = $variants->pluck('uuid')->filter()->unique();
                 if ($variantUuids->isNotEmpty()) {
-                    $validCount = \App\Models\ServiceVariant::whereIn('uuid', $variantUuids)
+                    $validCount = ServiceVariant::whereIn('uuid', $variantUuids)
                         ->whereHas('service', fn ($q) => $q->where('uuid', $serviceUuid))
                         ->count();
                     if ($validCount !== $variantUuids->count()) {
@@ -143,9 +176,9 @@ class ServiceRequest extends FormRequest
         }
 
         if ($user->role === 'business_owner') {
-            return \App\Models\SpaBusiness::where('owner_id', $user->id)->value('id');
+            return SpaBusiness::where('owner_id', $user->id)->value('id');
         }
 
-        return \App\Support\AccountScope::business($user)?->id;
+        return AccountScope::business($user)?->id;
     }
 }

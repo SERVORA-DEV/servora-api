@@ -1441,7 +1441,7 @@ class AppointmentService
     private function requestedMinutes(array $payload): ?int
     {
         $items = collect($payload['services'] ?? []);
-        $package = ! empty($payload['package_uuid']) ? (int) Package::where('uuid', $payload['package_uuid'])->value('duration_minutes') : 0;
+        $package = ! empty($payload['package_uuid']) ? (int) (Package::where('uuid', $payload['package_uuid'])->with(Package::contents())->first()?->totalMinutes(HomeServiceRules::isHome($payload)) ?? 0) : 0;
         if ($items->isEmpty() && $package <= 0) {
             return null;
         }
@@ -3440,15 +3440,20 @@ class AppointmentService
             abort(422, 'This package is not available at this branch.');
         }
 
+        $home = $appointment->isHomeService();
+        if ($home && ! $package->homeBookable()) {
+            abort(422, 'Review this package’s home-service lengths and price before booking it.');
+        }
+
         // Charged as a whole, so every service in it has to still exist: one removed
         // from the menu would otherwise be skipped and the package sold short.
         foreach ($package->packageServiceItems as $item) {
-            if (! $item->guideVariant()) {
+            if (! $item->guideVariant($home)) {
                 abort(422, 'This package can\'t be booked right now: '.($item->service?->name ?? 'one of its services').' is no longer on the menu.');
             }
         }
 
-        $price = (float) ($branchPackage->custom_price ?? $package->default_price);
+        $price = $home ? (float) ($branchPackage->home_custom_price ?? $package->home_price) : (float) ($branchPackage->custom_price ?? $package->default_price);
 
         $appointmentPackage = AppointmentPackage::create([
             'appointment_id' => $appointment->id,
@@ -3470,7 +3475,7 @@ class AppointmentService
             // knows which service it is (therapist skills, rooms, extending)
             // and what it lists for; the minutes the client gets are the
             // package's, kept on the line below.
-            $variant = $item->guideVariant();
+            $variant = $item->guideVariant($home);
             if (! $variant) {
                 continue;
             }
@@ -3488,9 +3493,9 @@ class AppointmentService
             // What the owner says this service is worth in the package, else the
             // branch's or the menu's price. It is what a voided service takes off
             // the package (App\Support\PackageShare), not an extra charge.
-            $componentPrice = Package::hasLinePrice() && $item->price !== null
+            $componentPrice = $home ? (float) ($item->home_price ?? $variant->price) : (Package::hasLinePrice() && $item->price !== null
                 ? (float) $item->price
-                : (float) ($branchService?->custom_price ?? $variant->price);
+                : (float) ($branchService?->custom_price ?? $variant->price));
             $componentQty = ($item->quantity ?? 1) * $quantity;
 
             $line = $this->appointmentServiceRepository->create([
@@ -3505,8 +3510,8 @@ class AppointmentService
             ]);
             // Its minutes in this package, over the menu length's the line
             // was just given (App\Support\History keeps the line's own).
-            if (History::ready() && $item->minutes() && (int) $line->duration_minutes !== $item->minutes()) {
-                $line->update(['duration_minutes' => $item->minutes()]);
+            if (History::ready() && $item->minutes($home) && (int) $line->duration_minutes !== $item->minutes($home)) {
+                $line->update(['duration_minutes' => $item->minutes($home)]);
             }
             $lineOf[$variant->service_id] ??= $line;
         }
@@ -3595,6 +3600,13 @@ class AppointmentService
     private function addServiceInternal(Appointment $appointment, int $branchId, array $item, ?int $sourcePackageId, int $sortOrder): AppointmentServiceItem
     {
         $variant = ServiceVariant::where('uuid', $item['service_variant_uuid'])->firstOrFail();
+        $location = $appointment->isHomeService() ? HomeServiceRules::HOME : HomeServiceRules::IN_SPA;
+        if (($variant->service_location ?? HomeServiceRules::IN_SPA) !== $location) {
+            abort(422, 'Choose a length and price for the selected booking location.');
+        }
+        if ($appointment->isHomeService() && (! $variant->service?->home_service_available || $variant->service?->facility_required)) {
+            abort(422, 'This service is not available for home service.');
+        }
 
         $branchService = BranchService::where('service_variant_id', $variant->id)
             ->where('spa_branch_id', $branchId)

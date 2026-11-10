@@ -2,16 +2,22 @@
 
 namespace App\Http\Resources;
 
-use App\Services\ImageUploadService;
-use App\Support\BranchHoursCalculator;
+use App\Models\SpaBranch;
 use App\Models\SpaBusinessSetting;
+use App\Service\Business\CustomerProgramService;
+use App\Service\Business\HomeServiceRules;
+use App\Service\Business\MarketplaceReadiness;
+use App\Service\Business\ProgramRewardService;
+use App\Service\Client\BookingPolicy;
+use App\Services\ImageUploadService;
+use App\Support\AppCache;
+use App\Support\BranchHoursCalculator;
+use App\Support\ProgramChannel;
 use App\Support\ReminderPolicy;
 use App\Support\SocialLinks;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
-use App\Service\Business\MarketplaceReadiness;
-use App\Service\Client\BookingPolicy;
 
 // Backs the unauthenticated GET /spas/{uuid} branch-detail endpoint. Same
 // "only what's safe to show a stranger" rule as NearbySpaResource/
@@ -45,7 +51,7 @@ class BranchDetailResource extends JsonResource
     /** @return array{methods: list<array{key: string, label: string}>, gcash_number: ?string, paymaya_number: ?string} */
     private function acceptedPayments(): array
     {
-        $settings = \App\Support\AppCache::businessSettings($this->spa_business_id)?->section('payments')
+        $settings = AppCache::businessSettings($this->spa_business_id)?->section('payments')
             ?? SpaBusinessSetting::DEFAULTS['payments'];
 
         $methods = [];
@@ -91,7 +97,7 @@ class BranchDetailResource extends JsonResource
                 // way the owner's preview shows them.
                 'tagline' => $this->business->tagline,
                 'verified' => $this->business->verification_status === 'Verified',
-                'other_branches_count' => \App\Models\SpaBranch::where('spa_business_id', $this->spa_business_id)
+                'other_branches_count' => SpaBranch::where('spa_business_id', $this->spa_business_id)
                     ->where('id', '!=', $this->id)
                     ->where('verification_status', 'Verified')
                     ->where('operating_status', 'Active')
@@ -156,7 +162,10 @@ class BranchDetailResource extends JsonResource
                         // dropdown labels, and sorting by price instead would let
                         // a custom_price override reorder it in a way that reads
                         // as a bug.
-                        'variants' => $rows
+                        'home_variants' => $rows->filter(fn ($bs) => $bs->serviceVariant->service_location === 'Home Service' && $service->home_service_available && ! $service->facility_required)
+                            ->sortBy(fn ($bs) => $bs->serviceVariant->duration_minutes)
+                            ->map(fn ($bs) => ['service_variant_uuid' => $bs->serviceVariant->uuid, 'duration_minutes' => (int) $bs->serviceVariant->duration_minutes, 'price' => (float) ($bs->custom_price ?? $bs->serviceVariant->price)])->values(),
+                        'variants' => $rows->filter(fn ($bs) => ($bs->serviceVariant->service_location ?? 'In Spa') === 'In Spa')
                             ->sortBy(fn ($bs) => $bs->serviceVariant->duration_minutes)
                             ->map(fn ($bs) => [
                                 'service_variant_uuid' => $bs->serviceVariant->uuid,
@@ -190,13 +199,15 @@ class BranchDetailResource extends JsonResource
                         'name' => $i->theService()->name,
                         'category' => $i->theService()->category,
                         'price' => $i->unitPrice(),
+                        'home_price' => (float) ($i->home_price ?? $i->guideVariant(true)?->price ?? 0),
                     ])->values(),
                     'included_services' => $items->map(fn ($i) => $i->theService()->name)
                         ->merge($bp->package->includedAddons()->map(fn ($row) => $row->addon->name))
                         ->values(),
                     // Only when every service in it can be done at home.
-                    'home_service_available' => $items->isNotEmpty()
-                        && $items->every(fn ($i) => (bool) $i->theService()->home_service_available),
+                    'home_service_available' => $bp->package->homeBookable(),
+                    'home_price' => $bp->package->homeBookable() ? (float) ($bp->home_custom_price ?? $bp->package->home_price) : null,
+                    'home_duration_minutes' => $bp->package->totalMinutes(true),
                 ];
             })->values(),
 
@@ -210,7 +221,7 @@ class BranchDetailResource extends JsonResource
 
             // Whether this branch sends therapists out, the flat fee and how
             // far (km from the branch's pin) — HomeServiceRules.
-            'home_service' => \App\Service\Business\HomeServiceRules::offer($this->resource),
+            'home_service' => HomeServiceRules::offer($this->resource),
 
             // False when the branch can't take a booking right now (no
             // therapist, no hours… — MarketplaceReadiness). The page still
@@ -233,15 +244,15 @@ class BranchDetailResource extends JsonResource
 
     private function programs(): array
     {
-        $rewards = app(\App\Service\Business\ProgramRewardService::class);
+        $rewards = app(ProgramRewardService::class);
         if (! $rewards->enabledFor($this->spa_business_id)) {
             return [];
         }
-        $programs = app(\App\Service\Business\CustomerProgramService::class);
+        $programs = app(CustomerProgramService::class);
 
         // The client app: a program limited to the front desk isn't shown.
         return $rewards->offeredAt($this->spa_business_id, $this->id)
-            ->filter(fn ($p) => $p->type === 'membership' || \App\Support\ProgramChannel::allows(\App\Support\ProgramChannel::of($p), \App\Support\ProgramChannel::APP))
+            ->filter(fn ($p) => $p->type === 'membership' || ProgramChannel::allows(ProgramChannel::of($p), ProgramChannel::APP))
             ->sortBy(fn ($p) => array_search($p->type, ['loyalty', 'voucher', 'discount', 'membership'], true))
             ->map(fn ($p) => [
                 'uuid' => $p->uuid,

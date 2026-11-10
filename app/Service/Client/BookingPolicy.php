@@ -4,6 +4,7 @@ namespace App\Service\Client;
 
 use App\Models\SpaBranch;
 use App\Models\SpaBusinessSetting;
+use App\Support\AppCache;
 use Carbon\Carbon;
 
 // The booking rules a client's self-booking must follow at one branch: the
@@ -93,7 +94,7 @@ class BookingPolicy
     private static function cache(): \ArrayObject
     {
         if (! app()->bound(self::CACHE)) {
-            app()->scoped(self::CACHE, fn () => new \ArrayObject());
+            app()->scoped(self::CACHE, fn () => new \ArrayObject);
         }
 
         return app(self::CACHE);
@@ -105,7 +106,7 @@ class BookingPolicy
         // a spa list would otherwise query them once per business.
         $settings = $branch->relationLoaded('business') && $branch->business?->relationLoaded('settings')
             ? $branch->business->settings
-            : \App\Support\AppCache::businessSettings($branch->spa_business_id);
+            : AppCache::businessSettings($branch->spa_business_id);
         $defaults = $settings?->section('booking_defaults')
             ?? SpaBusinessSetting::DEFAULTS['booking_defaults'];
         $overrides = (array) ($branch->booking_overrides ?? []);
@@ -121,6 +122,8 @@ class BookingPolicy
             };
         }
 
+        // Retained in the response for older clients; new bookings use catalog prices.
+        $policy['home_service_fee'] = 0;
         $policy['max_bookings_per_client_per_day'] = max(1, $policy['max_bookings_per_client_per_day']);
         $policy['booking_lead_time_minutes'] = $policy['booking_lead_time_hours'] * 60;
 
@@ -174,7 +177,7 @@ class BookingPolicy
 
         $lead = $policy['booking_lead_time_minutes'];
         if ($lead > 0 && $startsAt->lt($now->copy()->addMinutes($lead))) {
-            return 'Please book at least ' . self::formatMinutes($lead) . ' ahead.';
+            return 'Please book at least '.self::formatMinutes($lead).' ahead.';
         }
 
         $days = $policy['max_advance_booking_days'];
@@ -207,8 +210,8 @@ class BookingPolicy
         }
 
         if (empty($policy['allow_booking_overlap'])) {
-            return $minutes <= $limit ? null : 'This spa books up to ' . self::formatMinutes($limit) . ' per visit, and ' . ($package ? 'this package takes ' : 'these services take ')
-                . self::formatMinutes($minutes) . '. Pick something shorter, or book a second visit.';
+            return $minutes <= $limit ? null : 'This spa books up to '.self::formatMinutes($limit).' per visit, and '.($package ? 'this package takes ' : 'these services take ')
+                .self::formatMinutes($minutes).'. Pick something shorter, or book a second visit.';
         }
 
         if ($package) {
@@ -220,8 +223,8 @@ class BookingPolicy
             return null;
         }
 
-        return 'This spa books up to ' . self::formatMinutes($limit) . ' of services per visit, and these already take '
-            . self::formatMinutes($longest === null ? $minutes : $before) . ' before the last one. Remove a service, or book a second visit.';
+        return 'This spa books up to '.self::formatMinutes($limit).' of services per visit, and these already take '
+            .self::formatMinutes($longest === null ? $minutes : $before).' before the last one. Remove a service, or book a second visit.';
     }
 
     // 120 → "2 hours", 90 → "1 hour 30 minutes", 45 → "45 minutes".
@@ -232,10 +235,10 @@ class BookingPolicy
 
         $parts = [];
         if ($hours > 0) {
-            $parts[] = $hours . ($hours === 1 ? ' hour' : ' hours');
+            $parts[] = $hours.($hours === 1 ? ' hour' : ' hours');
         }
         if ($rest > 0 || ! $parts) {
-            $parts[] = $rest . ($rest === 1 ? ' minute' : ' minutes');
+            $parts[] = $rest.($rest === 1 ? ' minute' : ' minutes');
         }
 
         return implode(' ', $parts);
@@ -260,8 +263,8 @@ class BookingPolicy
                 return "This spa doesn't allow rescheduling from the app. Please contact the spa.";
             }
             if ($reschedules >= $limit) {
-                return "You've already moved this booking {$reschedules} " . ($reschedules === 1 ? 'time' : 'times')
-                    . ", the most this spa allows. Please contact the spa.";
+                return "You've already moved this booking {$reschedules} ".($reschedules === 1 ? 'time' : 'times')
+                    .', the most this spa allows. Please contact the spa.';
             }
         }
 

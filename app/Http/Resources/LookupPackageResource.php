@@ -25,15 +25,16 @@ class LookupPackageResource extends JsonResource
             // every one of them can be done at a client's home.
             'includes' => $this->package->packageServiceItems
                 ->filter(fn ($item) => $item->theService() !== null)
-                ->map(fn ($item) => ($item->quantity > 1 ? "{$item->quantity} × " : '') . $item->theService()->name
+                ->map(fn ($item) => ($item->quantity > 1 ? "{$item->quantity} × " : '').$item->theService()->name
                     // …and the add-ons that come with that service.
-                    . $this->package->includedAddons()->where('service_id', $item->theService()->id)->map(fn ($row) => " + {$row->addon->name}")->implode(''))
+                    .$this->package->includedAddons()->where('service_id', $item->theService()->id)->map(fn ($row) => " + {$row->addon->name}")->implode(''))
                 ->values(),
             'service_uuids' => $this->package->packageServiceItems
                 ->map(fn ($item) => $item->theService()?->uuid)
                 ->filter()->unique()->values(),
-            'home_service_available' => $this->package->packageServiceItems->isNotEmpty()
-                && $this->package->packageServiceItems->every(fn ($item) => (bool) $item->theService()?->home_service_available),
+            'home_service_available' => $this->package->homeBookable(),
+            'home_price' => $this->package->homeBookable() ? (float) ($this->home_custom_price ?? $this->package->home_price) : null,
+            'home_duration_minutes' => $this->package->totalMinutes(true),
         ];
     }
 }

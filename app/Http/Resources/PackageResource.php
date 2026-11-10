@@ -2,6 +2,9 @@
 
 namespace App\Http\Resources;
 
+use App\Models\Package;
+use App\Support\PackagePlan;
+use App\Support\ServiceKind;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -21,11 +24,14 @@ class PackageResource extends JsonResource
             'description' => $this->description,
             // Its fixed duration: the total of what is in it (PackagePlan).
             'duration_minutes' => $this->resource->totalMinutes() ?: null,
+            'home_service_available' => (bool) $this->home_service_available,
+            'home_price' => $this->home_price !== null ? (float) $this->home_price : null,
+            'home_duration_minutes' => $this->resource->totalMinutes(true),
             'default_price' => (float) $this->default_price,
             'is_active' => (bool) $this->is_active,
             // False until the migration has run: minutes then snap to the
             // nearest length on the menu and add-ons aren't kept.
-            'by_service' => \App\Models\Package::byService(),
+            'by_service' => Package::byService(),
 
             // What is in it: each service with the minutes it runs in this
             // package and the add-ons that come with it. unit_price is the
@@ -39,13 +45,15 @@ class PackageResource extends JsonResource
                     'service_uuid' => $item->theService()->uuid,
                     'name' => $item->theService()->name,
                     'category' => $item->theService()->category,
-                    'service_type' => \App\Support\ServiceKind::of($item->theService()->service_type),
+                    'service_type' => ServiceKind::of($item->theService()->service_type),
                     'duration_minutes' => $item->minutes(),
+                    'home_duration_minutes' => $item->home_duration_minutes,
+                    'home_price' => $item->home_price !== null ? (float) $item->home_price : null,
                     'quantity' => (int) $item->quantity,
                     // What one is worth in this package: the owner's price, else the menu's.
                     'unit_price' => $item->unitPrice(),
                     // True when the owner set it (false: it is the menu price).
-                    'price_set' => \App\Models\Package::hasLinePrice() && $item->price !== null,
+                    'price_set' => Package::hasLinePrice() && $item->price !== null,
                     'addons' => $this->resource->includedAddons()
                         ->where('service_id', $item->theService()->id)
                         ->values()
@@ -56,7 +64,7 @@ class PackageResource extends JsonResource
                             'duration_minutes' => (int) $row->addon->duration_minutes,
                         ]),
                 ])),
-            'original_price' => $this->whenLoaded('packageServiceItems', fn () => \App\Support\PackagePlan::estimate(
+            'original_price' => $this->whenLoaded('packageServiceItems', fn () => PackagePlan::estimate(
                 $this->packageServiceItems
                     ->filter(fn ($item) => $item->theService() !== null)
                     ->map(fn ($item) => ['price' => $item->unitPrice(), 'quantity' => $item->quantity])
@@ -71,6 +79,7 @@ class PackageResource extends JsonResource
                 'branch_uuid' => $bp->branch?->uuid,
                 'branch_name' => $bp->branch?->branch_name,
                 'is_available' => (bool) $bp->is_available,
+                'home_custom_price' => $bp->home_custom_price !== null ? (float) $bp->home_custom_price : null,
                 'custom_price' => $bp->custom_price !== null ? (float) $bp->custom_price : null,
             ])),
 

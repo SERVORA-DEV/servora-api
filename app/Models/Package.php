@@ -2,11 +2,11 @@
 
 namespace App\Models;
 
+use App\Support\PackagePlan;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use App\Support\PackagePlan;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 
@@ -25,6 +25,8 @@ class Package extends Model
         'description',
         'duration_minutes',
         'default_price',
+        'home_service_available',
+        'home_price',
         'loyalty_points',
         'is_active',
     ];
@@ -33,6 +35,8 @@ class Package extends Model
     {
         return [
             'default_price' => 'decimal:2',
+            'home_price' => 'decimal:2',
+            'home_service_available' => 'boolean',
             'is_active' => 'boolean',
         ];
     }
@@ -97,7 +101,15 @@ class Package extends Model
             $paths[] = 'packageAddons.addon';
         }
 
-        return array_map(fn ($path) => $via . $path, $paths);
+        return array_map(fn ($path) => $via.$path, $paths);
+    }
+
+    public function homeBookable(): bool
+    {
+        return (bool) $this->home_service_available && $this->home_price !== null
+            && $this->packageServiceItems->isNotEmpty()
+            && $this->packageServiceItems->every(fn ($i) => $i->theService()?->home_service_available
+                && ! $i->theService()?->facility_required && $i->home_duration_minutes > 0 && $i->guideVariant(true));
     }
 
     public function business()
@@ -124,21 +136,24 @@ class Package extends Model
      * time (App\Support\PackagePlan). The stored figure when what is in it
      * isn't loaded.
      */
-    public function totalMinutes(): int
+    public function totalMinutes(bool $home = false): int
     {
         if (! $this->relationLoaded('packageServiceItems')) {
-            return (int) ($this->duration_minutes ?? 0);
+            if (! $home) {
+                return (int) ($this->duration_minutes ?? 0);
+            }
+            $this->loadMissing(self::contents());
         }
 
         $total = PackagePlan::totalMinutes(
             $this->packageServiceItems
                 ->filter(fn (PackageServiceItem $item) => $item->theService() !== null)
-                ->map(fn (PackageServiceItem $item) => ['minutes' => $item->minutes(), 'quantity' => $item->quantity])
+                ->map(fn (PackageServiceItem $item) => ['minutes' => $item->minutes($home), 'quantity' => $item->quantity])
                 ->all(),
             $this->includedAddons()->map(fn (PackageAddon $row) => $row->addon->duration_minutes)->all(),
         );
 
-        return $total > 0 ? $total : (int) ($this->duration_minutes ?? 0);
+        return $home ? $total : ($total > 0 ? $total : (int) ($this->duration_minutes ?? 0));
     }
 
     // Ordered by sort_order — PackageServiceItem carries quantity/sort_order,

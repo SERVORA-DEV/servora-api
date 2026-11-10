@@ -3,6 +3,7 @@
 namespace App\Repository\Business;
 
 use App\Models\BranchPackage;
+use App\Models\Package;
 
 class BranchPackageRepository
 {
@@ -21,7 +22,7 @@ class BranchPackageRepository
     // mirrors BranchServiceRepository::listBookableForBranches.
     public function listBookableForBranches(array $spaBranchIds)
     {
-        return BranchPackage::with(\App\Models\Package::contents('package.'))
+        return BranchPackage::with(Package::contents('package.'))
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->where('is_available', true)
             ->get();
@@ -38,6 +39,7 @@ class BranchPackageRepository
                 [
                     'is_available' => $row['is_available'],
                     'custom_price' => $row['custom_price'] ?? null,
+                    ...(array_key_exists('home_custom_price', $row) ? ['home_custom_price' => $row['home_custom_price']] : []),
                 ]
             );
         }

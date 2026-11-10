@@ -29,7 +29,6 @@ class BookingDefaultsSettingsRequest extends FormRequest
     {
         return [
             'home_service_enabled' => 'sometimes|boolean',
-            'home_service_fee' => 'sometimes|required|integer|min:0|max:100000',
             'home_service_radius_km' => 'sometimes|required|integer|min:1|max:200',
             'home_service_min_minutes' => 'sometimes|required|integer|min:0|max:1440',
             'allow_reschedule' => 'sometimes|boolean',
@@ -48,7 +47,6 @@ class BookingDefaultsSettingsRequest extends FormRequest
             'no_show_policy' => 'sometimes|required|in:none,warn,suspend',
             'no_show_suspend_after' => 'sometimes|required|integer|min:1|max:20',
             'reservation_grace_minutes' => 'sometimes|required|integer|min:0|max:120',
-
 
             'queue_enabled' => 'sometimes|boolean',
             'auto_assign_queue' => 'sometimes|boolean',
