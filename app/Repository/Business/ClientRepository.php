@@ -30,6 +30,13 @@ class ClientRepository
             ->withMax(['appointments as last_visit_date' => $done], 'appointment_date')
             ->withSum(['appointments as visits_total' => $done], 'total_amount')
             ->withMin(['appointments as next_visit_date' => $booked], 'appointment_date')
+            // Where they last came (a finished visit, in scope); the list says that branch.
+            ->addSelect(['last_branch_id' => \App\Models\Appointment::select('spa_branch_id')
+                ->whereColumn('client_id', 'clients.id')
+                ->where('status', 'completed')
+                ->when($branchIds !== null, fn ($a) => $a->whereIn('spa_branch_id', $branchIds))
+                ->orderByDesc('appointment_date')->orderByDesc('appointment_time')
+                ->limit(1)])
             ->where('spa_business_id', $spaBusinessId)
             ->where('is_active', true)
             ->when($branchIds !== null, fn ($q) => $this->scopeToBranches($q, $branchIds))
