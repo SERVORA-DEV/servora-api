@@ -49,7 +49,9 @@ class FrontOfficeAttendanceController extends Controller
 
     public function fillInCandidates(Request $request)
     {
-        return $this->frontOfficeAttendanceService->fillInCandidates($request->user());
+        $data = $request->validate(['covering_for' => ['nullable', 'uuid']]);
+
+        return $this->frontOfficeAttendanceService->fillInCandidates($request->user(), $data['covering_for'] ?? null);
     }
 
     public function history(Request $request, string $uuid)

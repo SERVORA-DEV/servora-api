@@ -2956,75 +2956,126 @@ class AppointmentService
                 ->first();
             abort_if(! $appointment, 422, "This code isn't for a booking at {$branch->branch_name}. Check the code, or use the scanner of the branch the client booked with.");
 
-            $problem = HomeVisitStart::problem($appointment->status, $appointment->appointment_date, BookingPolicy::now());
-            abort_if($problem !== null, 422, (string) $problem);
-
-            $pending = AppointmentServiceItem::where('appointment_id', $appointment->id)
-                ->where('status', 'Pending')
-                // An add-on starts with its main service.
-                ->when(Addon::ready(), fn ($q) => $q->whereNull('parent_appointment_service_id'))
-                ->with('therapistAssignments')
-                ->orderBy('sort_order')
-                ->orderBy('id')
-                ->get();
-            abort_if($pending->isEmpty(), 422, 'There is nothing left to start on this visit.');
-
-            // Arrived: what Check In does, without a queue number.
-            if ($appointment->status === Appointment::STATUS_SCHEDULED) {
-                $appointment->update(['status' => Appointment::STATUS_CHECKED_IN, 'check_in_at' => now()]);
-            }
-
-            $started = collect();
-            $reason = null;
-            foreach ($pending as $service) {
-                $service->setRelation('appointment', $appointment);
-                $result = $this->startServiceInternal($service);
-                if ($result['ok']) {
-                    $started->push($service);
-                } else {
-                    $reason ??= $result['reason'];
-                }
-            }
-            abort_if($started->isEmpty(), 422, $this->scanRefusal($reason));
-
-            $appointment->update(['home_scanned_at' => now()]);
-
-            $staff = TherapistAssignment::whereIn('appointment_service_id', $started->pluck('id'))
-                ->where('assignment_status', 'In Progress')
-                ->whereNotNull('staff_id')
-                ->with('staff')
-                ->get()
-                ->map(fn ($a) => trim("{$a->staff?->first_name} {$a->staff?->last_name}"))
-                ->filter()
-                ->unique()
-                ->values();
-            $services = $started->map(fn (AppointmentServiceItem $s) => $s->displayName())->filter()->values();
-            $client = $appointment->client;
-            $clientName = trim("{$client?->first_name} {$client?->last_name}") ?: 'A client';
-
-            $appointment->setRelation('branch', $branch);
-            $this->clientNotifier->appointment(
-                $appointment,
-                'Your home service has started',
-                ($staff->isNotEmpty() ? $staff->join(', ', ' and ') : 'Your therapist').' started your '.($services->join(', ', ' and ') ?: 'service').'.',
-            );
-            $this->staffNotifier->appointment(
-                $appointment,
-                'Home visit started',
-                ($staff->isNotEmpty() ? $staff->join(', ', ' and ') : 'The staff')." started {$clientName}'s home service by scan. Booking no. {$appointment->appointment_number}.",
-            );
-
-            return [
-                'client_first_name' => $client?->first_name,
-                'booking_number' => $appointment->appointment_number,
-                'address' => $appointment->home_address,
-                'services' => $services->all(),
-                // Services that couldn't start beside those: they follow.
-                'still_to_start' => $pending->count() - $started->count(),
-                'staff' => $staff->all(),
-                'started_at' => now()->toIso8601String(),
-            ];
+            return $this->startHomeVisit($appointment, $branch, null);
         });
+    }
+
+    // The front desk starting a home visit when the client's QR can't be
+    // scanned (no app, a dead phone, no signal): exactly what the scan does —
+    // checked in and started with no queue number, and none of the walk-in
+    // questions (early, late, the queue's size) — and written on the booking
+    // as done at the desk, by whom, rather than by scan.
+    public function startHomeVisitAtDesk(User $user, string $uuid)
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+        if (! $business) {
+            return response()->json(['message' => 'No spa business found for this account.'], 422);
+        }
+
+        $branchIds = $this->branchIds($user);
+
+        return DB::transaction(function () use ($user, $branchIds, $uuid) {
+            $found = $this->appointmentRepository->findByUuidForBranches($uuid, $branchIds, []);
+            $appointment = Appointment::whereKey($found->id)->lockForUpdate()->firstOrFail();
+
+            if (! $appointment->isHomeService()) {
+                return response()->json(['message' => 'Only a home visit starts this way. Check the client in instead.'], 422);
+            }
+            if ($stale = self::staleRefusal($appointment)) {
+                return $stale;
+            }
+            // A suspended branch winds down: starting a visit starts something new.
+            if ($suspended = Suspension::refusal($appointment->branch)) {
+                return $suspended;
+            }
+
+            $this->startHomeVisit($appointment, $appointment->branch, $user);
+
+            return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
+        });
+    }
+
+    // A home visit's start, by scan ($by null) or at the desk ($by): checked in
+    // without a queue number, then the first service that can start and any
+    // that may run beside it. Every rule of startServiceInternal() holds.
+    // Called inside a transaction; abort() rolls the whole thing back.
+    private function startHomeVisit(Appointment $appointment, SpaBranch $branch, ?User $by): array
+    {
+        $problem = HomeVisitStart::problem($appointment->status, $appointment->appointment_date, BookingPolicy::now());
+        abort_if($problem !== null, 422, (string) $problem);
+
+        $pending = AppointmentServiceItem::where('appointment_id', $appointment->id)
+            ->where('status', 'Pending')
+            // An add-on starts with its main service.
+            ->when(Addon::ready(), fn ($q) => $q->whereNull('parent_appointment_service_id'))
+            ->with('therapistAssignments')
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get();
+        abort_if($pending->isEmpty(), 422, 'There is nothing left to start on this visit.');
+
+        // Arrived: what Check In does, without a queue number.
+        if ($appointment->status === Appointment::STATUS_SCHEDULED) {
+            $appointment->update(['status' => Appointment::STATUS_CHECKED_IN, 'check_in_at' => now()]);
+        }
+
+        $started = collect();
+        $reason = null;
+        foreach ($pending as $service) {
+            $service->setRelation('appointment', $appointment);
+            $result = $this->startServiceInternal($service);
+            if ($result['ok']) {
+                $started->push($service);
+            } else {
+                $reason ??= $result['reason'];
+            }
+        }
+        abort_if($started->isEmpty(), 422, $by ? ($reason ?? 'This visit can\'t be started yet.') : $this->scanRefusal($reason));
+
+        // How it was started: the scan's time, or a note of who started it at the desk.
+        if ($by) {
+            $appointment->update(['remarks' => trim(($appointment->remarks ? $appointment->remarks.' · ' : '')."Home visit started at the desk without a scan by {$by->displayName()}")]);
+        } else {
+            $appointment->update(['home_scanned_at' => now()]);
+        }
+
+        $staff = TherapistAssignment::whereIn('appointment_service_id', $started->pluck('id'))
+            ->where('assignment_status', 'In Progress')
+            ->whereNotNull('staff_id')
+            ->with('staff')
+            ->get()
+            ->map(fn ($a) => trim("{$a->staff?->first_name} {$a->staff?->last_name}"))
+            ->filter()
+            ->unique()
+            ->values();
+        $services = $started->map(fn (AppointmentServiceItem $s) => $s->displayName())->filter()->values();
+        $client = $appointment->client;
+        $clientName = trim("{$client?->first_name} {$client?->last_name}") ?: 'A client';
+
+        $appointment->setRelation('branch', $branch);
+        $this->clientNotifier->appointment(
+            $appointment,
+            'Your home service has started',
+            ($staff->isNotEmpty() ? $staff->join(', ', ' and ') : 'Your therapist').' started your '.($services->join(', ', ' and ') ?: 'service').'.',
+        );
+        $this->staffNotifier->appointment(
+            $appointment,
+            'Home visit started',
+            $by
+                ? "{$by->displayName()} started {$clientName}'s home service at the desk, without a scan. Booking no. {$appointment->appointment_number}."
+                : ($staff->isNotEmpty() ? $staff->join(', ', ' and ') : 'The staff')." started {$clientName}'s home service by scan. Booking no. {$appointment->appointment_number}.",
+        );
+
+        return [
+            'client_first_name' => $client?->first_name,
+            'booking_number' => $appointment->appointment_number,
+            'address' => $appointment->home_address,
+            'services' => $services->all(),
+            // Services that couldn't start beside those: they follow.
+            'still_to_start' => $pending->count() - $started->count(),
+            'staff' => $staff->all(),
+            'started_at' => now()->toIso8601String(),
+        ];
     }
 
     // startServiceInternal()'s reasons are worded for the front desk; the

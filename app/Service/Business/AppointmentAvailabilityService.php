@@ -3,6 +3,7 @@
 namespace App\Service\Business;
 
 use App\Models\Appointment;
+use App\Models\Attendance;
 use App\Models\BranchSchedule;
 use App\Models\Facility;
 use App\Models\Staff;
@@ -65,11 +66,32 @@ class AppointmentAvailabilityService
     // available (opt-in-if-configured, same stance as qualification) —
     // most branches won't have shift data entered before this module goes
     // live.
+    /**
+     * Why this staff member is away on $date, or null when they aren't: time off
+     * (Employees → Schedule → Time off) for any day, or the front desk's "On leave"
+     * on the attendance roster for that day. One answer for booking, assigning and
+     * every schedule, so they never disagree. Attendance is only read here.
+     */
+    public function leaveOn(int $staffId, string $date): ?string
+    {
+        $off = StaffTimeOff::overlapping($staffId, $date, $date)->first();
+        if ($off) {
+            return StaffTimeOff::LABELS[$off->type] ?? 'Time off';
+        }
+        $onLeave = Attendance::where('staff_id', $staffId)
+            ->whereDate('attendance_date', $date)
+            ->where('status', 'On Leave')
+            ->exists();
+
+        return $onLeave ? 'On leave' : null;
+    }
+
     public function staffMatchesSchedule(int $staffId, string $date, string $startTime, int $durationMinutes): array
     {
-        // Time off (Employees → Schedule → Time off) wins over any shift.
-        if (StaffTimeOff::overlapping($staffId, $date, $date)->isNotEmpty()) {
-            return ['ok' => false, 'reason' => 'This staff member is on time off that day and cannot be assigned.'];
+        // Time off, or marked on leave for the day, wins over any shift.
+        $away = $this->leaveOn($staffId, $date);
+        if ($away) {
+            return ['ok' => false, 'reason' => "This staff member is away that day ({$away}) and cannot be booked or assigned.", 'leave' => $away];
         }
 
         $dayOfWeek = Carbon::parse($date)->format('l');
@@ -141,6 +163,13 @@ class AppointmentAvailabilityService
     {
         $rows = StaffSchedule::where('staff_id', $staffId)->get();
         $timeOff = StaffTimeOff::overlapping($staffId, $from, $to);
+        // Marked "On leave" on the attendance roster (only read).
+        $leaveDays = Attendance::where('staff_id', $staffId)
+            ->whereBetween('attendance_date', [$from, $to])
+            ->where('status', 'On Leave')
+            ->get()
+            ->map(fn ($a) => $a->attendance_date->toDateString())
+            ->all();
 
         $daysOff = [];
         $cursor = Carbon::parse($from)->startOfDay();
@@ -158,7 +187,7 @@ class AppointmentAvailabilityService
                 fn ($row) => ! $row->is_day_off && $row->start_time && $row->end_time
             );
 
-            $away = $timeOff->contains(
+            $away = in_array($date, $leaveDays, true) || $timeOff->contains(
                 fn ($row) => $row->starts_on->toDateString() <= $date && $row->ends_on->toDateString() >= $date
             );
 

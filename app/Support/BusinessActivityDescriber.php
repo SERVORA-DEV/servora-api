@@ -62,6 +62,7 @@ final class BusinessActivityDescriber
         'AppointmentController@reschedule' => ['appointment.reschedule', 'bookings', 'Update', Appointment::class, "Moved[ {subject}'s] booking[ to {when}]"],
         'AppointmentController@cancel' => ['appointment.cancel', 'bookings', 'Cancel', Appointment::class, "Cancelled[ {subject}'s] booking"],
         'AppointmentController@checkIn' => ['appointment.check_in', 'bookings', 'Check In', Appointment::class, 'Checked in[ {subject}]'],
+        'AppointmentController@startHomeVisit' => ['appointment.home_start', 'bookings', 'Update', Appointment::class, "Started[ {subject}'s] home visit at the desk, without a scan"],
         'AppointmentController@markNoShow' => ['appointment.no_show', 'bookings', 'Update', Appointment::class, 'Marked[ {subject}] as a no-show'],
         'AppointmentController@addService' => ['appointment.add_service', 'bookings', 'Update', Appointment::class, "Added a service to[ {subject}'s] booking"],
         'AppointmentController@addPackage' => ['appointment.add_package', 'bookings', 'Update', Appointment::class, "Added a package to[ {subject}'s] visit"],

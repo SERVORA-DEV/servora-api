@@ -15,6 +15,7 @@ use App\Repository\Business\StaffRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Service\Business\StaffNotifier;
 use App\Support\AttendanceNotice;
+use App\Support\BranchHours;
 use App\Support\CheckOutRules;
 use Carbon\Carbon;
 use Carbon\CarbonPeriod;
@@ -535,6 +536,10 @@ class AttendanceService
             return response()->json(['message' => $serving], 422);
         }
 
+        if ($attendance->staff && ($outside = $this->outsideHoursProblem($attendance, $payload, $business))) {
+            return response()->json(['message' => $outside], 422);
+        }
+
         $updates = ['updated_by' => $user->id];
 
         if (array_key_exists('status', $payload)) {
@@ -555,6 +560,41 @@ class AttendanceService
         $this->tellManagers($user, $attendance->staff, $date, $oldValues, $model->only(self::AUDIT_FIELDS));
 
         return $this->showDetail($user, $uuid);
+    }
+
+    // A time in or out that is being changed has to fall inside the branch's opening hours that
+    // day. A time already on the record that is not being changed is left alone (so its remarks
+    // can still be corrected), and a time out after closing is fine where the business allows
+    // overtime. A closed day, or a branch with no hours or open round the clock, has no limit.
+    private function outsideHoursProblem(Attendance $attendance, array $payload, $business): ?string
+    {
+        $date = $attendance->attendance_date->format('Y-m-d');
+        $window = BranchHours::window((int) $attendance->staff->spa_branch_id, $date);
+
+        if (! $window || ! empty($window['closed'])) {
+            return null;
+        }
+
+        $day = Carbon::parse($date)->format('l');
+        $overtime = AttendanceStatusCalculator::overtimeAllowedFor($business);
+
+        foreach (['check_in_at' => 'Time in', 'check_out_at' => 'Time out'] as $field => $label) {
+            if (empty($payload[$field]) || $payload[$field] === $attendance->{$field}?->format('H:i')) {
+                continue;
+            }
+
+            $minutes = BranchHours::minutes($payload[$field]);
+            if ($field === 'check_out_at' && $minutes === 0) {
+                $minutes = 1440;
+            }
+            $afterCloseOk = $field === 'check_out_at' && $overtime;
+
+            if ($minutes < $window['open'] || (! $afterCloseOk && $minutes > $window['close'])) {
+                return "{$label} is outside the branch's hours on {$day} ({$window['label']}).";
+            }
+        }
+
+        return null;
     }
 
     public function clearAttendance(User $user, string $uuid, ?Request $request = null)
