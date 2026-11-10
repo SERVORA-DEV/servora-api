@@ -21,6 +21,10 @@ class ServiceVariant extends Model
         'service_id',
         'duration_minutes',
         'price',
+        // Home service (App\Support\HomePrices): its price at the client's home (null = the
+        // price above) and whether it is offered only for home visits.
+        'home_price',
+        'home_only',
         'loyalty_points',
     ];
 
@@ -28,6 +32,8 @@ class ServiceVariant extends Model
     {
         return [
             'price' => 'decimal:2',
+            'home_price' => 'decimal:2',
+            'home_only' => 'boolean',
         ];
     }
 

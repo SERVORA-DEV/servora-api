@@ -23,8 +23,11 @@ use App\Service\Client\BookingPolicy;
 //   • the services add up to at least the branch's minimum, when it has one
 //     (the client app is refused; the front desk is only warned).
 //
-// A flat fee (the same rules) is added to the booking and goes to the
-// therapist(s) who do the visit — see CommissionCalculator.
+// There is no flat fee per visit any more: a home visit is priced by each
+// service's, package's and add-on's own home price (App\Support\HomePrices),
+// and the staff earn from it at the home service rate (CommissionCalculator).
+// Bookings made while the fee existed keep theirs (home_service_fee), still
+// paid to the therapist(s) who did the visit.
 class HomeServiceRules
 {
     public const IN_SPA = 'In Spa';
@@ -51,7 +54,9 @@ class HomeServiceRules
         return [
             'enabled' => $on && $hasStaff,
             'staff_available' => $hasStaff,
-            'fee' => (float) $policy['home_service_fee'],
+            // No fee per visit (HomePrices): new home bookings are charged none. The old
+            // setting stays saved but is no longer read.
+            'fee' => 0.0,
             'radius_km' => (int) $policy['home_service_radius_km'],
             'travel_minutes' => (int) $policy['home_service_travel_minutes'],
         ];

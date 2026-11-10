@@ -183,6 +183,10 @@ class ServiceExtensionService
             if ($problem) {
                 return response()->json(['message' => $problem], 422);
             }
+            // A length offered only for home visits isn't one a spa visit can be extended to.
+            if (! $appointment->isHomeService() && \App\Support\HomePrices::homeOnly($target)) {
+                return response()->json(['message' => \App\Support\HomePrices::homeOnlyRefusal($target->loadMissing('service'))], 422);
+            }
 
             // The owner's extension settings: refused unless overridden with
             // a reason (PolicyGate) — kept on the booking below.
@@ -196,7 +200,8 @@ class ServiceExtensionService
             }
 
             $by = $user->displayName();
-            $price = (float) ($offered->custom_price ?? $target->price);
+            // A home visit: the longer length's home price, when it has one (HomePrices).
+            $price = \App\Support\HomePrices::variant($target, $offered, $appointment->isHomeService());
             $quantity = max(1, (int) $service->quantity);
 
             // A package keeps its price: only the difference between the two
@@ -323,23 +328,28 @@ class ServiceExtensionService
         return $first ? Carbon::parse($first) : null;
     }
 
-    /** Every length of this line's service offered at its branch, at the branch's price. */
+    /**
+     * Every length of this line's service offered at its branch, at the branch's price — on a home
+     * visit at its home price, and without the lengths offered only for home visits at the spa.
+     */
     private function lengthsOffered(AppointmentServiceItem $service): array
     {
         $serviceId = $service->serviceVariant?->service_id;
         if (! $serviceId) {
             return [];
         }
+        $home = (bool) $service->appointment?->isHomeService();
 
         return BranchService::where('spa_branch_id', $service->appointment->spa_branch_id)
             ->where('is_available', true)
             ->whereHas('serviceVariant', fn ($q) => $q->where('service_id', $serviceId))
             ->with('serviceVariant')
             ->get()
+            ->reject(fn (BranchService $b) => ! $home && \App\Support\HomePrices::homeOnly($b->serviceVariant))
             ->map(fn (BranchService $b) => [
                 'uuid' => $b->serviceVariant->uuid,
                 'minutes' => (int) $b->serviceVariant->duration_minutes,
-                'price' => (float) ($b->custom_price ?? $b->serviceVariant->price),
+                'price' => \App\Support\HomePrices::variant($b->serviceVariant, $b, $home),
             ])
             ->values()->all();
     }

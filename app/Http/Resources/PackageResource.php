@@ -22,6 +22,8 @@ class PackageResource extends JsonResource
             // Its fixed duration: the total of what is in it (PackagePlan).
             'duration_minutes' => $this->resource->totalMinutes() ?: null,
             'default_price' => (float) $this->default_price,
+            // Its price on a home visit (null = default_price; \App\Support\HomePrices).
+            'home_price' => \App\Support\HomePrices::ready() && $this->home_price !== null ? (float) $this->home_price : null,
             'is_active' => (bool) $this->is_active,
             // False until the migration has run: minutes then snap to the
             // nearest length on the menu and add-ons aren't kept.

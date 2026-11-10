@@ -42,6 +42,8 @@ class AddonRequest extends FormRequest
             ],
             'description' => 'nullable|string|max:1000',
             'price' => [$need, 'numeric', 'min:0', 'max:9999999'],
+            // Its price on a home visit; empty = the price above (App\Support\HomePrices).
+            'home_price' => 'sometimes|nullable|numeric|min:0|max:9999999',
             // What it adds to the service's time — 0 for one that takes none.
             'duration_minutes' => [$need, 'integer', 'min:0', 'max:600'],
             'categories' => [$need, 'array', 'min:1'],

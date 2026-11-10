@@ -34,6 +34,10 @@ class LookupServiceResource extends JsonResource
             'description' => $this->serviceVariant->service?->description,
             'duration_minutes' => $this->serviceVariant->duration_minutes,
             'price' => (float) ($this->custom_price ?? $this->serviceVariant->price),
+            // On a home visit it costs this instead (null = the price above), and a length only
+            // for home visits isn't offered at the spa (\App\Support\HomePrices).
+            'home_price' => \App\Support\HomePrices::ready() && $this->serviceVariant->home_price !== null ? (float) $this->serviceVariant->home_price : null,
+            'home_only' => \App\Support\HomePrices::homeOnly($this->serviceVariant),
             // The vouchers and discounts that cover this service (set by FrontOfficeLookupService
             // for the front desk's menu; empty anywhere else).
             'promotions' => $this->resource->getAttribute('promotions') ?? [],

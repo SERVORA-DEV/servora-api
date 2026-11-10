@@ -15,6 +15,8 @@ class AddonResource extends JsonResource
             'name' => $this->name,
             'description' => $this->description,
             'price' => (float) $this->price,
+            // Its price on a home visit (null = the price above; \App\Support\HomePrices).
+            'home_price' => \App\Support\HomePrices::ready() && $this->home_price !== null ? (float) $this->home_price : null,
             // What it adds to its main service's time (0 = none).
             'duration_minutes' => (int) $this->duration_minutes,
             // Where it is available (App\Support\ServiceAddon): these service

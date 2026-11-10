@@ -31,6 +31,8 @@ class Addon extends Model
         'name',
         'description',
         'price',
+        // Its price on a home visit; null = price (App\Support\HomePrices).
+        'home_price',
         'duration_minutes',
         'categories',
         'all_services',
@@ -41,6 +43,7 @@ class Addon extends Model
     {
         return [
             'price' => 'decimal:2',
+            'home_price' => 'decimal:2',
             'duration_minutes' => 'integer',
             'categories' => 'array',
             'all_services' => 'boolean',

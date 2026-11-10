@@ -25,6 +25,8 @@ class Package extends Model
         'description',
         'duration_minutes',
         'default_price',
+        // Its price on a home visit; null = default_price (App\Support\HomePrices).
+        'home_price',
         'loyalty_points',
         'is_active',
         // How many clients one booking of it is for (a Couples Massage: 2). 1 = one client.
@@ -35,6 +37,7 @@ class Package extends Model
     {
         return [
             'default_price' => 'decimal:2',
+            'home_price' => 'decimal:2',
             'is_active' => 'boolean',
             'client_count' => 'integer',
         ];

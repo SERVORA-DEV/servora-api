@@ -94,7 +94,8 @@ class HomeServiceReadiness
                         'has_pin' => $hasPin,
                         // HomeServiceRules::offer(): on, pinned, and someone to send.
                         'bookable' => $on && $hasPin && $goOut->isNotEmpty(),
-                        'fee' => (float) $policy['home_service_fee'],
+                        // No fee per visit any more (HomeServiceRules::offer).
+                        'fee' => 0.0,
                         'radius_km' => (int) $policy['home_service_radius_km'],
                         'travel_minutes' => (int) $policy['home_service_travel_minutes'],
                         'services' => [

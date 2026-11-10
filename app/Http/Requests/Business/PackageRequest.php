@@ -40,6 +40,8 @@ class PackageRequest extends FormRequest
             'description' => 'nullable|string',
             'duration_minutes' => 'nullable|integer|min:1|max:720',
             'default_price' => [$isCreate ? 'required' : 'sometimes', 'numeric', 'min:0', 'max:1000000', 'decimal:0,2'],
+            // Its price on a home visit; empty = default_price (App\Support\HomePrices).
+            'home_price' => 'sometimes|nullable|numeric|min:0|max:1000000|decimal:0,2',
             'is_active' => 'sometimes|boolean',
 
             // What is in it (App\Support\PackagePlan): services — not menu

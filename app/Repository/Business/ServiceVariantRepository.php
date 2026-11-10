@@ -24,6 +24,16 @@ class ServiceVariantRepository
                 'duration_minutes' => $row['duration_minutes'],
                 'price' => $row['price'],
             ];
+            // Home service (App\Support\HomePrices), once its columns exist. Only what was
+            // sent: a screen that doesn't send them leaves a length's home price as it was.
+            if (\App\Support\HomePrices::ready()) {
+                if (array_key_exists('home_price', $row)) {
+                    $attrs['home_price'] = \App\Support\HomePrices::clean($row['home_price']);
+                }
+                if (array_key_exists('home_only', $row)) {
+                    $attrs['home_only'] = (bool) $row['home_only'];
+                }
+            }
 
             if (! empty($row['uuid']) && $existing->has($row['uuid'])) {
                 $variant = $existing->get($row['uuid']);

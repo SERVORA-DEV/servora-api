@@ -49,6 +49,7 @@ use App\Support\ClientNotificationLink;
 use App\Support\ClientProfile;
 use App\Support\FrontDeskPolicy;
 use App\Support\History;
+use App\Support\HomePrices;
 use App\Support\HomeVisitStart;
 use App\Support\HourlyCapacity;
 use App\Support\PackageShare;
@@ -1791,7 +1792,8 @@ class AppointmentService
                 return response()->json(['message' => $problem], 422);
             }
 
-            $price = (float) $addon->price;
+            // A home visit: the add-on's home price, when it has one (HomePrices).
+            $price = HomePrices::addon($addon, $appointment->isHomeService());
             $line = $this->appointmentServiceRepository->create([
                 'appointment_id' => $appointment->id,
                 'parent_appointment_service_id' => $main->id,
@@ -3724,7 +3726,12 @@ class AppointmentService
             }
         }
 
-        $price = (float) ($branchPackage->custom_price ?? $package->default_price);
+        // A home visit: the package's home price, when it has one (HomePrices). Its services are
+        // then worth more (or less) in the same proportion, so what a voided service takes off and
+        // what the staff earn on each follow the home price.
+        $price = HomePrices::package($package, $branchPackage, $appointment->isHomeService());
+        $spaPrice = HomePrices::package($package, $branchPackage, false);
+        $homeScale = $spaPrice > 0 && $price !== $spaPrice ? $price / $spaPrice : 1.0;
 
         // A package for several clients (a Couples Massage): Client A books and pays for it, and
         // holds the staff for the others until they are added (SharedPackages). This appointment
@@ -3785,6 +3792,7 @@ class AppointmentService
             $componentPrice = Package::hasLinePrice() && $item->price !== null
                 ? (float) $item->price
                 : (float) ($branchService?->custom_price ?? $variant->price);
+            $componentPrice = round($componentPrice * $homeScale, 2);
             $componentQty = ($item->quantity ?? 1) * $quantity;
 
             $line = $this->appointmentServiceRepository->create([
@@ -3816,7 +3824,7 @@ class AppointmentService
                 if (! $main) {
                     continue;
                 }
-                $price = (float) $row->addon->price;
+                $price = HomePrices::addon($row->addon, $appointment->isHomeService());
                 $this->appointmentServiceRepository->create([
                     'appointment_id' => $appointment->id,
                     'source_appointment_package_id' => $appointmentPackage->id,
@@ -3904,8 +3912,14 @@ class AppointmentService
             abort(422, 'This service is not available at the selected branch.');
         }
 
+        // A length offered only for home visits can't be booked at the spa.
+        if (! $appointment->isHomeService() && HomePrices::homeOnly($variant)) {
+            abort(422, HomePrices::homeOnlyRefusal($variant->loadMissing('service')));
+        }
+
         $quantity = $item['quantity'] ?? 1;
-        $price = (float) ($branchService->custom_price ?? $variant->price);
+        // A home visit: the length's home price, when it has one (HomePrices).
+        $price = HomePrices::variant($variant, $branchService, $appointment->isHomeService());
 
         // Removing a service is a status flip, not a delete (rule 17:
         // preserve history) — so re-adding the exact same variant right

@@ -68,6 +68,10 @@ class AddonService
                 'name' => trim($payload['name']),
                 'description' => $payload['description'] ?? null,
                 'price' => $payload['price'],
+            ] + (\App\Support\HomePrices::ready() && array_key_exists('home_price', $payload)
+                // Its price on a home visit (App\Support\HomePrices); empty = the price above.
+                ? ['home_price' => \App\Support\HomePrices::clean($payload['home_price'])]
+                : []) + [
                 'duration_minutes' => (int) $payload['duration_minutes'],
                 'categories' => array_values($payload['categories']),
                 'all_services' => (bool) ($payload['all_services'] ?? true),
@@ -98,6 +102,10 @@ class AddonService
             }
 
             $fields = array_intersect_key($payload, array_flip(['name', 'description', 'price', 'duration_minutes', 'categories', 'all_services', 'is_active']));
+            // Its price on a home visit (App\Support\HomePrices), once the column exists.
+            if (\App\Support\HomePrices::ready() && array_key_exists('home_price', $payload)) {
+                $fields['home_price'] = \App\Support\HomePrices::clean($payload['home_price']);
+            }
             if (isset($fields['name'])) {
                 $fields['name'] = trim($fields['name']);
             }

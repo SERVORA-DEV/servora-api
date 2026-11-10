@@ -20,6 +20,8 @@ class LookupPackageResource extends JsonResource
             // Its fixed duration: the total of what is in it (PackagePlan).
             'duration_minutes' => $this->package->totalMinutes(),
             'price' => (float) ($this->custom_price ?? $this->package->default_price),
+            // On a home visit it costs this instead (null = the price above; \App\Support\HomePrices).
+            'home_price' => \App\Support\HomePrices::ready() && $this->package->home_price !== null ? (float) $this->package->home_price : null,
             // How many clients one booking of it is for (a Couples Massage: 2): it holds that
             // many staff, and the others are added as their own appointments at the same time.
             'client_count' => $this->package->clients(),

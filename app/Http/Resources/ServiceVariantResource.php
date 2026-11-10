@@ -18,6 +18,10 @@ class ServiceVariantResource extends JsonResource
             'uuid' => $this->uuid,
             'duration_minutes' => $this->duration_minutes,
             'price' => (float) $this->price,
+            // Home service (\App\Support\HomePrices): its price at the client's home (null = the price above)
+            // and whether it is offered only for home visits.
+            'home_price' => \App\Support\HomePrices::ready() && $this->home_price !== null ? (float) $this->home_price : null,
+            'home_only' => \App\Support\HomePrices::homeOnly($this->resource),
             // Not the variant's own concept — a variant is just a duration/
             // price option of its Service, so its status always mirrors the
             // parent's is_active (see ServiceResource, which sets this

@@ -83,6 +83,7 @@ class PackageService
             return $rows;
         }
 
+        $payload = $this->withHomePrice($payload);
         $payload['spa_business_id'] = $business->id;
         $payload['created_by'] = $user->id;
         $payload['is_active'] = $payload['is_active'] ?? true;
@@ -95,6 +96,23 @@ class PackageService
         });
 
         return new PackageResource($package->load(Package::contents()));
+    }
+
+    // Its home price (App\Support\HomePrices) on its way to the database: left out until the
+    // column exists, and an empty one stored as null (= its usual price at home too).
+    private function withHomePrice(array $payload): array
+    {
+        if (! array_key_exists('home_price', $payload)) {
+            return $payload;
+        }
+        if (! \App\Support\HomePrices::ready()) {
+            unset($payload['home_price']);
+
+            return $payload;
+        }
+        $payload['home_price'] = \App\Support\HomePrices::clean($payload['home_price']);
+
+        return $payload;
     }
 
     public function getPackage(User $user, string $uuid)
@@ -134,7 +152,7 @@ class PackageService
             return $rows;
         }
 
-        $model = $this->packageRepository->update($uuid, $payload);
+        $model = $this->packageRepository->update($uuid, $this->withHomePrice($payload));
 
         $this->managerChanges->tellCatalog(
             $user, $business->id,

@@ -94,6 +94,10 @@ class ServiceRequest extends FormRequest
             'variants.*.uuid' => 'nullable|uuid',
             'variants.*.duration_minutes' => 'required_with:variants|integer|min:1|max:720',
             'variants.*.price' => 'required_with:variants|numeric|min:0|max:1000000|decimal:0,2',
+            // Home service (App\Support\HomePrices): the length's price at the client's home
+            // (empty = its price above) and whether it is offered only for home visits.
+            'variants.*.home_price' => 'nullable|numeric|min:0|max:1000000|decimal:0,2',
+            'variants.*.home_only' => 'sometimes|boolean',
 
             // Done by several staff at once: one part per person ("Upper body", "Lower body"),
             // each with its share of the commission. Empty: one person does it. Checked as a
@@ -135,6 +139,25 @@ class ServiceRequest extends FormRequest
                         : 0;
                     if ($owned !== $partUuids->count()) {
                         $validator->errors()->add('parts', 'One or more parts do not belong to this service.');
+                    }
+                }
+            }
+
+            // A length only for home visits needs a service that can be done at home, and the
+            // spa still needs a length of its own to book.
+            $homeOnly = $variants->filter(fn ($v) => ! empty($v['home_only']));
+            if ($homeOnly->isNotEmpty()) {
+                if (! \App\Support\HomePrices::ready()) {
+                    $validator->errors()->add('variants', 'Lengths only for home visits aren\'t available yet. Save it without them for now.');
+                } else {
+                    $serviceUuid = $this->route('service');
+                    $home = $this->has('home_service_available')
+                        ? $this->boolean('home_service_available')
+                        : ($serviceUuid ? (bool) Service::where('uuid', $serviceUuid)->value('home_service_available') : false);
+                    if (! $home) {
+                        $validator->errors()->add('variants', 'Turn on "Available for home service" to add lengths only for home visits.');
+                    } elseif ($homeOnly->count() === $variants->count()) {
+                        $validator->errors()->add('variants', 'Keep at least one length for the spa. Lengths only for home visits come on top.');
                     }
                 }
             }
