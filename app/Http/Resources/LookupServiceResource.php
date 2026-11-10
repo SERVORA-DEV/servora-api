@@ -2,6 +2,8 @@
 
 namespace App\Http\Resources;
 
+use App\Models\Service;
+use App\Support\ServiceKind;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -28,11 +30,12 @@ class LookupServiceResource extends JsonResource
             'category' => $this->serviceVariant->service?->category,
             // time | procedure | facility: a procedure's duration below is an
             // estimate, a facility-based service needs no therapist.
-            'service_type' => \App\Support\ServiceKind::of($this->serviceVariant->service?->service_type),
-            'facility_required' => \App\Models\Service::hasFacilityRequirement()
-                && \App\Support\ServiceKind::needsFacility($this->serviceVariant->service?->service_type, (bool) $this->serviceVariant->service?->facility_required),
+            'service_type' => ServiceKind::of($this->serviceVariant->service?->service_type),
+            'facility_required' => Service::hasFacilityRequirement()
+                && ServiceKind::needsFacility($this->serviceVariant->service?->service_type, (bool) $this->serviceVariant->service?->facility_required),
             'description' => $this->serviceVariant->service?->description,
             'duration_minutes' => $this->serviceVariant->duration_minutes,
+            'service_location' => $this->serviceVariant->service_location ?? 'In Spa',
             'price' => (float) ($this->custom_price ?? $this->serviceVariant->price),
             // The vouchers and discounts that cover this service (set by FrontOfficeLookupService
             // for the front desk's menu; empty anywhere else).

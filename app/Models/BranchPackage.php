@@ -14,7 +14,7 @@ class BranchPackage extends Model
     protected $fillable = [
         'spa_branch_id',
         'package_id',
-        'custom_price',
+        'custom_price', 'home_custom_price',
         'is_available',
     ];
 
@@ -22,6 +22,7 @@ class BranchPackage extends Model
     {
         return [
             'custom_price' => 'decimal:2',
+            'home_custom_price' => 'decimal:2',
             'is_available' => 'boolean',
         ];
     }

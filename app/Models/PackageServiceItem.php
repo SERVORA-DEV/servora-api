@@ -21,6 +21,8 @@ class PackageServiceItem extends Model
         'package_id',
         'service_id',
         'duration_minutes',
+        'home_duration_minutes',
+        'home_price',
         'service_variant_id',
         'quantity',
         // What this service is worth in the package, per one (null: the menu's
@@ -67,9 +69,9 @@ class PackageServiceItem extends Model
     }
 
     /** How long it runs in this package. */
-    public function minutes(): ?int
+    public function minutes(bool $home = false): ?int
     {
-        $minutes = $this->duration_minutes ?? $this->serviceVariant?->duration_minutes;
+        $minutes = $home ? $this->home_duration_minutes : ($this->duration_minutes ?? $this->serviceVariant?->duration_minutes);
 
         return $minutes !== null ? (int) $minutes : null;
     }
@@ -91,14 +93,14 @@ class PackageServiceItem extends Model
      * The menu length nearest its minutes: what a booked line points at, and
      * the price it lists for. The pinned length for an older row.
      */
-    public function guideVariant(): ?ServiceVariant
+    public function guideVariant(bool $home = false): ?ServiceVariant
     {
-        if (! $this->service_id) {
+        if (! $this->service_id && ! $home) {
             return $this->serviceVariant;
         }
 
-        $variants = $this->service?->variants?->values() ?? collect();
-        $at = PackagePlan::closest($variants->map(fn ($v) => ['minutes' => $v->duration_minutes])->all(), $this->minutes());
+        $variants = ($this->theService()?->variants ?? collect())->filter(fn ($v) => ($v->service_location ?? 'In Spa') === ($home ? 'Home Service' : 'In Spa'))->values();
+        $at = PackagePlan::closest($variants->map(fn ($v) => ['minutes' => $v->duration_minutes])->all(), $this->minutes($home));
 
         return $at === null ? null : $variants[$at];
     }

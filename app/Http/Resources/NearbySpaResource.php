@@ -100,7 +100,7 @@ class NearbySpaResource extends JsonResource
         $prices = collect();
 
         if ($this->relationLoaded('branchServices')) {
-            $prices = $prices->merge($this->branchServices->map(
+            $prices = $prices->merge($this->branchServices->filter(fn ($bs) => ($bs->serviceVariant?->service_location ?? 'In Spa') === 'In Spa')->map(
                 fn ($bs) => $bs->custom_price ?? $bs->serviceVariant?->price
             ));
         }

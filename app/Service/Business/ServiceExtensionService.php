@@ -6,6 +6,7 @@ use App\Http\Resources\AppointmentResource;
 use App\Models\Appointment;
 use App\Models\AppointmentServiceItem;
 use App\Models\BranchService;
+use App\Models\Facility;
 use App\Models\Service;
 use App\Models\ServiceVariant;
 use App\Models\User;
@@ -17,8 +18,8 @@ use App\Service\Client\BookingPolicy;
 use App\Support\BookingBoard;
 use App\Support\FrontDeskPolicy;
 use App\Support\History;
+use App\Support\ServiceAddon;
 use App\Support\ServiceExtension;
-use App\Support\ServiceKind;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -40,8 +41,7 @@ class ServiceExtensionService
         private AppointmentRepository $appointmentRepository,
         private AppointmentServiceRepository $appointmentServiceRepository,
         private BillingRepository $billingRepository,
-    ) {
-    }
+    ) {}
 
     /** The longer lengths this service can be extended to, with what each adds and who it would keep waiting. */
     public function options(User $user, string $appointmentServiceUuid)
@@ -93,12 +93,12 @@ class ServiceExtensionService
         $rooms = $running->filter(fn ($a) => $a->facility)->mapWithKeys(fn ($a) => [$a->facility_id => $a->facility->name])->all();
         $bookings = $options && $startedAt ? $this->othersWaiting($appointment) : [];
         // A shared room has space for whoever is waiting, so running longer doesn't keep them out.
-        $roomLimits = \App\Models\Facility::clientLimits(array_keys($rooms));
+        $roomLimits = Facility::clientLimits(array_keys($rooms));
         $roomsHoldingOne = array_values(array_filter(array_keys($rooms), fn ($id) => ($roomLimits[$id] ?? 1) === 1));
         $now = now();
 
         // Its add-ons ride with it: every end time below is that much later.
-        $added = \App\Support\ServiceAddon::addedMinutes($service->liveAddons()->map(fn ($a) => $a->lengthMinutes())->all());
+        $added = ServiceAddon::addedMinutes($service->liveAddons()->map(fn ($a) => $a->lengthMinutes())->all());
 
         return ['data' => [
             'can_extend' => $problem === null && $options !== [],
@@ -194,7 +194,7 @@ class ServiceExtensionService
                 : null;
 
             $problem = ServiceExtension::targetProblem($target ? [
-                'same_service' => $current && $target->service_id === $current->service_id,
+                'same_service' => $current && $target->service_id === $current->service_id && ($target->service_location ?? 'In Spa') === ($appointment->isHomeService() ? 'Home Service' : 'In Spa'),
                 'minutes' => (int) $target->duration_minutes,
                 'offered' => $offered !== null,
             ] : null, $currentMinutes);
@@ -229,7 +229,7 @@ class ServiceExtensionService
             ] + ($fromPackage ? ['extra_charge' => round((float) ($service->extra_charge ?? 0) + $onTop, 2)] : [])
               + (PolicyGate::ready() ? ['extended_minutes' => (int) ($service->extended_minutes ?? 0) + $extra] : []));
             // The line is now this length: its own copy follows (History).
-            if (\App\Support\History::ready()) {
+            if (History::ready()) {
                 $service->copyFromMenu();
             }
             $service->save();
@@ -366,7 +366,7 @@ class ServiceExtensionService
 
         return BranchService::where('spa_branch_id', $service->appointment->spa_branch_id)
             ->where('is_available', true)
-            ->whereHas('serviceVariant', fn ($q) => $q->where('service_id', $serviceId))
+            ->whereHas('serviceVariant', fn ($q) => $q->where('service_id', $serviceId)->where('service_location', $service->appointment->isHomeService() ? 'Home Service' : 'In Spa'))
             ->with('serviceVariant')
             ->get()
             ->map(fn (BranchService $b) => [
@@ -401,7 +401,7 @@ class ServiceExtensionService
 
                 return [
                     'start' => BookingBoard::minutes((string) $a->appointment_time),
-                    'client' => trim(($a->client?->first_name ?? '') . ' ' . ($a->client?->last_name ?? '')) ?: 'a client',
+                    'client' => trim(($a->client?->first_name ?? '').' '.($a->client?->last_name ?? '')) ?: 'a client',
                     'staff' => array_map('intval', $staff),
                     'rooms' => array_map('intval', $waiting->pluck('facility_id')->filter()->unique()->values()->all()),
                 ];

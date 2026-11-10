@@ -26,8 +26,7 @@ class BranchOfferingService
         private SpaBusinessRepository $spaBusinessRepository,
         private SpaBranchRepository $spaBranchRepository,
         private ManagerChangeNotifier $managerChanges,
-    ) {
-    }
+    ) {}
 
     /**
      * @param  array<int, array{variant_uuid: string, is_available: bool, custom_price?: float|null}>  $services
@@ -77,7 +76,7 @@ class BranchOfferingService
         ];
         $update = ['is_available', 'custom_price', 'deleted_at'];
 
-        DB::transaction(function () use ($services, $packages, $variantIds, $packageIds, $row, $update) {
+        DB::transaction(function () use ($services, $packages, $variantIds, $packageIds, $row, $update, $branch) {
             if ($services) {
                 BranchService::upsert(
                     array_map(fn ($s) => $row($s) + ['service_variant_id' => $variantIds[$s['variant_uuid']]], $services),
@@ -87,9 +86,9 @@ class BranchOfferingService
             }
             if ($packages) {
                 BranchPackage::upsert(
-                    array_map(fn ($p) => $row($p) + ['package_id' => $packageIds[$p['package_uuid']]], $packages),
+                    array_map(fn ($p) => $row($p) + ['package_id' => $packageIds[$p['package_uuid']], 'home_custom_price' => array_key_exists('home_custom_price', $p) ? $p['home_custom_price'] : BranchPackage::where('spa_branch_id', $branch->id)->where('package_id', $packageIds[$p['package_uuid']])->value('home_custom_price')], $packages),
                     ['spa_branch_id', 'package_id'],
-                    $update,
+                    [...$update, 'home_custom_price'],
                 );
             }
         });
@@ -100,7 +99,7 @@ class BranchOfferingService
 
         $this->managerChanges->tell(
             $user, $branch, ManagerChangeNotifier::OFFERINGS, 'Branch Offerings Changed',
-            fn () => "changed what {$branch->branch_name} offers: " . $this->inWords($services, $packages) . '.',
+            fn () => "changed what {$branch->branch_name} offers: ".$this->inWords($services, $packages).'.',
         );
 
         $saved = fn (array $item, string $key) => [
@@ -135,7 +134,7 @@ class BranchOfferingService
             $hours = intdiv($minutes, 60);
             $rest = $minutes % 60;
 
-            return trim(($hours ? "{$hours}h" : '') . ($rest ? " {$rest}min" : ''));
+            return trim(($hours ? "{$hours}h" : '').($rest ? " {$rest}min" : ''));
         };
         $state = function (array $item): string {
             if (! $item['is_available']) {
@@ -146,21 +145,21 @@ class BranchOfferingService
             }
             $price = (float) $item['custom_price'];
 
-            return 'now ₱' . number_format($price, fmod($price, 1) ? 2 : 0);
+            return 'now ₱'.number_format($price, fmod($price, 1) ? 2 : 0);
         };
 
         $lines = [];
         foreach ($services as $item) {
             $variant = $variants[$item['variant_uuid']] ?? null;
-            $lines[] = trim(($variant?->service?->name ?? 'A service') . ' ' . $length($variant?->duration_minutes)) . ' ' . $state($item);
+            $lines[] = trim(($variant?->service?->name ?? 'A service').' '.$length($variant?->duration_minutes)).' '.$state($item);
         }
         foreach ($packages as $item) {
-            $lines[] = ($packageNames[$item['package_uuid']] ?? 'A package') . ' ' . $state($item);
+            $lines[] = ($packageNames[$item['package_uuid']] ?? 'A package').' '.$state($item);
         }
 
         $shown = array_slice($lines, 0, 4);
         $more = count($lines) - count($shown);
 
-        return implode('; ', $shown) . ($more > 0 ? "; and {$more} more" : '');
+        return implode('; ', $shown).($more > 0 ? "; and {$more} more" : '');
     }
 }

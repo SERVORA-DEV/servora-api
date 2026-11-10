@@ -20,6 +20,7 @@ class ServiceVariant extends Model
         'uuid',
         'service_id',
         'duration_minutes',
+        'service_location',
         'price',
         'loyalty_points',
     ];

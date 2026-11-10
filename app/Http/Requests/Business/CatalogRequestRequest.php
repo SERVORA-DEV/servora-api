@@ -28,7 +28,7 @@ class CatalogRequestRequest extends FormRequest
     {
         return [
             'kind' => 'required|string|in:service,package,addon',
-            'name' => ['required', 'string', 'min:2', 'max:120', new NoEmoji()],
+            'name' => ['required', 'string', 'min:2', 'max:120', new NoEmoji],
             // The same list a service itself is held to (ServiceRequest).
             'category' => ['nullable', Rule::in(config('service_categories'))],
             'details' => 'nullable|string|max:1000',
@@ -47,6 +47,9 @@ class CatalogRequestRequest extends FormRequest
                 'payload.homeServiceAvailable' => 'nullable|boolean',
                 'payload.code' => 'nullable|string|max:20',
                 'payload.description' => 'nullable|string|max:2000',
+                'payload.homeVariants' => 'nullable|array|max:20',
+                'payload.homeVariants.*.durationMinutes' => 'required|integer|min:1|max:720',
+                'payload.homeVariants.*.price' => 'required|numeric|min:0|max:1000000',
                 'payload.variants' => 'nullable|array|min:1|max:20',
                 'payload.variants.*.durationMinutes' => 'required|integer|min:1|max:1440',
                 'payload.variants.*.price' => 'required|numeric|min:0|max:10000000',
@@ -54,6 +57,10 @@ class CatalogRequestRequest extends FormRequest
             'package' => [
                 'payload.code' => 'nullable|string|max:20',
                 'payload.description' => 'nullable|string|max:2000',
+                'payload.homeServiceAvailable' => 'nullable|boolean',
+                'payload.homePrice' => 'nullable|numeric|min:0|max:1000000',
+                'payload.services.*.homeDurationMinutes' => 'nullable|integer|min:1|max:600',
+                'payload.services.*.homePrice' => 'nullable|numeric|min:0|max:1000000',
                 'payload.defaultPrice' => 'nullable|numeric|min:0|max:10000000',
                 'payload.services' => 'nullable|array|min:1|max:40',
                 'payload.services.*.serviceId' => "required|{$uuid}",

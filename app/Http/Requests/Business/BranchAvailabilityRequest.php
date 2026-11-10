@@ -23,6 +23,7 @@ class BranchAvailabilityRequest extends FormRequest
             'branches' => 'required|array|min:1',
             'branches.*.branch_uuid' => 'required|uuid|exists:spa_branches,uuid',
             'branches.*.is_available' => 'required|boolean',
+            'branches.*.home_custom_price' => 'nullable|numeric|min:0|max:1000000|decimal:0,2',
             'branches.*.custom_price' => 'nullable|numeric|min:0',
         ];
     }

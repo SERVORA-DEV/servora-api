@@ -4,6 +4,7 @@ namespace App\Repository\Business;
 
 use App\Models\ServiceVariant;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class ServiceVariantRepository
 {
@@ -15,35 +16,31 @@ class ServiceVariantRepository
     // payload-driven only, never inferred from duration.
     public function syncForService(int $serviceId, array $variants): Collection
     {
-        $existing = ServiceVariant::where('service_id', $serviceId)->get()->keyBy('uuid');
-        $kept = [];
-        $result = collect();
+        return DB::transaction(function () use ($serviceId, $variants) {
+            $existing = ServiceVariant::where('service_id', $serviceId)->get()->keyBy('uuid');
+            $submitted = collect($variants)->pluck('uuid')->filter()->all();
+            ServiceVariant::where('service_id', $serviceId)->whereNotIn('uuid', $submitted)->delete();
+            $result = collect();
 
-        foreach ($variants as $row) {
-            $attrs = [
-                'duration_minutes' => $row['duration_minutes'],
-                'price' => $row['price'],
-            ];
+            foreach ($variants as $row) {
+                $attrs = [
+                    'duration_minutes' => $row['duration_minutes'],
+                    'price' => $row['price'],
+                    'service_location' => $row['service_location'] ?? 'In Spa',
+                ];
 
-            if (! empty($row['uuid']) && $existing->has($row['uuid'])) {
-                $variant = $existing->get($row['uuid']);
-                $variant->update($attrs);
-            } else {
-                $variant = ServiceVariant::create($attrs + ['service_id' => $serviceId]);
+                if (! empty($row['uuid']) && $existing->has($row['uuid'])) {
+                    $variant = $existing->get($row['uuid']);
+                    $variant->update($attrs);
+                } else {
+                    $variant = ServiceVariant::create($attrs + ['service_id' => $serviceId]);
+                }
+
+                $result->push($variant);
             }
 
-            $kept[] = $variant->uuid;
-            $result->push($variant);
-        }
-
-        // Soft-delete anything this payload dropped. Its branch_services/
-        // package_services rows are left in place (soft delete, not a
-        // cascading hard delete) — same "orphaned but not destroyed"
-        // convention appointment_services/rewards already accept for their
-        // own loose service_variant_id references.
-        ServiceVariant::where('service_id', $serviceId)->whereNotIn('uuid', $kept)->delete();
-
-        return $result;
+            return $result;
+        });
     }
 
     public function findByUuidForBusiness(string $uuid, int $spaBusinessId, ?array $branchIds = null)

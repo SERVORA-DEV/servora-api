@@ -23,11 +23,12 @@ use App\Service\Client\BookingPolicy;
 //   • the services add up to at least the branch's minimum, when it has one
 //     (the client app is refused; the front desk is only warned).
 //
-// A flat fee (the same rules) is added to the booking and goes to the
-// therapist(s) who do the visit — see CommissionCalculator.
+// New visits use home-service catalog prices and the existing home commission
+// policy. Historical flat fees remain on the appointments that recorded them.
 class HomeServiceRules
 {
     public const IN_SPA = 'In Spa';
+
     public const HOME = 'Home Service';
 
     private const EARTH_RADIUS_KM = 6371.0088;
@@ -51,7 +52,7 @@ class HomeServiceRules
         return [
             'enabled' => $on && $hasStaff,
             'staff_available' => $hasStaff,
-            'fee' => (float) $policy['home_service_fee'],
+            'fee' => 0.0, // Legacy fees remain only on existing appointments.
             'radius_km' => (int) $policy['home_service_radius_km'],
             'travel_minutes' => (int) $policy['home_service_travel_minutes'],
         ];
@@ -224,7 +225,7 @@ class HomeServiceRules
         $radius = $offer['radius_km'];
         if ($radius > 0 && $distance > $radius) {
             return $fail(sprintf(
-                "That address is %s km from %s, outside its home-service area of %d km.",
+                'That address is %s km from %s, outside its home-service area of %d km.',
                 number_format($distance, 1), $branch->branch_name, $radius,
             ));
         }

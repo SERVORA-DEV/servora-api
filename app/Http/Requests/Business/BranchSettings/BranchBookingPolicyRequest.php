@@ -12,7 +12,7 @@ class BranchBookingPolicyRequest extends FormRequest
     // The rules a branch may set for itself instead of following Business
     // Defaults — mirrors POLICY_RULES on the web (useSettingsHub.ts).
     public const KEYS = [
-        'home_service_enabled', 'home_service_fee', 'home_service_radius_km', 'home_service_travel_minutes', 'allow_reschedule', 'max_reschedules_per_booking',
+        'home_service_enabled', 'home_service_radius_km', 'home_service_travel_minutes', 'allow_reschedule', 'max_reschedules_per_booking',
         'max_advance_booking_days', 'max_services_per_booking', 'max_bookings_per_client_per_day', 'max_bookings_per_hour', 'booking_lead_time_hours',
         // What a missed booking does at this branch, and how many pause booking.
         'no_show_policy', 'no_show_suspend_after',

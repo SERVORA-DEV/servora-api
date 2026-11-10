@@ -17,6 +17,7 @@ class ServiceVariantResource extends JsonResource
         return [
             'uuid' => $this->uuid,
             'duration_minutes' => $this->duration_minutes,
+            'service_location' => $this->service_location ?? 'In Spa',
             'price' => (float) $this->price,
             // Not the variant's own concept — a variant is just a duration/
             // price option of its Service, so its status always mirrors the

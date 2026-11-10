@@ -2,8 +2,11 @@
 
 namespace App\Http\Requests\Business;
 
-use App\Rules\NoEmoji;
+use App\Models\Package;
+use App\Models\Service;
 use App\Models\SpaBusiness;
+use App\Rules\NoEmoji;
+use App\Support\AccountScope;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -23,7 +26,7 @@ class PackageRequest extends FormRequest
             // live rows only: a deleted package no longer holds its name or code.
             'name' => [
                 $isCreate ? 'required' : 'sometimes', 'string', 'max:150',
-                new NoEmoji(),
+                new NoEmoji,
                 Rule::unique('packages', 'name')
                     ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
                     ->whereNull('deleted_at')
@@ -40,6 +43,10 @@ class PackageRequest extends FormRequest
             'description' => 'nullable|string',
             'duration_minutes' => 'nullable|integer|min:1|max:720',
             'default_price' => [$isCreate ? 'required' : 'sometimes', 'numeric', 'min:0', 'max:1000000', 'decimal:0,2'],
+            'home_service_available' => 'sometimes|boolean',
+            'home_price' => 'nullable|required_if:home_service_available,true|numeric|min:0|max:1000000|decimal:0,2',
+            'services.*.home_duration_minutes' => 'nullable|required_if:home_service_available,true|integer|min:1|max:600',
+            'services.*.home_price' => 'nullable|numeric|min:0|max:1000000|decimal:0,2',
             'is_active' => 'sometimes|boolean',
 
             // What is in it (App\Support\PackagePlan): services — not menu
@@ -71,6 +78,7 @@ class PackageRequest extends FormRequest
 
     public function withValidator($validator): void
     {
+        // A package for several clients: each client needs something, and only the clients it is for.
         $validator->after(function ($validator) {
             if (! \App\Models\Package::hasSharing() || ! $this->has('services')) {
                 return;
@@ -97,6 +105,33 @@ class PackageRequest extends FormRequest
                 }
             }
         });
+
+        // A home-service package: every service in it needs reviewed home options and a home length.
+        $validator->after(function ($validator) {
+            $existing = $this->route('package') ? Package::where('uuid', $this->route('package'))->first() : null;
+            if (! ($this->input('home_service_available') ?? $existing?->home_service_available)) {
+                return;
+            }
+            $items = $this->input('services');
+            if ($items === null) {
+                if (! $existing?->homeBookable()) {
+                    $validator->errors()->add('services', 'Configure home-service lengths and prices before enabling this package.');
+                }
+
+                return;
+            }
+            if (! $items) {
+                $validator->errors()->add('services', 'A home-service package needs services.');
+            }
+            foreach ($items as $item) {
+                $service = Service::where('spa_business_id', $this->resolvedBusinessId())->where('uuid', $item['service_uuid'] ?? '')->with('variants')->first();
+                if (! $service?->home_service_available || $service->facility_required
+                    || ! $service->variants->contains(fn ($v) => $v->service_location === 'Home Service')
+                    || empty($item['home_duration_minutes'])) {
+                    $validator->errors()->add('services', 'Every included service needs reviewed home-service options and a home duration.');
+                }
+            }
+        });
     }
 
     public function messages(): array
@@ -120,6 +155,6 @@ class PackageRequest extends FormRequest
             return SpaBusiness::where('owner_id', $user->id)->value('id');
         }
 
-        return \App\Support\AccountScope::business($user)?->id;
+        return AccountScope::business($user)?->id;
     }
 }
