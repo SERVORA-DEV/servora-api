@@ -3246,6 +3246,13 @@ class AppointmentService
             // Room-only rows (staff_id null, rule 7) have no therapist to
             // check busy-ness for — only the facility check below applies.
             if ($assignment->staff_id) {
+                // Off today (leave, sick, absent — Employees or the desk's "On leave"): they can't
+                // start a client, even when assigned before the leave was set. Give it to someone else.
+                $today = BusinessDay::forBranch((int) $service->appointment->spa_branch_id);
+                if ($away = $this->availabilityService->leaveOn($assignment->staff_id, $today)) {
+                    $who = \App\Models\Staff::find($assignment->staff_id);
+                    return ['ok' => false, 'reason' => trim(($who?->first_name ?? '') . ' ' . ($who?->last_name ?? '')) . " is off today ({$away}). Give the service to someone else."];
+                }
                 $busy = $this->availabilityService->isStaffCurrentlyBusy($assignment->staff_id, $assignment->id, $alongside);
                 if (! $busy['ok']) {
                     return ['ok' => false, 'reason' => $busy['reason']];
