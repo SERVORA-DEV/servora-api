@@ -184,13 +184,16 @@ class BookingBoardService
             ->pluck('staff_id')
             ->all();
 
-        return $therapists->map(function (Staff $staff) use ($schedules, $onLeave) {
+        return $therapists->map(function (Staff $staff) use ($schedules, $onLeave, $date) {
             $rows = $schedules->get($staff->id) ?? collect();
 
             return [
                 'id' => $staff->id,
                 'uuid' => $staff->uuid,
-                'on_leave' => in_array($staff->id, $onLeave, true),
+                // Away that day: marked on leave on the roster, or time off set on the employee
+                // (Employees → Set leave dates). Either wins over a shift or a day off, the same
+                // as when a booking is saved (AppointmentAvailabilityService::leaveOn).
+                'on_leave' => in_array($staff->id, $onLeave, true) || $this->availabilityService->leaveOn($staff->id, $date) !== null,
                 'has_schedule' => $rows->isNotEmpty(),
                 'home_service' => $staff->takesHomeService(),
                 'shifts' => $rows

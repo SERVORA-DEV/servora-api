@@ -7,6 +7,7 @@ use App\Models\BranchSchedule;
 use App\Models\SpaBusiness;
 use App\Models\Staff;
 use App\Models\StaffSchedule;
+use App\Models\StaffTimeOff;
 use App\Support\AttendanceKept;
 use App\Support\History;
 use Carbon\Carbon;
@@ -246,6 +247,14 @@ class AttendanceStatusCalculator
             return $this->result($storedStatus, null, $workMinutes, $scheduledStart, $scheduledEnd, $isDayOff, false, false, $overtimeMinutes);
         }
 
+        // Leave dates set on the employee (Employees → Set leave dates) and nobody timed in:
+        // the day is On Leave — never Absent, never missing a time in, so no absent penalty
+        // (AttendancePenaltyReader reads these same days). Read only: nothing is written to
+        // the attendance row. Someone who came in anyway is worked out from their time in.
+        if (! $checkIn && $this->timeOffOn($staff->id, $date)) {
+            return $this->result('On Leave', null, null, $scheduledStart, $scheduledEnd, $isDayOff, false, false);
+        }
+
         if ($storedStatus === 'Absent' && ! $checkIn) {
             return $this->result('Absent', null, null, $scheduledStart, $scheduledEnd, $isDayOff, true, false);
         }
@@ -311,6 +320,33 @@ class AttendanceStatusCalculator
         }
 
         return $this->result(null, null, null, $scheduledStart, $scheduledEnd, $isDayOff, false, false);
+    }
+
+    /** @var array<int, Collection> each staff member's time off, read once per request */
+    private array $timeOff = [];
+
+    /** The leave dates covering this day for this staff member, if any (none before the table exists). */
+    public function timeOffOn(int $staffId, string $date): ?StaffTimeOff
+    {
+        if (! StaffTimeOff::ready()) {
+            return null;
+        }
+        $this->timeOff[$staffId] ??= StaffTimeOff::where('staff_id', $staffId)->get();
+
+        return $this->timeOff[$staffId]->first(fn (StaffTimeOff $t) => $t->starts_on->toDateString() <= $date && $t->ends_on->toDateString() >= $date);
+    }
+
+    /** The minutes [start, end) of their own working shift on $date (an overnight one ends past 1440), or null. */
+    public function shiftWindow(Collection $staffSchedules, string $date): ?array
+    {
+        $s = $this->matchSchedule($staffSchedules, $date);
+        if (! $s || $s->is_day_off || ! $s->start_time || ! $s->end_time) {
+            return null;
+        }
+        $start = (int) substr($s->start_time, 0, 2) * 60 + (int) substr($s->start_time, 3, 2);
+        $end = (int) substr($s->end_time, 0, 2) * 60 + (int) substr($s->end_time, 3, 2);
+
+        return [$start, $end <= $start ? $end + 1440 : $end];
     }
 
     // Exposes matchSchedule() to callers that only need a yes/no answer —

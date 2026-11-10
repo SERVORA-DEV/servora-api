@@ -15,6 +15,9 @@ class StaffTimeOff extends Model
 {
     public const TYPES = ['leave', 'sick', 'absent', 'other'];
 
+    /** How each type is said everywhere it shows (schedules, booking, dashboards). */
+    public const LABELS = ['leave' => 'On leave', 'sick' => 'Sick', 'absent' => 'Absent', 'other' => 'Time off'];
+
     protected $table = 'staff_time_off';
 
     protected $fillable = [

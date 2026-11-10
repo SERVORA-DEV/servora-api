@@ -7,6 +7,7 @@ use App\Models\BranchSchedule;
 use App\Models\SpaBusiness;
 use App\Models\SpaBusinessSetting;
 use App\Models\Staff;
+use App\Models\StaffTimeOff;
 use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\Business\AttendanceRepository;
@@ -16,6 +17,7 @@ use Carbon\Carbon;
 use App\Support\BusinessDay;
 use App\Support\CheckOutRules;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 // Front Desk's narrow attendance surface — check-in/check-out, sending
 // someone home early or marking them on leave for today, and checking in a
@@ -135,6 +137,12 @@ class FrontOfficeAttendanceService
             return response()->json(['message' => $this->nameOf($staff) . ' is already timed in.'], 422);
         }
 
+        // On leave dates set in Employees: not timed in from the desk (the same as they can't be
+        // booked). A manager removes the leave dates first if they come in after all.
+        if ($off = $this->statusCalculator->timeOffOn($staff->id, $date)) {
+            return response()->json(['message' => $this->nameOf($staff) . ' is on leave until ' . $off->ends_on->format('M j') . ' (set in Employees), so they can\'t be timed in. A manager can remove the leave dates first.'], 422);
+        }
+
         // Staff are timed in only while the branch is open (its hours, Branch Settings → Operations).
         $week = BusinessDay::week($staff->spa_branch_id);
         if (! BusinessDay::isOpen($week, now())) {
@@ -187,7 +195,14 @@ class FrontOfficeAttendanceService
             $this->notifyBranch($staff, $user, 'Fill-in timed in', $this->nameOf($staff) . ' is covering for ' . $this->nameOf($coveringFor) . ' today.');
         }
 
-        return $this->mutationResponse('Timed in.', $business, $staff, $branchIds);
+        $response = $this->mutationResponse('Timed in.', $business, $staff, $branchIds);
+        // The covered person's bookings that day are still theirs: the desk is shown them, to
+        // give to the cover (or someone else) and let the client know.
+        if ($coveringFor) {
+            $response['covered_bookings'] = $this->bookingsOf($coveringFor, $date);
+        }
+
+        return $response;
     }
 
     public function checkOut(User $user, string $staffUuid, ?Request $request = null)
@@ -263,6 +278,15 @@ class FrontOfficeAttendanceService
             if ($existing?->check_in_at && ! $existing->check_out_at) {
                 return response()->json(['message' => "{$name} is timed in — use \"Leaving early\" instead."], 422);
             }
+            if ($off = $this->statusCalculator->timeOffOn($staff->id, $date)) {
+                return response()->json(['message' => "{$name} is already on leave until " . $off->ends_on->format('M j') . ' (set in Employees).'], 422);
+            }
+            if ($existing?->status === 'On Leave') {
+                return response()->json(['message' => "{$name} is already marked on leave today."], 422);
+            }
+            if (! $this->statusCalculator->hasWorkingScheduleForDate($staff->schedules, $date)) {
+                return response()->json(['message' => "{$name} has no shift today, so there's nothing to mark."], 422);
+            }
             $payload = ['status' => 'On Leave'];
         }
 
@@ -290,15 +314,20 @@ class FrontOfficeAttendanceService
     // Therapists who could fill in right now — active at this branch and not
     // on the floor, not on leave and not sent home today — least earned this
     // pay period first, so extra shifts go to whoever needs them most.
-    public function fillInCandidates(User $user)
+    // $coveringForUuid: the therapist being covered, so people whose own shift doesn't overlap
+    // theirs can be offered too. Without it, only those free that day.
+    public function fillInCandidates(User $user, ?string $coveringForUuid = null)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
         if (! $business) {
             return $this->noBusiness();
         }
 
+        $branchIds = $this->branchIds($user);
+        $covered = $coveringForUuid ? $this->staffRepository->findByUuidForBranches($coveringForUuid, $branchIds) : null;
+
         return [
-            'data' => $this->candidateRows($business, $this->branchIds($user)),
+            'data' => $this->candidateRows($business, $branchIds, excludeStaffId: $covered?->id),
             'commission' => $this->commissionMeta($business),
         ];
     }
@@ -433,6 +462,7 @@ class FrontOfficeAttendanceService
             $attendance = $staff->attendance->first();
             $branchSchedule = $branchSchedules->get($staff->spa_branch_id, collect())->firstWhere('day_of_week', $dayOfWeek);
             $resolved = $this->statusCalculator->resolve($staff, $attendance, $date, $staff->schedules, $branchSchedule, graceMinutes: $grace, allowOvertime: $overtime);
+            $off = $this->statusCalculator->timeOffOn($staff->id, $date);
             $coveringId = $attendance?->covering_for_staff_id;
             // A single-row roster (after a write) won't hold the covered person.
             $covering = $coveringId ? ($byId->get($coveringId) ?? Staff::find($coveringId, ['id', 'first_name', 'last_name'])) : null;
@@ -463,6 +493,8 @@ class FrontOfficeAttendanceService
                     ? BusinessDay::isOpen(BusinessDay::week((int) $staff->spa_branch_id), $attendance->check_out_at)
                     : null,
                 'remarks' => $attendance?->remarks,
+                // Leave dates set in Employees covering this day: why they are On Leave, and until when.
+                'time_off' => $off ? ['label' => StaffTimeOff::LABELS[$off->type] ?? 'Time off', 'until' => $off->ends_on->toDateString()] : null,
                 'covering_for_name' => $covering ? $this->nameOf($covering) : null,
                 'covered_by_name' => $coveredBy[$staff->id] ?? null,
                 // {service, client} while they are performing a service.
@@ -478,14 +510,31 @@ class FrontOfficeAttendanceService
     private function candidateRows(SpaBusiness $business, array $branchIds, ?int $excludeStaffId = null): array
     {
         $date = BusinessDay::forBranch(\App\Support\AccountScope::workingBranchId($branchIds));
-        $therapists = $this->attendanceRepository->rosterForRange($branchIds, $date, $date)
+        $roster = $this->attendanceRepository->rosterForRange($branchIds, $date, $date);
+        // The shift being covered (when someone is): a therapist with their own shift that day
+        // can cover it only if the two don't overlap — otherwise the gap just moves to theirs.
+        $coveredStaff = $excludeStaffId ? $roster->firstWhere('id', $excludeStaffId) : null;
+        $coveredShift = $coveredStaff ? $this->statusCalculator->shiftWindow($coveredStaff->schedules, $date) : null;
+
+        $therapists = $roster
             ->where('role', 'therapist')
             ->reject(fn (Staff $s) => $s->id === $excludeStaffId)
-            ->filter(function (Staff $s) {
+            ->filter(function (Staff $s) use ($date, $coveredShift) {
                 $a = $s->attendance->first();
                 $onFloor = $a?->check_in_at && ! $a->check_out_at;
+                if ($onFloor || $a?->status === 'On Leave' || $a?->left_early) {
+                    return false;
+                }
+                // On leave dates set in Employees: not asked to cover.
+                if ($this->statusCalculator->timeOffOn($s->id, $date)) {
+                    return false;
+                }
+                $own = $this->statusCalculator->shiftWindow($s->schedules, $date);
+                if (! $own) {
+                    return true; // free that day: a day off, or no shift
+                }
 
-                return ! $onFloor && $a?->status !== 'On Leave' && ! $a?->left_early;
+                return $coveredShift && ($own[1] <= $coveredShift[0] || $coveredShift[1] <= $own[0]);
             })
             ->values();
 
@@ -514,6 +563,30 @@ class FrontOfficeAttendanceService
             ])
             ->values()
             ->all();
+    }
+
+    // One staff member's bookings on a day still waiting to be served and assigned to them
+    // (the same as the bookings listed when leave dates are saved), for the desk to reassign.
+    private function bookingsOf(Staff $staff, string $date): array
+    {
+        return DB::table('therapist_assignments as ta')
+            ->join('appointment_services as s', 's.id', '=', 'ta.appointment_service_id')
+            ->join('appointments as a', 'a.id', '=', 's.appointment_id')
+            ->leftJoin('clients as c', 'c.id', '=', 'a.client_id')
+            ->where('ta.staff_id', $staff->id)
+            ->where('ta.assignment_status', 'Assigned')
+            ->whereIn('a.status', ['scheduled', 'checked_in'])
+            ->whereNull('a.deleted_at')
+            ->whereDate('a.appointment_date', $date)
+            ->orderBy('a.appointment_time')
+            ->get(['a.uuid', 'a.appointment_time', 'c.first_name', 'c.last_name'])
+            ->unique('uuid')
+            ->map(fn ($r) => [
+                'appointment_id' => $r->uuid,
+                'time' => $r->appointment_time ? substr((string) $r->appointment_time, 0, 5) : null,
+                'client_name' => trim(($r->first_name ?? '') . ' ' . ($r->last_name ?? '')) ?: 'Client',
+            ])
+            ->values()->all();
     }
 
     // The updated roster row for one staff member, so the page can swap it

@@ -565,6 +565,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
                 // Time off (leave, sick, absent) by date range, on top of the
                 // weekly schedule. Read by AppointmentAvailabilityService.
+                // Everyone's time off in a date range (the Shifts schedule, the dashboard).
+                Route::get('time-off', [StaffTimeOffController::class, 'range'])->middleware('permission:staff_view');
                 Route::get('staff/{uuid}/time-off', [StaffTimeOffController::class, 'index'])->middleware('permission:staff_view')->whereUuid('uuid');
                 Route::post('staff/{uuid}/time-off', [StaffTimeOffController::class, 'store'])->middleware('permission:staff_update')->whereUuid('uuid');
                 Route::delete('staff/{uuid}/time-off/{timeOffUuid}', [StaffTimeOffController::class, 'destroy'])->middleware('permission:staff_update')->whereUuid(['uuid', 'timeOffUuid']);
@@ -624,6 +626,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('appointment', [AppointmentController::class, 'store'])->middleware('permission:appointment_create');
                 Route::get('appointment/{uuid}', [AppointmentController::class, 'show'])->middleware('permission:appointment_view');
                 Route::post('appointment/{uuid}/checkin', [AppointmentController::class, 'checkIn'])->middleware('permission:appointment_checkin');
+                // A home visit started at the desk without the client's QR: checks in and starts, no queue.
+                Route::post('appointment/{uuid}/home-start', [AppointmentController::class, 'startHomeVisit'])->middleware('permission:appointment_complete');
                 Route::post('appointment/{uuid}/cancel', [AppointmentController::class, 'cancel'])->middleware('permission:appointment_cancel');
                 Route::post('appointment/{uuid}/no-show', [AppointmentController::class, 'markNoShow'])->middleware('permission:appointment_cancel');
                 Route::patch('appointment/{uuid}/reschedule', [AppointmentController::class, 'reschedule'])->middleware('permission:appointment_update');
@@ -757,6 +761,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('frontoffice/packages', [FrontOfficeLookupController::class, 'packages'])->middleware('permission:appointment_view');
                 Route::get('frontoffice/addons', [FrontOfficeLookupController::class, 'addons'])->middleware('permission:appointment_view');
                 Route::get('frontoffice/schedule', [FrontOfficeLookupController::class, 'schedule'])->middleware('permission:appointment_view');
+                // The branch's time off in a date range (the staff calendar, the dashboard).
+                Route::get('frontoffice/time-off', [StaffTimeOffController::class, 'range'])->middleware('permission:appointment_view');
                 // The branch's scanner link (staff start a home visit by
                 // scanning the client's QR — see ScannerController).
                 Route::get('frontoffice/scanner-link', [FrontOfficeLookupController::class, 'scannerLink'])->middleware('permission:attendance_view');
