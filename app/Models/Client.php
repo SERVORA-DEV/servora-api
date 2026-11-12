@@ -149,16 +149,6 @@ class Client extends Model
         return $this->belongsTo(User::class);
     }
 
-    // The therapist picked for this client by hand (a manager or the front
-    // desk). When there is none, the preference is worked out from who their
-    // bookings asked for most (ClientPreferenceService, App\Support\
-    // FrequentTherapist) — nothing is stored for that. Single therapist, not
-    // a favorites list.
-    public function preferredTherapist()
-    {
-        return $this->belongsTo(Staff::class, 'preferred_staff_id');
-    }
-
     public function appointments()
     {
         return $this->hasMany(Appointment::class, 'client_id');

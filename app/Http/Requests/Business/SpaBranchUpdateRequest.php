@@ -76,7 +76,7 @@ class SpaBranchUpdateRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'code.unique' => 'You already have a branch using that code.',
+            'code.unique' => 'You already have a branch in that area.',
         ];
     }
 

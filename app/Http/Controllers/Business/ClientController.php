@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Business\ClientPreferredTherapistRequest;
 use App\Http\Requests\Business\ClientRequest;
 use App\Service\Business\ClientService;
 use Illuminate\Http\Request;
@@ -40,10 +39,5 @@ class ClientController extends Controller
     public function dismissPhoto(Request $request, string $uuid)
     {
         return $this->clientService->dismissPhoto($request->user(), $uuid);
-    }
-
-    public function setPreferredTherapist(ClientPreferredTherapistRequest $request, string $uuid)
-    {
-        return $this->clientService->setPreferredTherapist($request->user(), $uuid, $request->validated()['staff_uuid'] ?? null);
     }
 }

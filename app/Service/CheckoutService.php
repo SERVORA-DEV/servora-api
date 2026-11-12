@@ -317,6 +317,10 @@ class CheckoutService
             $session->update(['status' => 'failed', 'failure_reason' => 'That saved payment method is no longer available.']);
             abort(422, 'That saved payment method is no longer available. Add a new one.');
         }
+        if ($method->paysEachTime()) {
+            $session->update(['status' => 'failed', 'failure_reason' => 'GCash is approved each time.']);
+            abort(422, 'GCash is approved on the GCash page each time. Choose GCash to pay with it.');
+        }
         $session->update(['payment_method_id' => $method->id, 'save_method' => false]);
 
         $this->chargeSession($session, $method, "{$plan?->name} Plan ({$session->billing_cycle})");

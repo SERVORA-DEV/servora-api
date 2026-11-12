@@ -622,14 +622,6 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Takes the client's picture down at this spa (their account keeps it).
                 Route::delete('client/{uuid}/photo', [ClientController::class, 'dismissPhoto'])->middleware('permission:client_update');
 
-                // Standing preferred-therapist preference — gated separately
-                // from client_update so manager can manage this one field
-                // without full client edit rights (business_owner is in this
-                // role group but still 403s, same as it already lacks
-                // client_create/client_update).
-                Route::patch('client/{uuid}/preferred-therapist', [ClientController::class, 'setPreferredTherapist'])
-                    ->middleware('permission:client_therapist_manage');
-
                 // Visits left open from days that are over: how many, and close them now.
                 Route::get('past-visits', [AppointmentController::class, 'pastVisits'])->middleware('permission:appointment_view');
                 Route::post('past-visits/close', [AppointmentController::class, 'closePastVisits'])->middleware('permission:appointment_update');
@@ -864,6 +856,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('checkout', [CheckoutController::class, 'start'])->middleware('throttle:20,1');
                 Route::get('checkout/{uuid}', [CheckoutController::class, 'status'])->whereUuid('uuid');
                 Route::patch('subscription/auto-renew', [CheckoutController::class, 'setAutoRenew']);
+                // GCash is added by its number (Xendit cannot save it); approved each time it pays.
+                Route::post('payment-methods/gcash', [CheckoutController::class, 'addGcash'])->middleware('throttle:10,1,add-gcash');
                 Route::post('payment-methods/{uuid}/default', [CheckoutController::class, 'makeDefaultMethod'])->whereUuid('uuid');
                 Route::delete('payment-methods/{uuid}', [CheckoutController::class, 'removeMethod'])->whereUuid('uuid');
 

@@ -230,6 +230,7 @@ class SubscriptionRenewalService
         }
 
         $method = BusinessPaymentMethod::where('spa_business_id', $business->id)->where('status', 'active')
+            ->whereNotNull('xendit_payment_token_id')
             ->orderByDesc('is_default')->latest()->get()->first(fn ($m) => ! $m->isExpired());
         if (! $method) {
             return response()->json(['message' => 'Add a card, GCash or Maya account first — auto-renew charges it each billing.', 'needs_payment_method' => true], 422);

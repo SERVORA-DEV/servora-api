@@ -94,7 +94,6 @@ class UserPermission extends Model
         'client_create',
         'client_update',
         'client_delete',
-        'client_therapist_manage',
 
         'appointment_view',
         'appointment_create',
@@ -208,7 +207,6 @@ class UserPermission extends Model
             'client_create' => 'boolean',
             'client_update' => 'boolean',
             'client_delete' => 'boolean',
-            'client_therapist_manage' => 'boolean',
 
             'appointment_view' => 'boolean',
             'appointment_create' => 'boolean',

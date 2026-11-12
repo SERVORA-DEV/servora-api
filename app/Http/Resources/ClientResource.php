@@ -67,33 +67,6 @@ class ClientResource extends JsonResource
             'next_visit_date' => $this->when(array_key_exists('next_visit_date', $this->resource->getAttributes()), fn () => $this->next_visit_date ? substr((string) $this->next_visit_date, 0, 10) : null),
             // The list's branch: where they last came, else where they were added (ClientService::search).
             'branch' => $this->when(array_key_exists('list_branch', $this->resource->getAttributes()), fn () => $this->list_branch),
-
-            // The client's preferred therapist: the one picked for them by
-            // hand (Client::preferredTherapist), or else the one their
-            // bookings ask for most (ClientPreferenceService). Omitted
-            // entirely (not null) when there is none or it wasn't loaded,
-            // same convention as `account` above. `_source` says which of
-            // the two it is; `_requests` how often they asked, when it was
-            // worked out from that.
-            'preferred_therapist' => $this->when((bool) $this->preferredPick(), fn () => [
-                'uuid' => $this->preferredPick()->uuid,
-                'name' => trim("{$this->preferredPick()->first_name} {$this->preferredPick()->last_name}"),
-            ]),
-            'preferred_therapist_source' => $this->when((bool) $this->preferredPick(), fn () => $this->pickedByHand() ? 'manual' : 'automatic'),
-            'preferred_therapist_requests' => $this->when(
-                $this->preferredPick() && ! $this->pickedByHand(),
-                fn () => (int) $this->preferredPick()->requests_from_client
-            ),
         ];
-    }
-
-    private function pickedByHand(): ?\App\Models\Staff
-    {
-        return $this->preferred_staff_id && $this->relationLoaded('preferredTherapist') ? $this->preferredTherapist : null;
-    }
-
-    private function preferredPick(): ?\App\Models\Staff
-    {
-        return $this->pickedByHand() ?? ($this->relationLoaded('frequentTherapist') ? $this->frequentTherapist : null);
     }
 }

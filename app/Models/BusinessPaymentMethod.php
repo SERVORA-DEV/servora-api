@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Schema;
 
 // A card, GCash or Maya account the owner saved at checkout, as a reusable
 // Xendit payment token — what auto-renewal charges (CheckoutService,
@@ -24,6 +25,23 @@ class BusinessPaymentMethod extends Model
     protected function casts(): array
     {
         return ['is_default' => 'boolean', 'expiry_month' => 'integer', 'expiry_year' => 'integer'];
+    }
+
+    // A GCash account the owner added by number. Xendit cannot save GCash for this
+    // business to charge again, so it has no payment token: it is approved on the
+    // (simulated) GCash page each time it is used, and never renews on its own.
+    public function paysEachTime(): bool
+    {
+        return blank($this->xendit_payment_token_id);
+    }
+
+    /** Whether the table is ready to hold a method with no token (the migration has run). */
+    public static function canHoldWithoutToken(): bool
+    {
+        static $ready = null;
+
+        return $ready ??= collect(Schema::getColumns('business_payment_methods'))
+            ->contains(fn ($c) => ($c['name'] ?? null) === 'xendit_payment_token_id' && ($c['nullable'] ?? false));
     }
 
     public function uniqueIds()
@@ -67,6 +85,7 @@ class BusinessPaymentMethod extends Model
                 ? sprintf('%02d/%02d', $this->expiry_month, $this->expiry_year % 100)
                 : null,
             'is_expired' => $this->isExpired(),
+            'pays_each_time' => $this->paysEachTime(),
             'is_default' => $this->is_default,
             'status' => $this->status,
         ];

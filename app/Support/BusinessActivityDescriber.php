@@ -92,7 +92,6 @@ final class BusinessActivityDescriber
         // ── Clients and programs ─────────────────────────────────────────
         'ClientController@store' => ['client.create', 'clients', 'Create', Client::class, 'Added client[ {subject}]'],
         'ClientController@update' => ['client.update', 'clients', 'Update', Client::class, 'Edited client[ {subject}]'],
-        'ClientController@setPreferredTherapist' => ['client.preferred_therapist', 'clients', 'Update', Client::class, "Set[ {subject}'s] preferred therapist"],
         'CustomerProgramController@redeem' => ['client.redeem', 'clients', 'Redeem', Client::class, 'Redeemed a reward[ for {subject}]'],
         'CustomerProgramController@sellMembership' => ['membership.sell', 'clients', 'Create', ClientMembership::class, 'Sold[ {subject}]'],
         'CustomerProgramController@renewMembership' => ['membership.renew', 'clients', 'Update', ClientMembership::class, 'Renewed[ {subject}]'],
@@ -310,6 +309,48 @@ final class BusinessActivityDescriber
         }
 
         return $out;
+    }
+
+    /**
+     * What the audit log shows a business user of a record's values: clean()
+     * plus nothing that reads as code. A list or an object (a program's perks,
+     * a schedule), or text that is one (stored as JSON), is left out, and a
+     * raw timestamp reads as a date ("Dec 2, 2026 4:16 PM").
+     */
+    public static function readable(array $values): array
+    {
+        $out = [];
+        foreach (self::clean($values) as $key => $value) {
+            if (is_array($value) || is_object($value)) {
+                continue;
+            }
+            if (is_string($value)) {
+                if (preg_match('/^\s*[\[{]/', $value)) {
+                    continue;
+                }
+                $value = self::friendlyDate($value);
+            }
+            $out[$key] = $value;
+        }
+
+        return $out;
+    }
+
+    /** "2026-12-02 16:16:04" or "2026-12-02T08:16:04+00:00" → "Dec 2, 2026 4:16 PM"; "2026-12-02" → "Dec 2, 2026". Any other text as it is. */
+    public static function friendlyDate(string $text): string
+    {
+        try {
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $text)) {
+                return Carbon::parse($text)->format('M j, Y');
+            }
+            if (preg_match('/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/', $text)) {
+                return Carbon::parse($text)->timezone(date_default_timezone_get())->format('M j, Y g:i A');
+            }
+        } catch (\Throwable) {
+            // Not a date after all.
+        }
+
+        return $text;
     }
 
     public static function peso($amount): ?string

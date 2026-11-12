@@ -53,7 +53,6 @@ return [
         'attendance_checkin',
         'client_create',
         'client_update',
-        'client_therapist_manage',
         'policy_override',
 
         'branch_view',
@@ -173,7 +172,6 @@ return [
         'client_view',
         'client_create',
         'client_update',
-        'client_therapist_manage',
 
         'appointment_view',
         'appointment_create',
@@ -233,7 +231,6 @@ return [
         'client_view',
         'client_create',
         'client_update',
-        'client_therapist_manage',
 
         'appointment_view',
         'appointment_create',

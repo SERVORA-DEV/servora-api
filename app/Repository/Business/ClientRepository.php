@@ -21,7 +21,7 @@ class ClientRepository
             ->where('appointment_date', '>=', now()->toDateString())
             ->when($branchIds !== null, fn ($a) => $a->whereIn('spa_branch_id', $branchIds));
 
-        return Client::with(['user', 'preferredTherapist', 'activeMembership.program'])
+        return Client::with(['user', 'activeMembership.program'])
             ->withCount(['vouchers as vouchers_available_count' => fn ($q) => $q->where('status', 'available')
                 ->where(fn ($e) => $e->whereNull('expires_at')->orWhere('expires_at', '>', now())),
                 // Missed bookings since they last came in — the no-show policy counts these.
@@ -75,7 +75,7 @@ class ClientRepository
     // clients — anyone else 404s, same as a client of another business.
     public function findByUuidForBusiness(string $uuid, int $spaBusinessId, ?array $branchIds = null)
     {
-        return Client::with(['user', 'preferredTherapist', 'activeMembership.program'])
+        return Client::with(['user', 'activeMembership.program'])
             ->withCount(['vouchers as vouchers_available_count' => fn ($q) => $q->where('status', 'available')
                 ->where(fn ($e) => $e->whereNull('expires_at')->orWhere('expires_at', '>', now())),
                 // Missed bookings — the no-show policy counts these.
@@ -93,15 +93,6 @@ class ClientRepository
     {
         return $query->where(fn ($q) => $q->whereIn('spa_branch_id', $branchIds)
             ->orWhereHas('appointments', fn ($a) => $a->whereIn('spa_branch_id', $branchIds)));
-    }
-
-    // Business-scoping is the caller's responsibility (see
-    // ClientService::setPreferredTherapist) — same convention as update().
-    public function setPreferredTherapist(string $uuid, ?int $staffId)
-    {
-        $model = Client::where('uuid', $uuid)->firstOrFail();
-        $model->update(['preferred_staff_id' => $staffId]);
-        return $model->load('preferredTherapist');
     }
 
     public function findForUser(int $spaBusinessId, int $userId)

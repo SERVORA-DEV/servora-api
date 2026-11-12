@@ -80,6 +80,29 @@ class BusinessActivityDescriberTest extends TestCase
         $this->assertSame(298, mb_strlen($clean['notes']));
     }
 
+    public function test_readable_leaves_out_code_and_words_dates_plainly(): void
+    {
+        $readable = Describer::readable([
+            'program_name' => 'VIP Membership',
+            'price' => '5999',
+            'status' => 'active',
+            'perks' => '[{"id":4,"uuid":"abc","type":"voucher","name":"FOR VIP MEMBERS ONLY"}]',
+            'rules' => ['type' => 'voucher'],
+            'starts_at' => '2026-11-02 16:16:04',
+            'ends_at' => '2026-12-02',
+            'notes' => 'Prefers lavender',
+        ]);
+
+        $this->assertSame([
+            'program_name' => 'VIP Membership',
+            'price' => '5999',
+            'status' => 'active',
+            'starts_at' => 'Nov 2, 2026 4:16 PM',
+            'ends_at' => 'Dec 2, 2026',
+            'notes' => 'Prefers lavender',
+        ], $readable);
+    }
+
     public function test_peso(): void
     {
         $this->assertSame('₱1,250', Describer::peso(1250));

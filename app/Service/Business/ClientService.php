@@ -3,7 +3,6 @@
 namespace App\Service\Business;
 
 use App\Models\Client;
-use App\Models\Staff;
 use App\Models\User;
 use App\Support\ClientProfile;
 use App\Repository\Business\ClientRepository;
@@ -15,15 +14,10 @@ class ClientService
     private ClientRepository $clientRepository;
     private SpaBusinessRepository $spaBusinessRepository;
 
-    // Works out the preferred therapist of a client nobody picked one for
-    // (the one they ask for most), before a client is returned.
-    private ClientPreferenceService $preferences;
-
-    public function __construct(ClientRepository $clientRepository, SpaBusinessRepository $spaBusinessRepository, ClientPreferenceService $preferences)
+    public function __construct(ClientRepository $clientRepository, SpaBusinessRepository $spaBusinessRepository)
     {
         $this->clientRepository = $clientRepository;
         $this->spaBusinessRepository = $spaBusinessRepository;
-        $this->preferences = $preferences;
     }
 
     // Owner: the whole business (null = no branch limit). Manager / front
@@ -44,7 +38,6 @@ class ClientService
         }
 
         $clients = $this->clientRepository->search($business->id, $query, $perPage, $this->branchScope($user));
-        $this->preferences->attach($clients->getCollection());
         // Each client's branch for the list: where they last came, else where they were added.
         // One read for the page's branches.
         $ids = $clients->getCollection()->map(fn (Client $c) => $c->last_branch_id ?: $c->spa_branch_id)->filter()->unique()->values()->all();
@@ -66,7 +59,6 @@ class ClientService
         }
 
         $client = $this->clientRepository->findByUuidForBusiness($uuid, $business->id, $this->branchScope($user));
-        $this->preferences->attach([$client]);
 
         return new ClientResource($client);
     }
@@ -100,7 +92,6 @@ class ClientService
         $this->clientRepository->findByUuidForBusiness($uuid, $business->id, $this->branchScope($user));
 
         $client = $this->clientRepository->update($uuid, $this->profileColumns($payload));
-        $this->preferences->attach([$client]);
 
         return new ClientResource($client);
     }
@@ -132,51 +123,6 @@ class ClientService
         }
 
         $client->update(['dismissed_photo' => $photo, 'photo_dismissed_at' => now()]);
-        $this->preferences->attach([$client]);
-
-        return new ClientResource($client);
-    }
-
-    // Manager and front_officer both reach this (client_therapist_manage),
-    // independent of client_update — see config/permission.php. Scoped
-    // business-wide (via the staff's branch->spa_business_id), not to the
-    // caller's own branch, since a client can reasonably prefer a therapist
-    // at a different branch of the same business — same business-wide scope
-    // findByUuidForBusiness already uses for the client itself.
-    public function setPreferredTherapist(User $user, string $clientUuid, ?string $staffUuid)
-    {
-        $business = $this->spaBusinessRepository->findForUser($user);
-
-        if (! $business) {
-            return response()->json(['message' => 'No spa business found for this account.'], 422);
-        }
-
-        // 404s if this uuid isn't (or isn't a client of) this user's own
-        // business or branch, same guard updateClient uses.
-        $this->clientRepository->findByUuidForBusiness($clientUuid, $business->id, $this->branchScope($user));
-
-        $staffId = null;
-
-        if ($staffUuid) {
-            $staff = Staff::where('uuid', $staffUuid)
-                ->whereHas('branch', fn ($q) => $q->where('spa_business_id', $business->id))
-                ->first();
-
-            if (! $staff) {
-                return response()->json(['message' => 'This staff member could not be found for your business.'], 422);
-            }
-
-            if ($staff->role !== 'therapist') {
-                return response()->json(['message' => 'Only staff who perform services can be set as a client\'s preferred staff.'], 422);
-            }
-
-            $staffId = $staff->id;
-        }
-
-        // No therapist given = stop choosing by hand: the preference goes
-        // back to the one their bookings ask for most.
-        $client = $this->clientRepository->setPreferredTherapist($clientUuid, $staffId);
-        $this->preferences->attach([$client]);
 
         return new ClientResource($client);
     }

@@ -54,6 +54,13 @@ class CheckoutController extends Controller
         return $this->renewals->setAutoRenew($request->user(), $request->validate(['enabled' => 'required|boolean'])['enabled']);
     }
 
+    public function addGcash(Request $request)
+    {
+        $data = $request->validate(['mobile_number' => ['required', 'string', 'max:20', new \App\Rules\PhMobile()]]);
+
+        return $this->methods->addGcash($request->user(), $data['mobile_number']);
+    }
+
     public function makeDefaultMethod(Request $request, string $uuid)
     {
         return $this->methods->makeDefault($request->user(), $uuid);

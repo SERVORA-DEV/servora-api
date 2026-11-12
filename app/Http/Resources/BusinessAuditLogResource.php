@@ -28,12 +28,12 @@ class BusinessAuditLogResource extends JsonResource
                 'level' => $this->actor_level,
             ],
             'branch' => $this->branch_name,
-            // Cleaned again on the way out, for rows a service wrote itself.
-            'old_values' => $this->old_values ? BusinessActivityDescriber::clean($this->old_values) : null,
-            'new_values' => $this->new_values ? BusinessActivityDescriber::clean($this->new_values) : null,
+            // Cleaned again on the way out, for rows a service wrote itself: only what reads
+            // as plain words, numbers and dates (nothing that looks like code).
+            'old_values' => $this->old_values ? (BusinessActivityDescriber::readable($this->old_values) ?: null) : null,
+            'new_values' => $this->new_values ? (BusinessActivityDescriber::readable($this->new_values) ?: null) : null,
             'device' => $this->user_agent ? UserAgentParser::describe($this->user_agent) : null,
             'device_type' => UserAgentParser::deviceType($this->user_agent),
-            'ip_address' => $this->ip_address,
             'link' => $this->link,
         ];
     }
