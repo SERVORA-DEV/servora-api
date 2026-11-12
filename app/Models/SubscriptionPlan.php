@@ -19,6 +19,7 @@ class SubscriptionPlan extends Model
         'uuid',
         'category',
         'name',
+        'trial_days',
         'description',
         'monthly_price',
         'yearly_price',
@@ -41,6 +42,7 @@ class SubscriptionPlan extends Model
     protected function casts(): array
     {
         return [
+            'trial_days' => 'integer',
             'export_days' => 'integer',
             'extra_branch_price' => 'decimal:2', 'extra_account_price' => 'decimal:2',
             'monthly_price' => 'decimal:2',
@@ -65,6 +67,11 @@ class SubscriptionPlan extends Model
     public function isTrial(): bool
     {
         return $this->category === self::TRIAL_CATEGORY;
+    }
+
+    public function trialDays(): int
+    {
+        return $this->isTrial() ? max(1, (int) ($this->trial_days ?? config('trial.days'))) : 0;
     }
 
     public function subscriptions()

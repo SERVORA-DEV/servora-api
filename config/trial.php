@@ -5,8 +5,8 @@
 // subscription row flagged is_trial: no invoice, no grace period after it
 // ends, and paying for any plan replaces it.
 //
-// servora-web advertises the same length on the landing page — keep
-// app/utils/trial.ts there in step with `days`.
+// Each Trial plan stores its editable duration. `days` is only the fallback
+// for legacy records; the public website reads trial_days from the API.
 return [
     'enabled' => (bool) env('TRIAL_ENABLED', true),
 

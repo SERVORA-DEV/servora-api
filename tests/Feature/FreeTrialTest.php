@@ -56,6 +56,16 @@ class FreeTrialTest extends TestCase
             ->assertJsonPath('trial.plan_name', 'Free Trial');
     }
 
+    public function test_new_trial_uses_the_administrator_saved_duration(): void
+    {
+        $this->travelTo(now()->startOfSecond());
+        $this->trialPlan->update(['trial_days' => 7]);
+        $this->getJson('/api/business/subscription')->assertOk()->assertJsonPath('trial.days', 7);
+        $this->postJson('/api/business/subscription/trial')->assertCreated();
+        $subscription = Subscription::where('spa_business_id', $this->business->id)->firstOrFail();
+        $this->assertTrue($subscription->expires_at->equalTo($subscription->starts_at->copy()->addDays(7)));
+    }
+
     public function test_starting_the_trial_puts_the_business_on_the_trial_plan_without_a_bill(): void
     {
         $this->postJson('/api/business/subscription/trial')->assertCreated()->assertJsonPath('trial.active', true);

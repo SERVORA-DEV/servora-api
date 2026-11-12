@@ -256,6 +256,27 @@ class HomeServiceRules
         return "{$name} isn't available for home service. Please choose someone who is.";
     }
 
+<<<<<<< HEAD
+<<<<<<< HEAD
+    // Why a home booking of $minutes is too short for this branch, or null
+    // when it is long enough (or there is no minimum). The client app is
+    // refused with this; the front desk only sees it as a warning.
+    public static function minimumProblem(array $policy, int $minutes): ?string
+    {
+        $minimum = (int) ($policy['home_service_min_minutes'] ?? 0);
+
+        if ($minimum <= 0 || $minutes >= $minimum) {
+            return null;
+        }
+
+        return 'Home service at this spa needs at least '.BookingPolicy::formatMinutes($minimum).' of services, and these take '
+            .BookingPolicy::formatMinutes($minutes).'. Add a service, or book at the spa.';
+    }
+
+=======
+>>>>>>> main
+=======
+>>>>>>> main
     // The columns a home booking stores, once check() has passed.
     public static function attributes(array $payload, array $check): array
     {

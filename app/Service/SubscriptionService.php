@@ -205,7 +205,9 @@ class SubscriptionService
             'available' => config('trial.enabled') && $plan !== null && $latest === null
                 && ! $this->ownerHasUsedTrial($owner)
                 && ! $this->subscriptionRepository->hasAnyForBusiness($businessId),
-            'days' => (int) config('trial.days'),
+            'days' => $active && $latest->starts_at
+                ? (int) round($latest->starts_at->diffInDays($latest->expires_at))
+                : ($plan?->isTrial() ? $plan->trialDays() : max(1, (int) config('trial.days'))),
             'plan_name' => $plan?->name,
             'active' => $active,
             'ends_at' => $active ? $latest->expires_at : null,
@@ -274,7 +276,7 @@ class SubscriptionService
                 return response()->json(['message' => 'The free trial is only for businesses that have not had a plan yet. Choose a plan to continue.'], 422);
             }
 
-            $days = max(1, (int) config('trial.days'));
+            $days = $plan->isTrial() ? $plan->trialDays() : max(1, (int) config('trial.days'));
             // The trial and the stamp that says it was used go in together.
             $subscription = DB::transaction(function () use ($user, $business, $plan, $days) {
                 $user->forceFill(['trial_started_at' => now()])->save();

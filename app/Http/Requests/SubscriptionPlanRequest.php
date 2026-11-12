@@ -39,6 +39,7 @@ class SubscriptionPlanRequest extends FormRequest
 
             'name' => ['required', 'string', 'max:100', new NoEmoji()],
             'description' => 'nullable|string',
+            'trial_days' => 'exclude_unless:category,Trial|sometimes|required|integer|min:1|max:365',
 
             'billing_cycle' => 'required|in:Monthly,Yearly,Both',
 
