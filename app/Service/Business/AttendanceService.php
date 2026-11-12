@@ -414,10 +414,18 @@ class AttendanceService
 
         [$staffMembers, $entries] = $this->rosterEntries($business, $this->branchIds($user), $dateFrom, $dateTo);
 
+        // The working day it is now at each branch (BusinessDay: from opening to the next opening), so
+        // "today" on the roster is the day the front desk is on: a branch open past midnight is still
+        // on yesterday's day until it opens again.
+        $branchIds = $this->branchIds($user);
+        $workingDays = \App\Models\SpaBranch::whereIn('id', $branchIds)->get(['id', 'uuid'])
+            ->mapWithKeys(fn ($b) => [$b->uuid => \App\Support\BusinessDay::forBranch($b->id)])->all();
+
         return [
             'date_from' => $dateFrom,
             'date_to' => $dateTo,
             'total_staff' => $staffMembers->count(),
+            'working_days' => $workingDays,
             'data' => $entries->values(),
         ];
     }

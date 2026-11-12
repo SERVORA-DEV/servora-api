@@ -24,8 +24,10 @@ class StaffResource extends JsonResource
             'email' => $this->email,
             'phone_number' => $this->phone_number,
             'gender' => \App\Support\Gender::clean($this->gender) ?? $this->gender,
-            'birth_date' => $this->birth_date,
-            'hire_date' => $this->hire_date,
+            // A calendar day, not a moment: sent as 'Y-m-d'. As a timestamp it came out in UTC (the day
+            // before, in Manila) and the form showed, and then saved, a date one day earlier.
+            'birth_date' => optional($this->birth_date)->format('Y-m-d'),
+            'hire_date' => optional($this->hire_date)->format('Y-m-d'),
             'role' => $this->role,
             // What they do, main one first (App\Support\StaffSpecialty).
             'specialties' => $this->resource->specialtyList(),

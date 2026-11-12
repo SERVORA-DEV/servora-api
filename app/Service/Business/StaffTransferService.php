@@ -233,6 +233,7 @@ class StaffTransferService
         return response()->json(['data' => $branches->map(fn (SpaBranch $b) => [
             'uuid' => $b->uuid,
             'name' => $b->branch_name,
+            'title' => \App\Support\BranchIdentity::title($b->branch_name, $b->code),
             'on_hold' => (bool) $b->plan_hold_at,
         ])->values()]);
     }

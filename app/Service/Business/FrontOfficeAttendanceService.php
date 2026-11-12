@@ -110,7 +110,6 @@ class FrontOfficeAttendanceService
             'opens_label' => $opens ? ($opens->isToday() ? $opens->format('g:i A') : $opens->format('D g:i A')) : null,
             'data' => $this->rows($business, $staffMembers, $date, $branchIds, live: $date === $todayDate),
             'commission' => $this->commissionMeta($business),
-            'shift_swaps' => $this->shiftSwapsAllowed($business),
             // Whether a service can start only with its staff timed in
             // (AppointmentService::checkInProblem), so the desk is warned first.
             'requires_check_in' => (function () use ($business) {
@@ -155,11 +154,7 @@ class FrontOfficeAttendanceService
 
         $coveringFor = null;
         if ($coveringForUuid) {
-            // Settings → Staff & Permissions → Shift swaps. Coming in for
-            // extra hours (no one covered) is still allowed.
-            if (! $this->shiftSwapsAllowed($business)) {
-                return response()->json(['message' => 'Shift swaps are turned off, so staff can\'t cover for each other. The owner can turn them on in Settings → Staff & Permissions.'], 422);
-            }
+            // The front desk can always put one staff member on another's shift for the day.
             $coveringFor = $this->staffRepository->findByUuidForBranches($coveringForUuid, $branchIds);
             if ($coveringFor->id === $staff->id) {
                 return response()->json(['message' => 'A staff member can\'t cover for themselves.'], 422);
@@ -173,15 +168,16 @@ class FrontOfficeAttendanceService
         $hasShift = $this->statusCalculator->hasWorkingScheduleForDate($staff->schedules, $date);
         $status = ($hasShift && ! $coveringFor) ? 'Present' : 'Fill In';
 
-        // Coming back after checking out (e.g. a second fill-in stint) keeps
-        // the original check-in time and just re-opens the day. A time-out made while
-        // the branch was closed (before it opened) was never part of this working day:
-        // they are timed in afresh, from now.
-        $backIn = $existing?->check_in_at && $existing->check_out_at
-            && BusinessDay::isOpen($week, $existing->check_out_at);
-        $payload = $backIn
-            ? ['check_out_at' => null, 'left_early' => false]
-            : ['check_in_at' => now(), 'check_out_at' => null, 'status' => $status, 'left_early' => false];
+        // Someone timed out (or sent home on leave) while the branch was open is done for the day:
+        // there is no "time back in". A time-out made while the branch was closed (before it opened)
+        // was never part of this working day: they are timed in afresh, from now.
+        if ($existing?->check_in_at && $existing->check_out_at && BusinessDay::isOpen($week, $existing->check_out_at)) {
+            return response()->json(['message' => $this->nameOf($staff) . ' is already timed out for today.'], 422);
+        }
+        if ($existing && ! $existing->check_in_at && $existing->status === 'On Leave') {
+            return response()->json(['message' => $this->nameOf($staff) . ' is on leave today, so they can\'t be timed in.'], 422);
+        }
+        $payload = ['check_in_at' => now(), 'check_out_at' => null, 'status' => $status, 'left_early' => false];
 
         $model = $this->attendanceRepository->upsert($staff->id, $date, $payload + [
             'covering_for_staff_id' => $coveringFor?->id ?? $existing?->covering_for_staff_id,
@@ -603,16 +599,6 @@ class FrontOfficeAttendanceService
             'staff_uuid' => $staff->uuid,
             'row' => $this->rows($business, $fresh, $date, $branchIds, live: true)[0] ?? null,
         ];
-    }
-
-    // Settings → Staff & Permissions → Shift swaps: whether one staff member
-    // may cover another's shift (a fill-in with covering_for).
-    private function shiftSwapsAllowed(SpaBusiness $business): bool
-    {
-        $business->loadMissing('settings');
-        $policy = $business->settings?->section('staff_policy') ?? SpaBusinessSetting::DEFAULTS['staff_policy'];
-
-        return (bool) ($policy['allow_shift_swap'] ?? false);
     }
 
     private function commissionMeta(SpaBusiness $business): array

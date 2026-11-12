@@ -38,19 +38,9 @@ class SpaBranchUpdateRequest extends FormRequest
         return [
             'branch_name' => ['sometimes', 'required', 'string', 'max:150', new NoEmoji()],
 
-            // The short area/locality label for this branch ("Mandug") —
-            // business-scoped like services.code, matching the
-            // unique(spa_business_id, code) index so a duplicate 422s cleanly
-            // instead of surfacing a raw SQL error. whereNull('deleted_at')
-            // because spa_branches soft-deletes: a deleted branch must not
-            // keep its code reserved forever.
-            'code' => [
-                'nullable', 'string', 'max:50',
-                Rule::unique('spa_branches', 'code')
-                    ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
-                    ->whereNull('deleted_at')
-                    ->ignore($this->route('branch'), 'uuid'),
-            ],
+            // The area this branch is in ("Mandug"). Not unique on its own: what tells branches apart
+            // is the name and the area together (App\Support\BranchIdentity, checked in after()).
+            'code' => ['nullable', 'string', 'max:50'],
 
             'email' => ['nullable', 'email', new ValidEmail(), 'max:255', new NoEmoji()],
             'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji(), new PhMobile()],
@@ -73,11 +63,21 @@ class SpaBranchUpdateRequest extends FormRequest
     /**
      * @return array<string, string>
      */
-    public function messages(): array
+    /** The same name in the same area as another branch of the business (only when the name or area is sent). */
+    public function after(): array
     {
-        return [
-            'code.unique' => 'You already have a branch in that area.',
-        ];
+        return [function ($validator) {
+            if (! $this->hasAny(['branch_name', 'code']) || $validator->errors()->has('branch_name') || $validator->errors()->has('code')) {
+                return;
+            }
+            $uuid = (string) $this->route('branch');
+            $existing = \App\Models\SpaBranch::where('uuid', $uuid)->first(['branch_name', 'code']);
+            $name = $this->has('branch_name') ? $this->input('branch_name') : $existing?->branch_name;
+            $area = $this->has('code') ? $this->input('code') : $existing?->code;
+            if (\App\Support\BranchIdentity::taken($this->resolvedBusinessId(), $name, $area, $uuid)) {
+                $validator->errors()->add('branch_name', \App\Support\BranchIdentity::message($area));
+            }
+        }];
     }
 
     /**

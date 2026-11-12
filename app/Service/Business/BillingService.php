@@ -212,6 +212,11 @@ class BillingService
                 return $this->reject('This bill already has a manual discount — ask someone who can give discounts to change it.');
             }
 
+            // The front desk can only use the discounts the owner made; a voucher is the client's, from the app.
+            if ($voucherUuid && $user->role === 'front_officer') {
+                return $this->reject('Vouchers are used in the client\'s mobile app, not at the front desk.');
+            }
+
             $program = null;
             $voucher = null;
             if ($voucherUuid || $programUuid) {
@@ -730,7 +735,8 @@ class BillingService
             }
         }
 
-        $vouchers = $client
+        // The front desk uses only the discounts the owner made — no vouchers.
+        $vouchers = $client && $user->role !== 'front_officer'
             ? ClientVoucher::with('program')->where('client_id', $client->id)->where('status', 'available')
                 ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
                 ->orderBy('expires_at')->get()
@@ -743,7 +749,7 @@ class BillingService
 
         // The first-visit voucher a client with no paid visit yet can still
         // claim for this bill: listed with the rest, claimed when applied.
-        if ($client) {
+        if ($client && $user->role !== 'front_officer') {
             foreach ($this->rewards->offeredAt($billing->spa_business_id, $billing->spa_branch_id, 'voucher') as $program) {
                 if ($program->condition_kind === 'first_visit' && $this->rewards->firstVisitClaimable($client, $program)) {
                     $vouchers->push($describe($program, null, true));

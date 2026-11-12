@@ -26,8 +26,9 @@ use Illuminate\Support\Facades\DB;
 //     kind as the standard; set on the employee by the owner or a manager).
 //   - commission_applies_to: 'service', 'package' or 'both' — a line that
 //     came out of a package (source_appointment_package_id) counts as package.
-//   - commission_release_cycle: daily / weekly (Monday start) / monthly —
-//     the "pay period" the running total is shown for.
+//   - commission_release_cycle: daily / weekly (Monday start) / semimonthly
+//     (the 1st to the 15th, the 16th to the last day) / monthly — the "pay
+//     period" the running total is shown for.
 // A service performed by more than one therapist splits its commission
 // equally between everyone who completed it, each at their own rate.
 //
@@ -142,6 +143,8 @@ class CommissionCalculator
         return match ($policy['commission_release_cycle'] ?? 'monthly') {
             'daily' => $now->startOfDay(),
             'weekly' => $now->startOfWeek(Carbon::MONDAY),
+            // Twice a month: the 1st to the 15th, then the 16th to the end.
+            'semimonthly' => $now->day <= 15 ? $now->startOfMonth() : $now->startOfMonth()->addDays(15),
             default => $now->startOfMonth(),
         };
     }
@@ -151,6 +154,7 @@ class CommissionCalculator
         return match ($policy['commission_release_cycle'] ?? 'monthly') {
             'daily' => 'today',
             'weekly' => 'this week',
+            'semimonthly' => 'this pay period',
             default => 'this month',
         };
     }

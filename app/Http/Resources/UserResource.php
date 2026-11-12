@@ -71,6 +71,7 @@ class UserResource extends JsonResource
             $data['branches'] = $scope->map(fn ($b) => [
                 'uuid' => $b->uuid,
                 'name' => $b->branch_name,
+                'title' => \App\Support\BranchIdentity::title($b->branch_name, $b->code),
                 'level' => $levels[$b->id] ?? 'operation',
                 'letterhead' => $b->business ? [
                     'business_name' => $b->business->business_name,

@@ -674,11 +674,13 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('billing/{uuid}/payments', [PaymentController::class, 'store'])->middleware('permission:payment_create');
                 // Methods the owner accepts (Settings → Payments), for the payment dialog.
                 Route::get('payment-options', [BillingController::class, 'paymentOptions'])->middleware('permission:payment_create');
-                Route::patch('billing/{uuid}/discount', [BillingController::class, 'discount'])->middleware('permission:billing_update');
+                // Typing a discount in, refunding and changing a paid bill are the owner's and a manager's;
+                // the front desk picks from the discounts the owner made (program-discount) and may void.
+                Route::patch('billing/{uuid}/discount', [BillingController::class, 'discount'])->middleware(['role:business_owner,manager', 'permission:billing_update']);
                 // Customer programs at checkout — vouchers and discount programs.
                 Route::get('billing/{uuid}/program-options', [BillingController::class, 'programOptions'])->middleware('permission:reward_view');
                 Route::patch('billing/{uuid}/program-discount', [BillingController::class, 'programDiscount'])->middleware(['permission:reward_update', 'plan.feature:reward_access,open']);
-                Route::post('billing/{uuid}/refund', [BillingController::class, 'refund'])->middleware('permission:payment_refund');
+                Route::post('billing/{uuid}/refund', [BillingController::class, 'refund'])->middleware(['role:business_owner,manager', 'permission:payment_refund']);
                 Route::post('payment/{uuid}/void', [PaymentController::class, 'void'])->middleware('permission:payment_refund');
                 // Changing a bill after it is paid (a voucher afterwards, a
                 // refund): applied at once, or a request a manager or the
@@ -686,8 +688,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 // BillingAdjustmentService (App\Support\BillAdjustment).
                 Route::get('billing-adjustments', [BillingAdjustmentController::class, 'index'])->middleware('permission:billing_view');
                 Route::get('refund-policies', [RefundPolicyController::class, 'index'])->middleware('permission:billing_view');
-                Route::post('billing/{uuid}/adjustments', [BillingAdjustmentController::class, 'store'])->middleware(['permission:payment_create', 'throttle:30,1']);
-                Route::delete('billing-adjustments/{uuid}', [BillingAdjustmentController::class, 'destroy'])->middleware('permission:payment_create')->whereUuid('uuid');
+                Route::post('billing/{uuid}/adjustments', [BillingAdjustmentController::class, 'store'])->middleware(['role:business_owner,manager', 'permission:payment_create', 'throttle:30,1']);
+                Route::delete('billing-adjustments/{uuid}', [BillingAdjustmentController::class, 'destroy'])->middleware(['role:business_owner,manager', 'permission:payment_create'])->whereUuid('uuid');
                 Route::post('billing-adjustments/{uuid}/approve', [BillingAdjustmentController::class, 'approve'])
                     ->middleware(['role:business_owner,manager', 'permission:payment_create'])->whereUuid('uuid');
                 Route::post('billing-adjustments/{uuid}/decline', [BillingAdjustmentController::class, 'decline'])
@@ -748,7 +750,6 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('programs/memberships', [CustomerProgramController::class, 'sellMembership'])->middleware('permission:reward_update');
                     Route::post('programs/memberships/{uuid}/renew', [CustomerProgramController::class, 'renewMembership'])->middleware('permission:reward_update');
                     Route::post('programs/memberships/{uuid}/cancel', [CustomerProgramController::class, 'cancelMembership'])->middleware('permission:reward_update');
-                    Route::post('client/{uuid}/rewards/redeem', [CustomerProgramController::class, 'redeem'])->middleware('permission:reward_update');
                 });
 
                 Route::get('frontoffice/branches', [FrontOfficeLookupController::class, 'branches']);

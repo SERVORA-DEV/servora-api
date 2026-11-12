@@ -515,27 +515,6 @@ class CustomerProgramService
         ];
     }
 
-    public function redeemForClient(User $user, string $clientUuid, string $programUuid)
-    {
-        $business = $this->spaBusinessRepository->findForUser($user);
-        if (! $business) {
-            return $this->noBusiness();
-        }
-
-        return DB::transaction(function () use ($user, $business, $clientUuid, $programUuid) {
-            $client = $this->client($user, $business, $clientUuid);
-            $program = CustomerProgram::where('uuid', $programUuid)->where('spa_business_id', $business->id)->firstOrFail();
-            $branchIds = $user->role === 'business_owner' ? [] : $this->branchIds($user);
-
-            $result = $this->rewards->redeemPoints($client, $program, $user, $branchIds[0] ?? null, ProgramChannel::DESK);
-            if (is_string($result)) {
-                return $this->reject($result);
-            }
-
-            return ['data' => $this->summaryFor($client->fresh(), $branchIds[0] ?? null, ProgramChannel::DESK)];
-        });
-    }
-
     // What a client holds at one business: points and the loyalty rules,
     // their vouchers (in the wallet, and the ones they can earn next with
     // progress), discounts (members-only ones locked unless their membership

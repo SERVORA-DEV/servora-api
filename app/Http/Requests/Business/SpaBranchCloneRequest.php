@@ -33,10 +33,7 @@ class SpaBranchCloneRequest extends FormRequest
         return [
             'branch' => 'required|array:branch_name,code,description',
             'branch.branch_name' => ['required', 'string', 'max:150', new NoEmoji()],
-            'branch.code' => [
-                'nullable', 'string', 'max:50',
-                Rule::unique('spa_branches', 'code')->where('spa_business_id', $businessId)->whereNull('deleted_at'),
-            ],
+            'branch.code' => ['nullable', 'string', 'max:50'],
             'branch.description' => 'nullable|string',
             'copy' => 'required|array:facilities,offerings,hours,booking_rules,programs',
             'copy.facilities' => 'required|boolean',
@@ -52,6 +49,15 @@ class SpaBranchCloneRequest extends FormRequest
     public function after(): array
     {
         return [function (Validator $validator) {
+            // The same name in the same area as a branch the business already has (App\Support\BranchIdentity).
+            if (! $validator->errors()->has('branch.branch_name') && ! $validator->errors()->has('branch.code')
+                && \App\Support\BranchIdentity::taken(
+                    SpaBusiness::where('owner_id', $this->user()->id)->value('id'),
+                    $this->input('branch.branch_name'),
+                    $this->input('branch.code'),
+                )) {
+                $validator->errors()->add('branch.branch_name', \App\Support\BranchIdentity::message($this->input('branch.code')));
+            }
             if (! $validator->errors()->has('copy') && is_array($this->input('copy'))
                 && ! collect($this->input('copy'))->contains(fn ($value) => in_array($value, [true, 1, '1'], true))) {
                 $validator->errors()->add('copy', 'Choose at least one part of the branch to copy.');

@@ -46,7 +46,6 @@ class SpaBusinessSetting extends Model
             'attendance_tracking' => true,
             'require_check_in' => true,
             'late_threshold_minutes' => 10,
-            'allow_shift_swap' => false,
             // A manager's change to a staff schedule waits for the owner
             // (StaffScheduleService). Off unless the owner asks for it.
             'require_manager_approval' => false,

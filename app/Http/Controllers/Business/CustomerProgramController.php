@@ -85,13 +85,6 @@ class CustomerProgramController extends Controller
         return $this->programs->clientVouchers($request->user(), $uuid);
     }
 
-    public function redeem(Request $request, string $uuid)
-    {
-        $data = $request->validate(['program_uuid' => ['required', 'uuid']]);
-
-        return $this->programs->redeemForClient($request->user(), $uuid, $data['program_uuid']);
-    }
-
     // Same as BillingPaymentRequest; the amount is the membership's price.
     private function paymentRules(): array
     {
