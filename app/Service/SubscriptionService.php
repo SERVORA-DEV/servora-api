@@ -157,8 +157,15 @@ class SubscriptionService
         $inGracePeriod = $isLapsed && $daysSinceExpiry <= $graceDays;
         $graceDaysRemaining = $inGracePeriod ? max(0, $graceDays - $daysSinceExpiry) : null;
 
+        $subscription->loadMissing(['plan', 'scheduledPlan', 'pendingPlan']);
+        $addons = app(SubscriptionAddonService::class);
+
         return response()->json([
             'entitlements' => app(PlanAccessService::class)->present($business->id),
+            // Extra slots the owner can add now (prorated), and the next
+            // billing with every slot owned at full price.
+            'addons' => $addons->offer($subscription),
+            'next_billing' => $addons->nextBilling($subscription),
             'has_subscription' => true,
             'subscription' => new SubscriptionResource($subscription),
             'trial' => $this->presentTrial($user, $business->id, $subscription),
@@ -324,6 +331,9 @@ class SubscriptionService
             ] : null,
             'branches_used' => $this->planFitService->branches($business)->count(),
             'accounts_used' => $this->planFitService->accounts($business)->count(),
+            // Whether a full plan can take extra slots (the "Add branches" /
+            // "Add accounts" buttons beside the limit).
+            'addons' => app(SubscriptionAddonService::class)->offer($subscription?->loadMissing('plan')),
         ]);
     }
 

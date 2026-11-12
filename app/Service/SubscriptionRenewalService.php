@@ -94,7 +94,12 @@ class SubscriptionRenewalService
 
         [$plan, $cycle] = $this->renewalPlanFor($subscription);
         $method = $subscription->paymentMethod;
-        $extras = $subscription->scheduled_extras ?? $subscription->only(['extra_branches', 'extra_accounts']);
+        // Extra slots renew at their full price with the plan. The owner's
+        // scheduled change says which it keeps; otherwise the term's own
+        // slots carry over, less any the next plan doesn't sell (an admin's
+        // updated plan without add-ons: they end with this term).
+        $extras = $subscription->scheduled_extras
+            ?? ($plan ? PlanTerms::carryOver($plan, $subscription->only(['extra_branches', 'extra_accounts'])) : []);
         try {
             if ($plan) {
                 $extras = PlanTerms::extras($plan, $extras);

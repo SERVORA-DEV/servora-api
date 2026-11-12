@@ -84,6 +84,9 @@ class PlanSwitchService
             // A smaller plan: what the owner has to choose between, and what
             // the plan itself pauses. Null for an upgrade.
             'fit' => $isUpgrade || ! $subscription->business ? null : $this->fit->fit($subscription->business, $effective, $subscription->expires_at),
+            // Extra slots the owner has now that this change doesn't keep,
+            // said before they confirm (empty when everything carries over).
+            'extras_ending' => self::extrasEnding($subscription, $target, $extras, $isUpgrade),
         ];
 
         $reason = $target->isTrial()
@@ -255,6 +258,28 @@ class PlanSwitchService
             'due_at' => $subscription->expires_at,
             'paid_this_term' => $this->paidThisTerm($subscription),
         ];
+    }
+
+    /** @return string[] e.g. "The Premium plan has no extra branches, so your 2 extra branches end when you switch." */
+    public static function extrasEnding(Subscription $subscription, SubscriptionPlan $target, array $extras, bool $now): array
+    {
+        $when = $now ? 'when you switch' : 'on '.($subscription->expires_at?->format('F j, Y') ?? 'your next billing');
+        $lines = [];
+        foreach (['branch' => ['extra_branches', 'branches'], 'account' => ['extra_accounts', 'accounts']] as $kind => [$field, $plural]) {
+            $owned = (int) $subscription->{$field};
+            $kept = (int) ($extras[$field] ?? 0);
+            if ($owned <= $kept) {
+                continue;
+            }
+            $what = $owned === 1 ? "extra {$kind}" : "{$owned} extra {$plural}";
+            $lines[] = ! PlanTerms::offers($target, $kind)
+                ? "The {$target->name} plan has no extra {$plural}, so your {$what} ".($owned === 1 ? 'ends' : 'end')." {$when}."
+                : ($kept === 0
+                    ? "Your {$what} ".($owned === 1 ? 'ends' : 'end')." {$when}. Add them back below to keep them."
+                    : "You keep {$kept} of your {$owned} extra {$plural}; the rest end {$when}.");
+        }
+
+        return $lines;
     }
 
     public static function price(SubscriptionPlan $plan, string $cycle): ?float

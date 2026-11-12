@@ -446,8 +446,11 @@ class SpaBranchService
         $plan = $this->planFit->currentPlan($business);
         if (! $this->planFit->hasRoomForBranch($business, $plan)) {
             return response()->json([
-                'message' => "Your {$plan->name} plan allows ".((int) $plan->max_branches === 1 ? '1 branch' : "{$plan->max_branches} branches").'. Upgrade to add another.',
+                'message' => "Your {$plan->name} plan allows ".((int) $plan->max_branches === 1 ? '1 branch' : "{$plan->max_branches} branches").'. '.(\App\Support\PlanTerms::offers($plan, 'branch') ? 'Add a branch slot or upgrade to add another.' : 'Upgrade to add another.'),
                 'code' => 'PLAN_LIMIT',
+                // The plan sells extra branch slots (SubscriptionAddonService).
+                'can_add_slots' => \App\Support\PlanTerms::offers($plan, 'branch'),
+                'slot_kind' => 'branch',
             ], 422);
         }
 

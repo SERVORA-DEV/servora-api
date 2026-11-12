@@ -18,8 +18,8 @@ class CheckoutRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'purpose' => 'required|in:subscribe,renew,upgrade,save_method',
-            'plan_uuid' => 'required_unless:purpose,save_method|nullable|uuid|exists:subscription_plans,uuid',
+            'purpose' => 'required|in:subscribe,renew,upgrade,save_method,add_slots',
+            'plan_uuid' => 'required_unless:purpose,save_method,add_slots|nullable|uuid|exists:subscription_plans,uuid',
             'billing_cycle' => 'nullable|in:Monthly,Yearly',
             'method' => 'required|in:new,saved',
             'payment_method_uuid' => 'required_if:method,saved|nullable|uuid',
@@ -30,6 +30,9 @@ class CheckoutRequest extends FormRequest
             // (PlanFitService). Ignored when everything fits.
             'extra_branches' => 'sometimes|integer|min:0|max:1000',
             'extra_accounts' => 'sometimes|integer|min:0|max:1000',
+            // add_slots: how many extra slots to add to the live plan now.
+            'add_branches' => 'sometimes|integer|min:0|max:1000',
+            'add_accounts' => 'sometimes|integer|min:0|max:1000',
             'keep' => 'sometimes|nullable|array',
             'keep.branch_uuids' => 'sometimes|array',
             'keep.branch_uuids.*' => 'uuid',

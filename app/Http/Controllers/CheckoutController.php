@@ -24,7 +24,10 @@ class CheckoutController extends Controller
         $data = $request->validate([
             'extra_branches' => 'sometimes|integer|min:0|max:1000',
             'extra_accounts' => 'sometimes|integer|min:0|max:1000',
-            'purpose' => 'required|in:subscribe,renew,upgrade,save_method',
+            // add_slots: how many extra slots to add to the live plan now.
+            'add_branches' => 'sometimes|integer|min:0|max:1000',
+            'add_accounts' => 'sometimes|integer|min:0|max:1000',
+            'purpose' => 'required|in:subscribe,renew,upgrade,save_method,add_slots',
             'plan_uuid' => 'nullable|uuid',
             'billing_cycle' => 'nullable|in:Monthly,Yearly',
         ]);

@@ -13,7 +13,7 @@ class CheckoutSession extends Model
 {
     use HasUuids;
 
-    public const PURPOSES = ['subscribe', 'renew', 'upgrade', 'save_method', 'auto_renew'];
+    public const PURPOSES = ['subscribe', 'renew', 'upgrade', 'save_method', 'auto_renew', 'add_slots'];
 
     protected $fillable = [
         'uuid', 'spa_business_id', 'purpose', 'subscription_id', 'subscription_plan_id', 'billing_cycle',

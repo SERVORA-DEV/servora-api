@@ -26,6 +26,8 @@ use Illuminate\Support\Str;
 //
 //  - subscribe / renew: buy a plan when none is running (full price);
 //  - upgrade: pay the difference for a bigger plan (PlanSwitchService rules);
+//  - add_slots: extra branch / account slots on the live plan, prorated to
+//    the days left until the next billing (SubscriptionAddonService);
 //  - save_method: add or replace the saved payment method, nothing charged;
 //  - auto_renew: the renewal charge SubscriptionRenewalService makes on a
 //    saved method (no page involved).
@@ -53,6 +55,7 @@ class CheckoutService
         private NotificationService $notifications,
         private AdminUsersRepository $admins,
         private PlanFitService $fit,
+        private SubscriptionAddonService $addons,
     ) {}
 
     public static function vatOf(float $amount): float
@@ -76,10 +79,13 @@ class CheckoutService
         $live = $this->subscriptions->findActiveForBusiness($business->id);
         // The demo lock (XenditService): a key that isn't a test key.
         $blocked ??= $this->xendit->blockedReason();
+        $addon = $purpose === 'add_slots' ? $this->addons->quote($this->liveForSlots($business), $extraInput) : null;
 
         return [
             'extra_branches' => $extras['extra_branches'] ?? 0,
             'extra_accounts' => $extras['extra_accounts'] ?? 0,
+            // add_slots: what is added, the days charged and the next billing.
+            'addon' => $addon,
             'purpose' => $purpose,
             'allowed' => $blocked === null,
             'blocked_reason' => $blocked,
@@ -125,6 +131,14 @@ class CheckoutService
     {
         if ($purpose === 'save_method') {
             return [null, null, 0.0, null, [['label' => 'Nothing is charged now', 'amount' => 0.0]]];
+        }
+        if ($purpose === 'add_slots') {
+            // Always on the live plan, whatever plan the page named.
+            $live = $this->liveForSlots($business);
+            $addon = $this->addons->quote($live, $extraInput);
+
+            return [$live?->plan, $live?->billing_cycle ?? 'Monthly', $addon['amount'], $addon['blocked_reason'],
+                array_map(fn ($l) => ['label' => $l['label'], 'amount' => $l['amount']], $addon['lines'])];
         }
 
         $plan = $planUuid ? SubscriptionPlan::where('uuid', $planUuid)->first() : null;
@@ -202,7 +216,7 @@ class CheckoutService
         if ($reason = $this->xendit->blockedReason()) {
             abort(503, $reason);
         }
-        $extras = $plan ? PlanTerms::extras($plan, $payload) : [];
+        $extras = $plan && $purpose !== 'add_slots' ? PlanTerms::extras($plan, $payload) : [];
         $effective = $plan ? PlanTerms::effective($plan, $extras) : null;
         // Nothing is charged until what to keep on a smaller plan is settled.
         $keep = null;
@@ -220,7 +234,11 @@ class CheckoutService
         $session = CheckoutSession::create([
             'spa_business_id' => $business->id,
             'purpose' => $purpose,
-            'subscription_id' => $purpose === 'upgrade' ? $live?->id : ($purpose === 'save_method' ? $live?->id : null),
+            'subscription_id' => match ($purpose) {
+                'upgrade', 'save_method' => $live?->id,
+                'add_slots' => $this->liveForSlots($business)?->id,
+                default => null,
+            },
             'subscription_plan_id' => $plan?->id,
             'billing_cycle' => $cycle,
             'amount' => $amount,
@@ -229,7 +247,9 @@ class CheckoutService
             'save_method' => $purpose === 'save_method' || $wantsAutoRenew || (bool) ($payload['save_method'] ?? false),
             'enable_auto_renew' => $wantsAutoRenew,
             'reference_id' => 'SRV-'.Str::uuid(),
-            'meta' => ['keep' => $keep, 'extras' => $extras, 'base_amount' => $plan ? PlanSwitchService::price($plan, $cycle ?? 'Monthly') : 0, 'extras_amount' => $plan ? PlanTerms::extraPrice($plan, $cycle ?? 'Monthly', $extras) : 0],
+            'meta' => $purpose === 'add_slots'
+                ? ['add' => $this->addonRecord($business, $payload)]
+                : ['keep' => $keep, 'extras' => $extras, 'base_amount' => $plan ? PlanSwitchService::price($plan, $cycle ?? 'Monthly') : 0, 'extras_amount' => $plan ? PlanTerms::extraPrice($plan, $cycle ?? 'Monthly', $extras) : 0],
         ]);
 
         if (($payload['method'] ?? null) === 'saved') {
@@ -240,6 +260,7 @@ class CheckoutService
         $description = match ($purpose) {
             'save_method' => 'Save a payment method for Servora renewals',
             'upgrade' => "Upgrade to {$plan->name} Plan ({$cycle})",
+            'add_slots' => "Extra slots for {$plan->name} Plan",
             default => "{$plan->name} Plan Subscription ({$cycle})",
         };
 
@@ -436,6 +457,7 @@ class CheckoutService
             $subscription = match ($session->purpose) {
                 'subscribe', 'renew', 'auto_renew' => $this->startTerm($session, $business, $method),
                 'upgrade' => $this->applyUpgrade($session),
+                'add_slots' => $this->applySlots($session),
                 default => $this->useNewMethod($business, $method, $session->enable_auto_renew),
             };
 
@@ -520,6 +542,39 @@ class CheckoutService
         return $subscription;
     }
 
+    // add_slots: the slots bought apply to the term now.
+    private function applySlots(CheckoutSession $session): ?Subscription
+    {
+        $subscription = Subscription::find($session->subscription_id);
+        if (! $subscription) {
+            Log::warning('checkout.slots_without_subscription', ['session' => $session->uuid]);
+
+            return null;
+        }
+
+        return $this->addons->apply($subscription, $session->meta['add'] ?? []);
+    }
+
+    // The paid term extra slots are added to (a free trial can't have any).
+    private function liveForSlots(SpaBusiness $business): ?Subscription
+    {
+        return $this->subscriptions->findPaidActiveForBusiness($business->id)?->loadMissing(['plan', 'scheduledPlan', 'pendingPlan']);
+    }
+
+    // What an add_slots checkout bought, kept on its session as the record
+    // of the purchase: the quantities, the days charged and the wording.
+    private function addonRecord(SpaBusiness $business, array $payload): array
+    {
+        $q = $this->addons->quote($this->liveForSlots($business), $payload);
+
+        return [
+            'add_branches' => $q['add_branches'], 'add_accounts' => $q['add_accounts'],
+            'days_left' => $q['days_left'], 'period_days' => $q['period_days'],
+            'next_billing_at' => $q['next_billing_at']?->toIso8601String(),
+            'lines' => $q['lines'],
+        ];
+    }
+
     // save_method: the new method becomes the default, and what a running
     // auto-renewal charges from now on (or turns auto-renew on, if asked).
     private function useNewMethod(SpaBusiness $business, ?BusinessPaymentMethod $method, bool $enableAutoRenew): ?Subscription
@@ -536,13 +591,14 @@ class CheckoutService
     {
         $plan = SubscriptionPlan::find($session->subscription_plan_id);
         $remarks = match ($session->purpose) {
+            'add_slots' => 'Extra slots on '.($plan?->name ?? 'the').' Plan: '.implode('; ', array_column($session->meta['add']['lines'] ?? [], 'label')),
             'upgrade' => 'Upgrade: '.($session->meta['from_plan'] ?? 'previous plan').' → '.($plan?->name ?? 'new plan'),
             'auto_renew' => ($plan?->name ?? 'Plan')." Plan Renewal ({$session->billing_cycle})",
             default => ($plan?->name ?? 'Plan')." Plan Subscription ({$session->billing_cycle})",
         };
 
         $extras = $session->meta['extras'] ?? [];
-        $remarks .= sprintf(' · Extras: %d branches, %d accounts · Plan PHP %.2f; extras PHP %.2f (cycle totals)', $extras['extra_branches'] ?? 0, $extras['extra_accounts'] ?? 0, $session->meta['base_amount'] ?? $session->amount, $session->meta['extras_amount'] ?? 0);
+        if ($session->purpose !== 'add_slots') $remarks .= sprintf(' · Extras: %d branches, %d accounts · Plan PHP %.2f; extras PHP %.2f (cycle totals)', $extras['extra_branches'] ?? 0, $extras['extra_accounts'] ?? 0, $session->meta['base_amount'] ?? $session->amount, $session->meta['extras_amount'] ?? 0);
         $billing = $this->billings->create([
             'subscription_id' => $subscription?->id,
             'spa_business_id' => $session->spa_business_id,
@@ -797,6 +853,8 @@ class CheckoutService
             // the first paid plan (bought during the free trial).
             'extra_branches' => $session->meta['extras']['extra_branches'] ?? 0,
             'extra_accounts' => $session->meta['extras']['extra_accounts'] ?? 0,
+            // add_slots: what was added and for which days.
+            'addon' => $session->purpose === 'add_slots' ? ($session->meta['add'] ?? null) : null,
             'purpose' => $this->buyingAs($session->spa_business_id, $session->purpose, $session->created_at),
             'status' => $session->status,
             'failure_reason' => $session->failure_reason,
@@ -804,7 +862,8 @@ class CheckoutService
             'vat_amount' => (float) $session->vat_amount,
             // An upgrade carries no cycle of its own: it keeps the one the term runs on.
             'billing_cycle' => $session->billing_cycle ?? $session->subscription?->billing_cycle,
-            'plan' => $session->plan ? $this->presentPlan(PlanTerms::effective($session->plan, $session->meta['extras'] ?? [])) : null,
+            // Extra slots: the limits the term has now, with every slot it owns.
+            'plan' => $session->plan ? $this->presentPlan(PlanTerms::effective($session->plan, $session->purpose === 'add_slots' && $session->subscription ? $session->subscription->only(['extra_branches', 'extra_accounts']) : ($session->meta['extras'] ?? []))) : null,
             'payment_method' => $session->paymentMethod?->present(),
             // What the money went through ("Credit Card", "GCash"), also for a
             // one-off payment that saved no method. Only once it has been paid.

@@ -330,8 +330,11 @@ class AccountService
         }
 
         return response()->json([
-            'message' => "Your {$plan->name} plan allows ".((int) $plan->max_user_accounts === 1 ? '1 staff login' : "{$plan->max_user_accounts} staff logins").'. Upgrade to add another.',
+            'message' => "Your {$plan->name} plan allows ".((int) $plan->max_user_accounts === 1 ? '1 staff login' : "{$plan->max_user_accounts} staff logins").'. '.(\App\Support\PlanTerms::offers($plan, 'account') ? 'Add an account slot or upgrade to add another.' : 'Upgrade to add another.'),
             'code' => 'PLAN_LIMIT',
+            // The plan sells extra account slots (SubscriptionAddonService).
+            'can_add_slots' => \App\Support\PlanTerms::offers($plan, 'account'),
+            'slot_kind' => 'account',
         ], 422);
     }
 
