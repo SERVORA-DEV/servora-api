@@ -33,17 +33,8 @@ class ServiceRequest extends FormRequest
             // owner's name collide with the global catalog.
             'name' => [
                 $isCreate ? 'required' : 'sometimes', 'string', 'max:150',
-<<<<<<< HEAD
-<<<<<<< HEAD
-                new NoEmoji,
-=======
                 new NoEmoji(),
                 // A deleted service no longer holds its name or code (the indexes are over live rows only).
->>>>>>> main
-=======
-                new NoEmoji(),
-                // A deleted service no longer holds its name or code (the indexes are over live rows only).
->>>>>>> main
                 Rule::unique('services', 'name')
                     ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
                     ->whereNotNull('spa_business_id')
@@ -123,12 +114,6 @@ class ServiceRequest extends FormRequest
         $validator->after(function ($validator) {
             $variants = collect($this->input('variants', []));
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-            $durations = $variants->map(fn ($v) => ($v['service_location'] ?? 'In Spa').':'.($v['duration_minutes'] ?? ''));
-=======
-=======
->>>>>>> main
             $parts = collect($this->input('parts', []));
             // Not saved anywhere until the service_parts migration has run: say so rather than drop them.
             if ($parts->isNotEmpty() && ! Service::hasParts()) {
@@ -158,12 +143,7 @@ class ServiceRequest extends FormRequest
                 }
             }
 
-<<<<<<< HEAD
-            $durations = $variants->pluck('duration_minutes')->filter(fn ($d) => $d !== null);
->>>>>>> main
-=======
             $durations = $variants->map(fn ($v) => ($v['service_location'] ?? 'In Spa').':'.($v['duration_minutes'] ?? ''));
->>>>>>> main
             if ($durations->count() !== $durations->unique()->count()) {
                 $validator->errors()->add('variants', 'Two options cannot share the same duration.');
             }

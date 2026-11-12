@@ -80,8 +80,6 @@ class PackageRequest extends FormRequest
     {
         // A package for several clients: each client needs something, and only the clients it is for.
         $validator->after(function ($validator) {
-<<<<<<< HEAD
-=======
             if (! \App\Models\Package::hasSharing() || ! $this->has('services')) {
                 return;
             }
@@ -110,7 +108,6 @@ class PackageRequest extends FormRequest
 
         // A home-service package: every service in it needs reviewed home options and a home length.
         $validator->after(function ($validator) {
->>>>>>> main
             $existing = $this->route('package') ? Package::where('uuid', $this->route('package'))->first() : null;
             if (! ($this->input('home_service_available') ?? $existing?->home_service_available)) {
                 return;
