@@ -43,6 +43,11 @@ class AppointmentServiceResource extends JsonResource
             'source_package_uuid' => $this->sourceAppointmentPackage?->uuid,
             'source_package_name' => $this->sourceAppointmentPackage?->displayName(),
             'therapist_assignments' => TherapistAssignmentResource::collection($this->whenLoaded('therapistAssignments')),
+            // Done by several staff at once: its parts (each needs someone). Empty for a one-person
+            // service, or where the parts weren't loaded (lists).
+            'parts' => ($service = $this->serviceVariant?->service) && $service->relationLoaded('parts')
+                ? $service->parts->map(fn ($p) => ['uuid' => $p->uuid, 'name' => $p->name, 'share_percent' => (float) $p->share_percent])->values()
+                : [],
         ];
     }
 }

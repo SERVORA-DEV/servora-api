@@ -3,6 +3,7 @@
 namespace App\Service\Business;
 
 use App\Http\Resources\StaffScheduleResource;
+use App\Models\BranchSchedule;
 use App\Models\SpaBusiness;
 use App\Models\Staff;
 use App\Models\StaffScheduleChangeRequest;
@@ -11,6 +12,7 @@ use App\Repository\Business\StaffRepository;
 use App\Repository\Business\StaffScheduleRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Service\NotificationService;
+use App\Support\BranchHours;
 use Illuminate\Support\Facades\DB;
 
 class StaffScheduleService
@@ -84,6 +86,11 @@ class StaffScheduleService
                 'end_time' => $isDayOff ? null : ($day['end_time'] ?? null),
             ];
         })->all();
+
+        // A shift has to sit inside the branch's opening hours for that day.
+        if ($problem = $this->hoursProblem((int) $staff->spa_branch_id, $rows)) {
+            return response()->json(['message' => $problem], 422);
+        }
 
         if ($this->needsApproval($business, $user)) {
             $request = DB::transaction(function () use ($business, $staff, $user, $rows) {
@@ -282,5 +289,39 @@ class StaffScheduleService
     private function userName(User $user): string
     {
         return $user->displayName();
+    }
+
+    // The first shift that starts before the branch opens or ends after it closes, as a message
+    // for the person saving. A day with no hours set, or a branch open round the clock, has no
+    // limit. (A closing time of midnight is the end of the day.)
+    private function hoursProblem(int $branchId, array $rows): ?string
+    {
+        $byDay = BranchSchedule::where('spa_branch_id', $branchId)->get()->keyBy('day_of_week');
+
+        foreach ($rows as $row) {
+            if ($row['is_day_off'] || ! $row['start_time'] || ! $row['end_time']) {
+                continue;
+            }
+
+            $window = BranchHours::windowOf($byDay->get($row['day_of_week']));
+            if (! $window) {
+                continue;
+            }
+
+            $day = $row['day_of_week'];
+            if (! empty($window['closed'])) {
+                return "The branch is closed on {$day}. Make {$day} a day off for this person.";
+            }
+
+            $start = BranchHours::minutes($row['start_time']);
+            $end = BranchHours::minutes($row['end_time']);
+            $end = $end === 0 ? 1440 : ($end <= $start ? $end + 1440 : $end);
+
+            if ($start < $window['open'] || $end > $window['close']) {
+                return "{$day}: the branch is open {$window['label']}. Set this person's hours inside that.";
+            }
+        }
+
+        return null;
     }
 }

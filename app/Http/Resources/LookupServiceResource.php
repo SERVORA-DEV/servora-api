@@ -23,6 +23,8 @@ class LookupServiceResource extends JsonResource
             'service_uuid' => $this->serviceVariant->service?->uuid,
             // The owner's "can be done at a client's home" tick.
             'home_service_available' => (bool) $this->serviceVariant->service?->home_service_available,
+            // Done by several staff at once: one part each (empty for a one-person service).
+            'parts' => $this->resource->getAttribute('parts') ?? [],
             'name' => $this->serviceVariant->service?->name,
             // For grouping the menu on the New Appointment page.
             'category' => $this->serviceVariant->service?->category,

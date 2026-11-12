@@ -72,6 +72,23 @@ class Service extends Model
     }
 
     /**
+     * Whether the service-parts table and its assignment columns exist yet (migration
+     * 2026_11_16_090000). Until then every service is done by one person and nothing reads or
+     * writes parts.
+     */
+    public static function hasParts(): bool
+    {
+        $known = Cache::get('schema:service_parts');
+        if (is_bool($known)) {
+            return $known;
+        }
+        $ready = Schema::hasTable('service_parts') && Schema::hasColumn('therapist_assignments', 'service_part_id');
+        $ready ? Cache::forever('schema:service_parts', true) : Cache::put('schema:service_parts', false, 60);
+
+        return $ready;
+    }
+
+    /**
      * Whether the facility-requirement columns exist yet (the migration has
      * been run). Until then nothing needs a facility and nothing writes them.
      */
@@ -100,6 +117,39 @@ class Service extends Model
     public function facilities()
     {
         return $this->belongsToMany(Facility::class, 'facility_services');
+    }
+
+    // Done by several staff at once: one part each ("Upper body", "Lower body"), each with its
+    // share of the commission. None: one person does it all.
+    public function parts()
+    {
+        return $this->hasMany(ServicePart::class, 'service_id')->orderBy('sort')->orderBy('id');
+    }
+
+    /** How many staff work on one booking of it together: one per part, or one. */
+    public function staffNeeded(): int
+    {
+        if (! self::hasParts()) {
+            return 1;
+        }
+        $count = $this->relationLoaded('parts') ? $this->parts->count() : $this->parts()->count();
+
+        return max(1, $count);
+    }
+
+    /** Staff needed per service, for many services in one query (service id => count). */
+    public static function staffNeededFor(iterable $serviceIds): array
+    {
+        $ids = collect($serviceIds)->filter()->unique()->values();
+        if ($ids->isEmpty()) {
+            return [];
+        }
+        if (! self::hasParts()) {
+            return $ids->mapWithKeys(fn ($id) => [$id => 1])->all();
+        }
+        $counts = ServicePart::whereIn('service_id', $ids)->selectRaw('service_id, count(*) as n')->groupBy('service_id')->pluck('n', 'service_id');
+
+        return $ids->mapWithKeys(fn ($id) => [$id => max(1, (int) ($counts[$id] ?? 0))])->all();
     }
 
     // The admin-authored template this service was copied from, if any.

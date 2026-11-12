@@ -22,12 +22,14 @@ class PackageRequest extends FormRequest
         $isCreate = $this->isMethod('post');
 
         return [
-            // Matches the packages table's unique(spa_business_id, name) index.
+            // Matches the packages table's unique(spa_business_id, name) index, which is over
+            // live rows only: a deleted package no longer holds its name or code.
             'name' => [
                 $isCreate ? 'required' : 'sometimes', 'string', 'max:150',
                 new NoEmoji,
                 Rule::unique('packages', 'name')
                     ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
+                    ->whereNull('deleted_at')
                     ->ignore($this->route('package'), 'uuid'),
             ],
             // Matches the packages table's unique(spa_business_id, code) index.
@@ -35,6 +37,7 @@ class PackageRequest extends FormRequest
                 'nullable', 'string', 'max:20',
                 Rule::unique('packages', 'code')
                     ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
+                    ->whereNull('deleted_at')
                     ->ignore($this->route('package'), 'uuid'),
             ],
             'description' => 'nullable|string',
@@ -63,6 +66,12 @@ class PackageRequest extends FormRequest
             // What this service is worth in the package, per one (blank: its menu price).
             'services.*.price' => 'nullable|numeric|min:0|max:10000000',
             'services.*.addon_uuids' => 'sometimes|array',
+            // A package for several clients (a Couples Massage: 2), and which of them get each
+            // service ([1] = Client A, [2] = Client B, [1, 2] = both; left out: every client).
+            // Every client must get something (withValidator).
+            'client_count' => 'sometimes|integer|min:1|max:4',
+            'services.*.client_slots' => 'nullable|array',
+            'services.*.client_slots.*' => 'integer|min:1|max:4',
             'services.*.addon_uuids.*' => 'uuid|distinct',
         ];
     }
@@ -101,6 +110,8 @@ class PackageRequest extends FormRequest
         return [
             'services.*.service_uuid.distinct' => 'A package can hold a service once — use the quantity for more of the same.',
             'services.*.service_uuid.required_without' => 'Each line of a package needs a service.',
+            'name.unique' => 'You already have a package with this name.',
+            'code.unique' => 'Another package already uses this code.',
         ];
     }
 

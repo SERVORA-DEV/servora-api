@@ -33,10 +33,16 @@ class ServiceRequest extends FormRequest
             // owner's name collide with the global catalog.
             'name' => [
                 $isCreate ? 'required' : 'sometimes', 'string', 'max:150',
+<<<<<<< HEAD
                 new NoEmoji,
+=======
+                new NoEmoji(),
+                // A deleted service no longer holds its name or code (the indexes are over live rows only).
+>>>>>>> main
                 Rule::unique('services', 'name')
                     ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
                     ->whereNotNull('spa_business_id')
+                    ->whereNull('deleted_at')
                     ->ignore($this->route('service'), 'uuid'),
             ],
             // Business-scoped like `name` above — identifies the service
@@ -46,6 +52,7 @@ class ServiceRequest extends FormRequest
                 Rule::unique('services', 'code')
                     ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
                     ->whereNotNull('spa_business_id')
+                    ->whereNull('deleted_at')
                     ->ignore($this->route('service'), 'uuid'),
             ],
             // Optional here, unlike on a template (see ServiceTemplateRequest,
@@ -95,6 +102,14 @@ class ServiceRequest extends FormRequest
             'variants.*.duration_minutes' => 'required_with:variants|integer|min:1|max:720',
             'variants.*.service_location' => ['sometimes', Rule::in(['In Spa', 'Home Service'])],
             'variants.*.price' => 'required_with:variants|numeric|min:0|max:1000000|decimal:0,2',
+
+            // Done by several staff at once: one part per person ("Upper body", "Lower body"),
+            // each with its share of the commission. Empty: one person does it. Checked as a
+            // whole (2-4 parts, shares total 100) in withValidator.
+            'parts' => 'sometimes|array|max:4',
+            'parts.*.uuid' => 'nullable|uuid',
+            'parts.*.name' => ['required', 'string', 'max:60', 'distinct:ignore_case', new NoEmoji()],
+            'parts.*.share_percent' => 'required|numeric|min:1|max:99|decimal:0,2',
         ];
     }
 
@@ -103,7 +118,40 @@ class ServiceRequest extends FormRequest
         $validator->after(function ($validator) {
             $variants = collect($this->input('variants', []));
 
+<<<<<<< HEAD
             $durations = $variants->map(fn ($v) => ($v['service_location'] ?? 'In Spa').':'.($v['duration_minutes'] ?? ''));
+=======
+            $parts = collect($this->input('parts', []));
+            // Not saved anywhere until the service_parts migration has run: say so rather than drop them.
+            if ($parts->isNotEmpty() && ! Service::hasParts()) {
+                $validator->errors()->add('parts', 'Services done by several staff at once aren\'t available yet. Save it as a one-person service for now.');
+            } elseif ($parts->isNotEmpty()) {
+                $serviceUuid = $this->route('service');
+                $kind = ServiceKind::of($this->input('service_type')
+                    ?? ($serviceUuid ? Service::where('uuid', $serviceUuid)->value('service_type') : null));
+                if (! ServiceKind::needsTherapist($kind)) {
+                    $validator->errors()->add('parts', 'A facility-only service has no staff, so it has no parts.');
+                } elseif ($parts->count() < 2) {
+                    $validator->errors()->add('parts', 'A service done by several staff needs at least 2 parts.');
+                } else {
+                    $total = round($parts->sum(fn ($p) => (float) ($p['share_percent'] ?? 0)), 2);
+                    if (abs($total - 100) > 0.001) {
+                        $validator->errors()->add('parts', 'The parts\' commission shares must add up to 100% (now ' . rtrim(rtrim(number_format($total, 2, '.', ''), '0'), '.') . '%).');
+                    }
+                }
+                $partUuids = $parts->pluck('uuid')->filter()->unique();
+                if ($partUuids->isNotEmpty() && Service::hasParts()) {
+                    $owned = $serviceUuid
+                        ? \App\Models\ServicePart::whereIn('uuid', $partUuids)->whereHas('service', fn ($q) => $q->where('uuid', $serviceUuid))->count()
+                        : 0;
+                    if ($owned !== $partUuids->count()) {
+                        $validator->errors()->add('parts', 'One or more parts do not belong to this service.');
+                    }
+                }
+            }
+
+            $durations = $variants->pluck('duration_minutes')->filter(fn ($d) => $d !== null);
+>>>>>>> main
             if ($durations->count() !== $durations->unique()->count()) {
                 $validator->errors()->add('variants', 'Two options cannot share the same duration.');
             }
@@ -166,6 +214,18 @@ class ServiceRequest extends FormRequest
                 }
             }
         });
+    }
+
+    public function messages(): array
+    {
+        return [
+            'name.unique' => 'You already have a service with this name.',
+            'code.unique' => 'Another service already uses this code.',
+            'parts.*.name.required' => 'Give each part a name, e.g. Upper body.',
+            'parts.*.name.distinct' => 'Two parts cannot have the same name.',
+            'parts.*.share_percent.required' => 'Give each part its share of the commission.',
+            'parts.max' => 'A service can be split between at most 4 staff.',
+        ];
     }
 
     private function resolvedBusinessId(): ?int

@@ -104,8 +104,11 @@ class CommissionCalculator
         // when the owner turned it on (CommissionShare::rate).
         $home = (bool) $line->appointment?->isHomeService();
 
+        // Shared between the people who did it: rows with nobody on them (a room held for the
+        // service) don't count. A service done by several staff at once shares by its parts.
+        $people = $done->whereNotNull('staff_id');
         $kept = 0;
-        foreach ($done->whereNotNull('staff_id') as $assignment) {
+        foreach ($people as $assignment) {
             if ($onlyMissing && $assignment->commission_amount !== null) {
                 continue;
             }
@@ -115,9 +118,10 @@ class CommissionCalculator
                 (float) $line->subtotal,
                 (float) $line->unit_price * max(1, (int) $line->quantity),
                 $line->source_appointment_package_id !== null,
-                $done->count(),
+                $people->count(),
                 $own,
                 $home,
+                $assignment->commission_share !== null ? (float) $assignment->commission_share : null,
             ), 2);
 
             $assignment->update(['commission_amount' => $amount] + ($custom && $policy ? [
@@ -309,6 +313,10 @@ class CommissionCalculator
                     'rate_type' => $line->kept_rate !== null ? $type : null,
                     // How many therapists it was shared between.
                     'split' => max(1, (int) $line->split),
+                    // A service done by several staff at once: which part this person did and its
+                    // share of the commission (percent); null otherwise.
+                    'part' => $line->part_name ?? null,
+                    'share' => ($line->commission_share ?? null) !== null ? (float) $line->commission_share : null,
                     'amount' => $amount,
                 ];
             }
@@ -513,8 +521,11 @@ class CommissionCalculator
                     : (Staff::hasCustomCommission()
                         ? "(select st.commission_rate from staff st where st.id = ta.staff_id and st.role = 'therapist')"
                         : 'null')) . ' as own_rate'),
-                // How many therapists completed this same service line.
-                DB::raw("(select count(*) from therapist_assignments t2 where t2.appointment_service_id = ta.appointment_service_id and t2.assignment_status = 'Completed') as split"),
+                // How many therapists completed this same service line (a room-only row is nobody).
+                DB::raw("(select count(*) from therapist_assignments t2 where t2.appointment_service_id = ta.appointment_service_id and t2.assignment_status = 'Completed' and t2.staff_id is not null) as split"),
+                // A service done by several staff at once: the part and its share.
+                DB::raw((\App\Models\Service::hasParts() ? 'ta.part_name' : 'null') . ' as part_name'),
+                DB::raw((\App\Models\Service::hasParts() ? 'ta.commission_share' : 'null') . ' as commission_share'),
             ])
             ->get();
     }
@@ -541,6 +552,7 @@ class CommissionCalculator
             (int) $line->split,
             ($line->own_rate ?? null) !== null ? (float) $line->own_rate : null,
             (bool) ($line->is_home ?? false),
+            ($line->commission_share ?? null) !== null ? (float) $line->commission_share : null,
         );
     }
 }

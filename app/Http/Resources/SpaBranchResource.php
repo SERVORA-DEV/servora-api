@@ -153,8 +153,10 @@ class SpaBranchResource extends JsonResource
 
             'facilities' => $this->whenLoaded('facilities', fn () => FacilityResource::collection($this->facilities)),
 
+            // Only listings whose length and service still exist: a deleted service's leftovers
+            // used to show here as "Unknown Service".
             'services' => $this->whenLoaded('branchServices', function () {
-                return $this->branchServices->map(fn ($bs) => [
+                return $this->branchServices->filter(fn ($bs) => $bs->serviceVariant?->service)->values()->map(fn ($bs) => [
                     'service_variant_uuid' => $bs->serviceVariant?->uuid,
                     // The service this length belongs to, so a list can show
                     // one service with its lengths side by side.
@@ -171,7 +173,7 @@ class SpaBranchResource extends JsonResource
             }),
 
             'packages' => $this->whenLoaded('branchPackages', function () {
-                return $this->branchPackages->map(fn ($bp) => [
+                return $this->branchPackages->filter(fn ($bp) => $bp->package)->values()->map(fn ($bp) => [
                     'package_uuid' => $bp->package?->uuid,
                     'package_name' => $bp->package?->name,
                     'price' => $bp->custom_price !== null

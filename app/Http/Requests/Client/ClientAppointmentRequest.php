@@ -29,6 +29,11 @@ class ClientAppointmentRequest extends FormRequest
             'appointment_time' => 'required|date_format:H:i',
             'services' => 'nullable|array|required_without:package_uuid',
             'services.*.service_variant_uuid' => 'required|uuid',
+            // A service done by several staff at once: who the client picked for which part.
+            // Parts left out are filled with whoever is free.
+            'services.*.staff' => 'sometimes|array|max:4',
+            'services.*.staff.*.part_uuid' => 'required|uuid',
+            'services.*.staff.*.staff_uuid' => 'required|uuid',
             'package_uuid' => 'nullable|uuid|required_without:services',
             'requested_therapist_uuid' => 'nullable|uuid',
             'remarks' => 'nullable|string|max:500',
@@ -57,6 +62,14 @@ class ClientAppointmentRequest extends FormRequest
                 Rule::in(ClientProfile::GENDERS),
             ],
             'client.age' => 'nullable|integer|min:0|max:' . ClientProfile::OLDEST,
+            // A package for several clients (a Couples Massage): the others, each booked as their
+            // own appointment at the same time (AppointmentService::bookCompanions).
+            'companions' => 'sometimes|array|max:3',
+            'companions.*.first_name' => ['required', 'string', 'max:100', new NoEmoji(), new PersonName()],
+            'companions.*.last_name' => ['required', 'string', 'max:100', new NoEmoji(), new PersonName()],
+            'companions.*.phone_number' => ['nullable', 'string', 'max:20', new NoEmoji()],
+            'companions.*.gender' => [Client::hasProfile() ? 'required' : 'nullable', Rule::in(ClientProfile::GENDERS)],
+            'companions.*.therapist_uuid' => 'nullable|uuid',
         ];
     }
 

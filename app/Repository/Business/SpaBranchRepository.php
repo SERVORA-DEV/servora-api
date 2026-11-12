@@ -109,7 +109,7 @@ class SpaBranchRepository
     public function publicServicesForBranch(int $branchId): Collection
     {
         return self::publicServices(BranchService::where('spa_branch_id', $branchId))
-            ->with('serviceVariant.service')
+            ->with(\App\Models\Service::hasParts() ? ['serviceVariant.service.parts'] : ['serviceVariant.service'])
             ->get();
     }
 

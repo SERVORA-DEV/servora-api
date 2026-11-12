@@ -136,15 +136,29 @@ class AssignmentPlanner
         TherapistAssignment::whereIn($column, $ids)
             ->where('assignment_status', 'In Progress')
             ->whereNotNull('started_at')
-            ->with('appointmentService.serviceVariant')
+            ->with('appointmentService.serviceVariant', 'appointmentService.appointment')
             ->get()
             ->each(function (TherapistAssignment $a) use (&$until, $column) {
                 $end = Carbon::parse($a->started_at)->addMinutes($a->appointmentService?->lengthMinutes() ?? 30);
+                // A home visit: the staff is back only after the trip back.
+                $visit = $a->appointmentService?->appointment;
+                if ($column === 'staff_id' && $visit?->isHomeService()) {
+                    $end->addMinutes(HomeServiceRules::travelMinutes((int) $visit->spa_branch_id));
+                }
                 $id = $a->{$column};
                 if (! isset($until[$id]) || $end->gt($until[$id])) {
                     $until[$id] = $end;
                 }
             });
+
+        // On the way back from a home visit already done.
+        if ($column === 'staff_id') {
+            foreach (HomeServiceRules::returnTrips($ids, now(), now()->copy()->addMinute()) as $id => $trip) {
+                if (! isset($until[$id]) || $trip['to']->gt($until[$id])) {
+                    $until[$id] = $trip['to'];
+                }
+            }
+        }
 
         return array_map(fn (Carbon $c) => $c->format('H:i'), $until);
     }
@@ -166,9 +180,32 @@ class AssignmentPlanner
             // A home visit is held at the client's home, never in a room, even an optional one.
             'takes_facility' => ! $isHome,
             'staff' => $staffed?->staff ? ['uuid' => $staffed->staff->uuid, 'name' => $staffed->staff->first_name . ' ' . $staffed->staff->last_name] : null,
+            // Done by several staff at once: who does each part (empty for a one-person service).
+            'parts' => $this->partsRow($service),
             'facility' => $roomed?->facility ? ['uuid' => $roomed->facility->uuid, 'name' => $roomed->facility->name] : null,
             'assigned' => $current !== null,
         ];
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    private function partsRow(AppointmentServiceItem $service): array
+    {
+        $parts = \App\Support\ServiceParts::forLine($service);
+        if ($parts->isEmpty()) {
+            return [];
+        }
+        $rows = $service->therapistAssignments->filter(fn (TherapistAssignment $a) => in_array($a->assignment_status, ['Assigned', 'In Progress'], true) && $a->staff_id !== null);
+
+        return $parts->map(function ($part) use ($rows) {
+            $row = $rows->firstWhere('service_part_id', $part->id);
+
+            return [
+                'uuid' => $part->uuid,
+                'name' => $part->name,
+                'share_percent' => (float) $part->share_percent,
+                'staff' => $row?->staff ? ['uuid' => $row->staff->uuid, 'name' => $row->staff->first_name . ' ' . $row->staff->last_name] : null,
+            ];
+        })->values()->all();
     }
 
     /** @return array<int, array<string, mixed>> */
@@ -212,8 +249,10 @@ class AssignmentPlanner
         // Clashes per service, over that service's own length (one query for everyone each).
         // For "free now" someone mid-service is not a clash (their busy-until is shown); only reservations ahead are.
         $conflicts = [];
+        // A home visit keeps its staff for the trip there and back too (HomeServiceRules).
         foreach ($services as $service) {
-            $conflicts[$service->uuid] = $this->availability->staffConflicts($therapists->pluck('id')->all(), $date, $time, $service->lengthMinutes() ?? 30, $appointment->id, includeRunning: $mode === 'reserve');
+            [$from, $span] = HomeServiceRules::widen($isHome, (int) $appointment->spa_branch_id, $date, $time, $service->lengthMinutes() ?? 30);
+            $conflicts[$service->uuid] = $this->availability->staffConflicts($therapists->pluck('id')->all(), $date, $from, $span, $appointment->id, includeRunning: $mode === 'reserve');
         }
         $busyUntil = $this->freeAt('staff_id', $ids);
 

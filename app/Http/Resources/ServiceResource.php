@@ -37,6 +37,15 @@ class ServiceResource extends JsonResource
             // The owner's "can be done at a client's home" tick.
             'home_service_available' => (bool) $this->home_service_available,
 
+            // Done by several staff at once: one part each, with its share of the commission
+            // (the shares total 100). Empty: one person does it.
+            'parts' => $this->whenLoaded('parts', fn () => $this->parts->map(fn ($part) => [
+                'uuid' => $part->uuid,
+                'name' => $part->name,
+                'share_percent' => (float) $part->share_percent,
+            ])->values()),
+            'staff_needed' => $this->relationLoaded('parts') ? max(1, $this->parts->count()) : 1,
+
             // Each bookable duration/price/points option — see
             // ServiceVariantResource. Always loaded by the repository
             // (unlike its nested `branches`, which stays optional).

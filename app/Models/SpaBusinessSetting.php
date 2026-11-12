@@ -72,11 +72,13 @@ class SpaBusinessSetting extends Model
             // Home service (HomeServiceRules): off until the owner turns it
             // on; a flat fee in pesos that goes to the therapist; how far
             // from the branch, in km, a client's address may be; and the
-            // least service time worth the trip, in minutes (0 = no minimum).
+            // travel time each way, in minutes: a home visit keeps its staff
+            // from that long before it starts until that long after it ends
+            // (HomeServiceRules::blockedWindow). 0 = no travel time.
             'home_service_enabled' => false,
             'home_service_fee' => 0,
             'home_service_radius_km' => 10,
-            'home_service_min_minutes' => 0,
+            'home_service_travel_minutes' => 0,
             'allow_reschedule' => true,
             // How many times a client may move one booking in the app
             // (0 = none); the front desk isn't held to it.

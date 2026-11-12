@@ -21,6 +21,15 @@ class AppointmentRepository
         'billing.payments',
     ];
 
+    // The detail's relations, plus who does which part of a service done by several staff at once
+    // (only once that table exists, Service::hasParts).
+    private static function eager(): array
+    {
+        return \App\Models\Service::hasParts()
+            ? [...self::EAGER, 'services.serviceVariant.service.parts', 'services.therapistAssignments.part']
+            : self::EAGER;
+    }
+
     public function paginateForBranches(array $spaBranchIds, array $filters, int $perPage = 15)
     {
         return Appointment::with([
@@ -62,8 +71,9 @@ class AppointmentRepository
         return Appointment::create($payload);
     }
 
-    public function findByUuidForBranches(string $uuid, array $spaBranchIds, array $with = self::EAGER)
+    public function findByUuidForBranches(string $uuid, array $spaBranchIds, ?array $with = null)
     {
+        $with ??= self::eager();
         return Appointment::with($with)
             ->where('uuid', $uuid)
             ->whereIn('spa_branch_id', $spaBranchIds)
@@ -73,8 +83,9 @@ class AppointmentRepository
     // Un-scoped lookup used internally once a branch-scoped find already
     // resolved the model (e.g. after a mutation, to reload fresh relations)
     // — never call this directly from a controller-facing path.
-    public function findByUuid(string $uuid, array $with = self::EAGER)
+    public function findByUuid(string $uuid, ?array $with = null)
     {
+        $with ??= self::eager();
         return Appointment::with($with)->where('uuid', $uuid)->firstOrFail();
     }
 

@@ -57,7 +57,7 @@ class BookingPolicy
         'home_service_enabled',
         'home_service_fee',
         'home_service_radius_km',
-        'home_service_min_minutes',
+        'home_service_travel_minutes',
     ];
 
     // The notice a booking needs when the owner has not said otherwise (Settings →

@@ -30,7 +30,8 @@ class BookingDefaultsSettingsRequest extends FormRequest
         return [
             'home_service_enabled' => 'sometimes|boolean',
             'home_service_radius_km' => 'sometimes|required|integer|min:1|max:200',
-            'home_service_min_minutes' => 'sometimes|required|integer|min:0|max:1440',
+            // Travel time each way for a home visit (HomeServiceRules::blockedWindow).
+            'home_service_travel_minutes' => 'sometimes|required|integer|min:0|max:240',
             'allow_reschedule' => 'sometimes|boolean',
             'max_reschedules_per_booking' => 'sometimes|required|integer|min:0|max:10',
             'allow_cancellation' => 'sometimes|boolean',

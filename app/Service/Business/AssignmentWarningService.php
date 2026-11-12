@@ -6,12 +6,14 @@ use App\Models\Appointment;
 use App\Models\Attendance;
 use App\Models\BranchSchedule;
 use App\Models\Staff;
+use App\Models\StaffTimeOff;
 use App\Models\TherapistAssignment;
 use App\Support\BusinessDay;
 use Carbon\Carbon;
 
 // The warnings shown next to a booking's assigned staff on the front desk: the assigned person is on
-// leave, absent, late, or on their day off (StaffAttendanceWarning decides each). Only bookings still to
+// time off that day (Employees → Schedule → Time off), or on leave, absent, late, or on their day off
+// (StaffAttendanceWarning decides those). Only bookings still to
 // be served — scheduled or checked in, today or later — with staff assigned and not started are looked at.
 //
 // Asked for a whole list at once (preload) it costs a few queries for everyone instead of a few per
@@ -84,6 +86,15 @@ class AssignmentWarningService
         }
 
         $staff = Staff::whereIn('id', array_keys($staffIds))->with('schedules')->get()->keyBy('id');
+
+        // Time off on any of the days asked about, once for everyone.
+        $dates = array_map(fn ($w) => $w[0]->appointment_date->format('Y-m-d'), $wanted);
+        $timeOff = StaffTimeOff::ready()
+            ? StaffTimeOff::whereIn('staff_id', array_keys($staffIds))
+                ->where('starts_on', '<=', max($dates))
+                ->where('ends_on', '>=', min($dates))
+                ->get()->groupBy('staff_id')
+            : collect();
         $attendance = [];
         $branchSchedules = [];
         $grace = [];
@@ -110,6 +121,23 @@ class AssignmentWarningService
             foreach ($perStaff as $staffId => $serviceUuids) {
                 $person = $staff->get($staffId);
                 if (! $person) {
+                    continue;
+                }
+                // Time off that day: they can't come, whatever the roster says. The booking stays;
+                // it needs someone else.
+                $off = ($timeOff->get($person->id) ?? collect())->first(
+                    fn ($t) => $t->starts_on->toDateString() <= $date && $t->ends_on->toDateString() >= $date
+                );
+                if ($off) {
+                    $label = StaffTimeOff::LABELS[$off->type] ?? 'Time off';
+                    $memo[$appointment->id][] = [
+                        'staff_uuid' => $person->uuid,
+                        'service_uuids' => $serviceUuids,
+                        'kind' => $off->type === 'absent' ? 'absent' : 'on_leave',
+                        'message' => trim("{$person->first_name} {$person->last_name}") . " is away that day ({$label}). Give this to someone else.",
+                        'minutes' => null,
+                    ];
+
                     continue;
                 }
                 $found = $this->standing->check(

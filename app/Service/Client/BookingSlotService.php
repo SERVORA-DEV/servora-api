@@ -54,7 +54,8 @@ class BookingSlotService
     public function __construct(private AppointmentAvailabilityService $availabilityService) {}
 
     // @return array{date: string, duration_minutes: int, closed_reason: ?string, slots: list<array{time: string, available: bool, reason: ?string}>, hours: list<array{hour: string, booked: int, limit: int, full: bool}>}
-    public function slots(SpaBranch $branch, string $date, int $duration, ?Staff $therapist = null, ?int $excludeAppointmentId = null, bool $home = false): array
+    // $need: staff the booking needs at once (a service done by several staff; ServiceParts::needOf).
+    public function slots(SpaBranch $branch, string $date, int $duration, ?Staff $therapist = null, ?int $excludeAppointmentId = null, bool $home = false, int $need = 1): array
     {
         $duration = max($duration, 1);
         $policy = BookingPolicy::for($branch);
@@ -90,7 +91,7 @@ class BookingSlotService
                 $end->gt($day['close']) => 'past_closing',
                 (bool) $this->closureProblem($day, $start, $end) => 'closed',
                 HourlyCapacity::isFull($hourLimit, $hourCounts[$start->hour] ?? 0) => 'hour_full',
-                default => $this->capacityProblem($ctx, $date, $start, $end, $therapist),
+                default => $this->capacityProblem($ctx, $date, $start, $end, $therapist, $need),
             };
             $hours[] = $start->hour;
             $result['slots'][] = [
@@ -107,7 +108,7 @@ class BookingSlotService
 
     // Why this exact booking can't be made, or null. Booking and reschedule
     // call this after the policy checks.
-    public function bookingProblem(SpaBranch $branch, string $date, string $time, int $duration, ?Staff $therapist = null, ?int $excludeAppointmentId = null, bool $home = false): ?string
+    public function bookingProblem(SpaBranch $branch, string $date, string $time, int $duration, ?Staff $therapist = null, ?int $excludeAppointmentId = null, bool $home = false, int $need = 1): ?string
     {
         $duration = max($duration, 1);
         $day = $this->dayWindow($branch->id, $date);
@@ -134,7 +135,7 @@ class BookingSlotService
             return $hourProblem;
         }
 
-        $problem = $this->capacityProblem($this->loadDay($branch, $date, $excludeAppointmentId, $home), $date, $start, $end, $therapist);
+        $problem = $this->capacityProblem($this->loadDay($branch, $date, $excludeAppointmentId, $home), $date, $start, $end, $therapist, $need);
 
         return match ($problem) {
             null => null,
@@ -152,8 +153,10 @@ class BookingSlotService
     //
     // @param  list<int>  $staffIds
     // @return array<int, ?string>
-    public function nextFreeStarts(SpaBranch $branch, string $date, string $time, int $duration, array $staffIds): array
+    // $home: a home visit, which keeps its staff for the trip there and back too.
+    public function nextFreeStarts(SpaBranch $branch, string $date, string $time, int $duration, array $staffIds, bool $home = false): array
     {
+        $travel = $home ? \App\Service\Business\HomeServiceRules::travelMinutes($branch->id) : 0;
         $duration = max($duration, 1);
         $result = array_fill_keys($staffIds, null);
         $day = $this->dayWindow($branch->id, $date);
@@ -181,12 +184,13 @@ class BookingSlotService
                 continue;
             }
 
+            [$from, $to] = [$start->copy()->subMinutes($travel), $end->copy()->addMinutes($travel)];
             $taken = $ctx['busy']
-                ->filter(fn ($b) => $start->lt($b['end']) && $end->gt($b['start']))
+                ->filter(fn ($b) => $from->lt($b['end']) && $to->gt($b['start']))
                 ->flatMap(fn ($b) => $b['staff'])->unique()->all();
 
             foreach ($left as $key => $id) {
-                if ($this->onShift($ctx, $id, $date, $start, $end) && ! in_array($id, $taken, true)) {
+                if ($this->onShift($ctx, $id, $date, $from, $to) && ! in_array($id, $taken, true)) {
                     $result[$id] = $start->format('H:i');
                     unset($left[$key]);
                 }
@@ -205,8 +209,10 @@ class BookingSlotService
     //
     // @param  list<int>  $staffIds
     // @return array<int, list<array{from: string, to: string}>>
-    public function freeWindows(SpaBranch $branch, string $date, int $duration, array $staffIds): array
+    // $home: a home visit, which keeps its staff for the trip there and back too.
+    public function freeWindows(SpaBranch $branch, string $date, int $duration, array $staffIds, bool $home = false): array
     {
+        $travel = $home ? \App\Service\Business\HomeServiceRules::travelMinutes($branch->id) : 0;
         $duration = max($duration, 1);
         $result = array_fill_keys($staffIds, []);
         $day = $this->dayWindow($branch->id, $date);
@@ -234,12 +240,13 @@ class BookingSlotService
                 && ! BookingPolicy::startTimeProblem($policy, $start)
                 && ! $this->closureProblem($day, $start, $end)
                 && ! HourlyCapacity::isFull($hourLimit, $hourCounts[$start->hour] ?? 0);
+            [$from, $to] = [$start->copy()->subMinutes($travel), $end->copy()->addMinutes($travel)];
             $taken = $dayOk
-                ? $ctx['busy']->filter(fn ($b) => $start->lt($b['end']) && $end->gt($b['start']))->flatMap(fn ($b) => $b['staff'])->unique()->all()
+                ? $ctx['busy']->filter(fn ($b) => $from->lt($b['end']) && $to->gt($b['start']))->flatMap(fn ($b) => $b['staff'])->unique()->all()
                 : [];
 
             foreach ($staffIds as $id) {
-                if ($dayOk && $this->onShift($ctx, $id, $date, $start, $end) && ! in_array($id, $taken, true)) {
+                if ($dayOk && $this->onShift($ctx, $id, $date, $from, $to) && ! in_array($id, $taken, true)) {
                     $open[$id] = [$open[$id][0] ?? $start->copy(), $start->copy()];
                 } else {
                     $close($id);
@@ -329,13 +336,21 @@ class BookingSlotService
             ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW, Appointment::STATUS_COMPLETED])
             ->when($excludeAppointmentId, fn ($q) => $q->where('id', '!=', $excludeAppointmentId))
             ->with(['services.serviceVariant', 'services.therapistAssignments'])
-            ->get()
-            ->map(function (Appointment $a) use ($date) {
-                $start = Carbon::parse("{$date} ".substr((string) $a->appointment_time, 0, 5));
+            ->get();
+        // How many staff each booking needs at once (a service done by several staff).
+        $needs = \App\Models\Service::staffNeededFor($busy->flatMap(fn (Appointment $a) => $a->services->map(fn ($s) => $s->serviceVariant?->service_id)));
+        // A package bought for several clients holds the staff for those not added yet.
+        $open = \App\Support\SharedPackages::openSlotsFor($busy->pluck('id'));
+        $busy = $busy
+            ->map(function (Appointment $a) use ($date, $needs, $open) {
+                // A home visit keeps its staff for the trip there and back too (HomeServiceRules).
+                [$start, $end] = \App\Service\Business\HomeServiceRules::blockedWindow($a, max($this->availabilityService->estimatedDurationMinutes($a), 30));
+                $need = max((int) $a->services->map(fn ($s) => $needs[$s->serviceVariant?->service_id] ?? 1)->push(1)->max(), 1 + ($open[$a->id] ?? 0));
 
                 return [
+                    'need' => $need,
                     'start' => $start,
-                    'end' => $start->copy()->addMinutes(max($this->availabilityService->estimatedDurationMinutes($a), 30)),
+                    'end' => $end,
                     'home' => $a->isHomeService(),
                     'staff' => $a->services
                         ->flatMap(fn ($s) => $s->therapistAssignments->whereIn('assignment_status', ['Assigned', 'In Progress'])->pluck('staff_id'))
@@ -343,20 +358,35 @@ class BookingSlotService
                 ];
             });
 
-        return ['therapists' => $therapists, 'others' => $others, 'home' => $home, 'schedules' => $schedules, 'onLeave' => $onLeave, 'busy' => $busy];
+        // Staff on the way back from a home visit already done: busy until they are back.
+        $dayStart = Carbon::parse($date)->startOfDay();
+        foreach (\App\Service\Business\HomeServiceRules::returnTrips($all->pluck('id')->all(), $dayStart, $dayStart->copy()->endOfDay()) as $staffId => $trip) {
+            $busy->push(['need' => 1, 'start' => $trip['from'], 'end' => $trip['to'], 'home' => true, 'staff' => [$staffId]]);
+        }
+
+        // A home visit being booked keeps its staff for the trip there and back too.
+        $travel = $home ? \App\Service\Business\HomeServiceRules::travelMinutes($branch->id) : 0;
+
+        return ['therapists' => $therapists, 'others' => $others, 'home' => $home, 'travel' => $travel, 'schedules' => $schedules, 'onLeave' => $onLeave, 'busy' => $busy];
     }
 
     // null = bookable; 'full' = no therapist left; 'therapist_unavailable'
     // = the requested therapist is off, on leave or already booked;
     // 'therapist_not_home' = a home visit, and they aren't marked for it.
-    private function capacityProblem(array $ctx, string $date, Carbon $start, Carbon $end, ?Staff $therapist): ?string
+    private function capacityProblem(array $ctx, string $date, Carbon $start, Carbon $end, ?Staff $therapist, int $need = 1): ?string
     {
         /** @var Collection $therapists */
         $therapists = $ctx['therapists'];
+        // A home visit keeps its staff from the travel time before it to the travel time after it.
+        $start = $start->copy()->subMinutes($ctx['travel'] ?? 0);
+        $end = $end->copy()->addMinutes($ctx['travel'] ?? 0);
 
         $overlapping = $ctx['busy']->filter(fn ($b) => $start->lt($b['end']) && $end->gt($b['start']));
         $takenStaff = $overlapping->flatMap(fn ($b) => $b['staff'])->unique()->all();
-        $unassigned = $overlapping->filter(fn ($b) => empty($b['staff']))->count();
+        // What the overlapping bookings still need beyond who is on them: one each for a booking
+        // nobody is on yet, more for a service done by several staff.
+        $owed = fn ($b) => max(0, ($b['need'] ?? 1) - count($b['staff']));
+        $unassigned = $overlapping->sum($owed);
 
         if ($therapist) {
             if ($ctx['home'] && ! $therapist->takesHomeService()) {
@@ -383,14 +413,15 @@ class BookingSlotService
         // takes someone from the home-service staff.
         $needed = $unassigned;
         if ($ctx['home']) {
-            $homeWaiting = $overlapping->filter(fn ($b) => empty($b['staff']) && $b['home'])->count();
+            $homeWaiting = $overlapping->filter(fn ($b) => $b['home'])->sum($owed);
             $othersFree = $ctx['others']
                 ->filter(fn ($t) => $this->onShift($ctx, $t->id, $date, $start, $end) && ! in_array($t->id, $takenStaff, true))
                 ->count();
             $needed = $homeWaiting + max(($unassigned - $homeWaiting) - $othersFree, 0);
         }
 
-        return $free > $needed ? null : 'full';
+        // This booking needs $need of them (more than one for a service done by several staff).
+        return $free >= $needed + max(1, $need) ? null : 'full';
     }
 
     private function onShift(array $ctx, int $staffId, string $date, Carbon $start, Carbon $end): bool

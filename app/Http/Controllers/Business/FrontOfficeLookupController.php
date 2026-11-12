@@ -70,6 +70,18 @@ class FrontOfficeLookupController extends Controller
         return $this->frontOfficeLookupService->packages($request->user());
     }
 
+    // The packages booked for several clients on a day (and time): for adding the others.
+    public function sharedPackages(Request $request)
+    {
+        $query = $request->validate([
+            'date' => 'required|date_format:Y-m-d',
+            'time' => 'nullable|date_format:H:i',
+            'spa_branch_uuid' => 'nullable|uuid',
+        ]);
+
+        return $this->frontOfficeLookupService->sharedPackages($request->user(), $query);
+    }
+
     public function addons(Request $request)
     {
         return $this->frontOfficeLookupService->addons($request->user());

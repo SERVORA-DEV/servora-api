@@ -52,6 +52,7 @@ use App\Support\History;
 use App\Support\HomeVisitStart;
 use App\Support\HourlyCapacity;
 use App\Support\PackageShare;
+use App\Support\ServiceParts;
 use App\Support\ProgramChannel;
 use App\Support\ReservationHold;
 use App\Support\RotationTurn;
@@ -218,6 +219,24 @@ class AppointmentService
         $branchIds = $branches->pluck('id')->all();
 
         return DB::transaction(function () use ($user, $business, $branches, $branchIds, $payload) {
+            // Joining a package Client A booked for several clients: same branch, date and time
+            // as Client A, and a place still open (SharedPackages).
+            $joining = null;
+            if (! empty($payload['join_package_uuid'])) {
+                $joining = AppointmentPackage::where('uuid', $payload['join_package_uuid'])->whereNull('shared_from_id')
+                    ->whereHas('appointment', fn ($q) => $q->whereIn('spa_branch_id', $branchIds))
+                    ->with(['appointment.branch', 'package' => fn ($q) => $q->withTrashed()])
+                    ->lockForUpdate()->first();
+                abort_if(! $joining || $joining->status === 'Cancelled' || \App\Support\SharedPackages::clientsOf($joining) < 2, 422, 'That package booking was not found.');
+                abort_if(in_array($joining->appointment->status, [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW, Appointment::STATUS_COMPLETED], true), 422, 'That booking is no longer open, so no one can join its package.');
+                abort_if(\App\Support\SharedPackages::nextSlot($joining) === null, 422, "{$joining->displayName()} already has all its " . \App\Support\SharedPackages::clientsOf($joining) . ' clients.');
+                $payload['spa_branch_uuid'] = $joining->appointment->branch->uuid;
+                $payload['appointment_date'] = $joining->appointment->appointment_date->format('Y-m-d');
+                $payload['appointment_time'] = substr((string) $joining->appointment->appointment_time, 0, 5);
+                $payload['appointment_type'] = $joining->appointment->appointment_type === 'Walk-in' ? 'Walk-in' : 'Reservation';
+                unset($payload['package_uuid']);
+            }
+
             if (! empty($payload['spa_branch_uuid'])) {
                 $branch = $this->spaBranchRepository->findByUuidForBranches($payload['spa_branch_uuid'], $branchIds);
             } elseif ($branches->count() === 1) {
@@ -323,6 +342,9 @@ class AppointmentService
                 $client = $this->clientService->completeProfile($client, $payload['client_update']);
             }
 
+            abort_if($joining && $client->id === $joining->appointment->client_id, 422,
+                'That is the client who booked the package. Choose the other client.');
+
             // A reservation needs a way to reach the client (a change of plan,
             // a reminder, a no-show): a phone number on record, or given with
             // the booking just above. A walk-in is here, so it can do without.
@@ -376,7 +398,13 @@ class AppointmentService
             foreach (array_values($payload['services'] ?? []) as $index => $item) {
                 $service = $this->addServiceInternal($appointment, $branch->id, $item, null, $index + 1);
 
-                if (! empty($payload['requested_therapist_uuid'])) {
+                // Done by several staff at once: who the desk picked for each part. A warning, not a
+                // refusal, like the requested therapist; empty parts are filled below.
+                if (! empty($item['staff'])) {
+                    foreach ($this->chooseParts($appointment, $branch->id, $service, $item['staff']) as $problem) {
+                        $warnings[] = $problem;
+                    }
+                } elseif (! empty($payload['requested_therapist_uuid'])) {
                     $this->applyRequestedTherapist($appointment, $branch->id, $service, $payload['requested_therapist_uuid'], $warnings);
                 }
             }
@@ -391,6 +419,11 @@ class AppointmentService
                         $this->applyRequestedTherapist($appointment, $branch->id, $service, $payload['requested_therapist_uuid'], $warnings);
                     }
                 }
+            }
+
+            // Their place in the package Client A booked: their own services, nothing to pay.
+            if ($joining) {
+                $this->addPackageInternal($appointment, $business->id, $joining->package->uuid, 1, false, $joining);
             }
 
             // Every service on a home visit must be one the owner marked for
@@ -408,6 +441,9 @@ class AppointmentService
                 $autoStaff = empty($payload['requested_therapist_uuid']) && ($policy['auto_assign_staff'] ?? true);
                 $warnings = array_merge($warnings, $this->autoAssign($appointment, $autoStaff ? 'missing' : 'facility_only'));
             }
+            // A service done by several staff where someone was picked for a part: the other parts
+            // get someone now, so picking one is enough.
+            $warnings = array_merge($warnings, $this->fillPickedParts($appointment));
 
             if ($isWalkIn) {
                 $this->addToQueueInternal($appointment);
@@ -572,14 +608,20 @@ class AppointmentService
 
             $serviceItems = [];
 
+            $picks = [];
             foreach (array_values($payload['services'] ?? []) as $index => $item) {
-                $serviceItems[] = $this->addServiceInternal(
+                $serviceItems[] = $line = $this->addServiceInternal(
                     $appointment,
                     $branch->id,
                     ['service_variant_uuid' => $item['service_variant_uuid']],
                     null,
                     $index + 1,
                 );
+                // Done by several staff at once: who the client picked for each part (only where
+                // the spa lets clients choose their therapist).
+                if (! empty($item['staff']) && BookingPolicy::clientMayChooseTherapist($branch)) {
+                    $picks[] = [$line, $item['staff']];
+                }
             }
 
             if (! empty($payload['package_uuid'])) {
@@ -621,13 +663,6 @@ class AppointmentService
             );
             abort_if($serviceTimeProblem !== null, 422, (string) $serviceTimeProblem);
 
-            // A home visit has to be long enough to be worth the trip — again
-            // a hard stop only here; the front desk is warned.
-            $homeMinimumProblem = $home ? HomeServiceRules::minimumProblem(
-                BookingPolicy::for($branch),
-                $this->availabilityService->estimatedDurationMinutes($appointment),
-            ) : null;
-            abort_if($homeMinimumProblem !== null, 422, (string) $homeMinimumProblem);
             $requestedStaff = ! empty($payload['requested_therapist_uuid'])
                 ? $this->resolveStaffForBranch($payload['requested_therapist_uuid'], $branch->id)
                 : null;
@@ -639,8 +674,19 @@ class AppointmentService
                 $requestedStaff,
                 $appointment->id,
                 (bool) $home,
+                ServiceParts::needOf($appointment),
             );
             abort_if($slotProblem !== null, 422, (string) $slotProblem);
+
+            // The people picked for each part: free and able to do it (a hard gate, as for the
+            // requested therapist below), then put on their parts.
+            foreach ($picks as [$line, $chosen]) {
+                foreach ($chosen as $pick) {
+                    $this->assertRequestedTherapistIsFree($appointment, $branch->id, $pick['staff_uuid'], $payload['appointment_date'], $payload['appointment_time'], $line);
+                }
+                $problems = $this->chooseParts($appointment, $branch->id, $line, $chosen);
+                abort_if((bool) $problems, 422, implode(' ', $problems));
+            }
 
             if (! empty($payload['requested_therapist_uuid'])) {
                 // Unlike the front-desk path, a client's requested therapist
@@ -675,8 +721,13 @@ class AppointmentService
             // about it: the warnings are for the desk.
             // The facility is picked either way: a named therapist (or automatic staff turned off) still gets a room.
             $this->autoAssign($appointment, empty($payload['requested_therapist_uuid']) && ($policy['auto_assign_staff'] ?? true) ? 'missing' : 'facility_only');
+            // A part the client (or the requested therapist) took: the other parts get someone now.
+            $this->fillPickedParts($appointment);
 
             $this->appointmentServiceRepository->recalculateAppointmentTotals($appointment);
+
+            // A package bought for several clients: the others, each their own appointment.
+            $this->bookCompanions($appointment, $branch, $payload, $appointmentPackage ?? null, $home, $policy, $warnings);
 
             $appointment->setRelation('branch', $branch);
             $this->clientNotifier->appointment(
@@ -705,6 +756,59 @@ class AppointmentService
 
             return $warnings ? $resource->additional(['warnings' => $warnings]) : $resource;
         });
+    }
+
+    // The other clients of a package the client booked for several (a Couples Massage): each gets
+    // their own appointment at the same date and time, joined to the package Client A paid for
+    // (SharedPackages), with their own staff. With two clients each may name a therapist (where the
+    // spa lets clients choose); with more, the spa assigns them. abort() rolls everything back.
+    private function bookCompanions(Appointment $appointment, SpaBranch $branch, array $payload, ?AppointmentPackage $bought, ?array $home, array $policy, array &$warnings): void
+    {
+        $companions = array_values($payload['companions'] ?? []);
+        $clients = $bought ? \App\Support\SharedPackages::clientsOf($bought->loadMissing('package')) : 1;
+        if ($clients < 2) {
+            abort_if((bool) $companions, 422, 'Only a package for several clients can be booked with others.');
+
+            return;
+        }
+        $others = $clients - 1;
+        abort_if(count($companions) !== $others, 422, "{$bought->displayName()} is for {$clients} clients: add the details of the other " . ($others === 1 ? 'one' : $others) . '.');
+
+        $mayChoose = $clients === 2 && BookingPolicy::clientMayChooseTherapist($branch);
+        $time = substr((string) $appointment->appointment_time, 0, 5);
+        foreach ($companions as $companion) {
+            $client = $this->clientService->findOrCreate($branch->spa_business_id, array_filter([
+                'first_name' => $companion['first_name'],
+                'last_name' => $companion['last_name'],
+                'phone_number' => $companion['phone_number'] ?? null,
+                'gender' => $companion['gender'] ?? null,
+            ], fn ($v) => $v !== null && $v !== ''), $branch->id);
+            abort_if($client->id === $appointment->client_id, 422, 'Your companion\'s details match yours. Please enter theirs.');
+
+            $theirs = $this->appointmentRepository->create([
+                'spa_branch_id' => $branch->id,
+                'client_id' => $client->id,
+                'appointment_number' => $this->appointmentRepository->generateAppointmentNumber(),
+                'appointment_date' => $appointment->appointment_date->format('Y-m-d'),
+                'appointment_time' => $time,
+                'appointment_type' => 'Reservation',
+                'source' => 'Mobile',
+                'status' => Appointment::STATUS_SCHEDULED,
+            ] + ($home ? HomeServiceRules::attributes($payload, $home) : []) + $this->startAttributes($payload, (bool) $home));
+            $this->addPackageInternal($theirs, $branch->spa_business_id, $bought->package->uuid, 1, false, $bought);
+
+            $named = $mayChoose && ! empty($companion['therapist_uuid']) ? $companion['therapist_uuid'] : null;
+            if ($named) {
+                $this->assertRequestedTherapistIsFree($theirs, $branch->id, $named, $theirs->appointment_date->format('Y-m-d'), $time);
+                $this->rememberRequestedTherapist($theirs, $branch->id, $named);
+                foreach ($theirs->services()->get() as $line) {
+                    $this->applyRequestedTherapist($theirs, $branch->id, $line, $named, $warnings);
+                }
+            }
+            $this->autoAssign($theirs, ! $named && ($policy['auto_assign_staff'] ?? true) ? 'missing' : 'facility_only');
+            $this->fillPickedParts($theirs);
+            $this->appointmentServiceRepository->recalculateAppointmentTotals($theirs);
+        }
     }
 
     // Client self-booking only. Runs the same schedule-then-booked checks,
@@ -740,12 +844,14 @@ class AppointmentService
         }
     }
 
+    // $only: someone picked for a part of one service only has to be able to do that one.
     private function assertRequestedTherapistIsFree(
         Appointment $appointment,
         int $branchId,
         string $staffUuid,
         string $date,
         string $time,
+        ?AppointmentServiceItem $only = null,
     ): void {
         $staff = $this->resolveStaffForBranch($staffUuid, $branchId);
 
@@ -766,7 +872,7 @@ class AppointmentService
         // They have to be able to perform what is booked (a client can't be
         // given someone the owner has not qualified for it).
         foreach ($appointment->services as $item) {
-            if (! ServiceKind::needsTherapist($item->kind())) {
+            if (! ServiceKind::needsTherapist($item->kind()) || ($only && $item->id !== $only->id)) {
                 continue;
             }
             $serviceId = $item->serviceVariant?->service_id;
@@ -784,7 +890,9 @@ class AppointmentService
             abort(422, $schedule['reason']);
         }
 
-        $booked = $this->availabilityService->isStaffAvailable($staff->id, $date, $time, $duration);
+        // A home visit keeps them for the trip there and back too.
+        [$from, $span] = HomeServiceRules::widen($appointment->isHomeService(), $branchId, $date, $time, $duration);
+        $booked = $this->availabilityService->isStaffAvailable($staff->id, $date, $from, $span);
         if (! $booked['ok']) {
             abort(422, $booked['reason']);
         }
@@ -2049,7 +2157,9 @@ class AppointmentService
         $isHome = $appointment->isHomeService();
 
         // Who is already booked over this time, and with whom (one query for everyone).
-        $conflicts = $this->availabilityService->staffConflicts($therapists->pluck('id')->all(), $date, $time, $duration, $appointment->id);
+        // A home visit keeps them for the trip there and back too.
+        [$from, $span] = HomeServiceRules::widen($appointment->isHomeService(), (int) $appointment->spa_branch_id, $date, $time, $duration);
+        $conflicts = $this->availabilityService->staffConflicts($therapists->pluck('id')->all(), $date, $from, $span, $appointment->id);
 
         $options = $therapists->map(function (Staff $staff) use ($attendanceByStaffId, $date, $time, $duration, $branchSchedule, $serviceId, $rotationByStaffId, $grace, $isHome, $conflicts) {
             $attendance = $attendanceByStaffId->get($staff->id);
@@ -2249,7 +2359,11 @@ class AppointmentService
                 return response()->json(['message' => 'Staff member not found or inactive at this branch.'], 422);
             }
 
-            $result = $this->assignTherapistInternal($service, $service->appointment, $staff);
+            $part = $this->partFor($service, $payload['part_uuid'] ?? null);
+            if ($part === false) {
+                return response()->json(['message' => 'That part isn\'t part of this service.'], 422);
+            }
+            $result = $this->assignTherapistInternal($service, $service->appointment, $staff, $part);
             if (! $result['ok']) {
                 return response()->json(['message' => $result['reason']], 422);
             }
@@ -2358,7 +2472,95 @@ class AppointmentService
             }
         }
 
+        if (! $facilityOnly) {
+            $warnings = array_merge($warnings, $this->fillParts($appointment, $staff, $services));
+        }
+
         return array_values(array_unique($warnings));
+    }
+
+    // Puts the people picked for a service's parts on them ([{part_uuid, staff_uuid}]).
+    //
+    // @return array<int, string> what could not be done, naming the service and part
+    private function chooseParts(Appointment $appointment, int $branchId, AppointmentServiceItem $line, array $picks): array
+    {
+        $problems = [];
+        $name = $line->displayName() ?: 'A service';
+        foreach ($picks as $pick) {
+            $part = $this->partFor($line, $pick['part_uuid'] ?? null);
+            $person = $this->resolveStaffForBranch($pick['staff_uuid'] ?? '', $branchId);
+            if (! $part || ! $person) {
+                $problems[] = "{$name}: ".(! $part ? 'that part isn\'t part of this service.' : 'that staff member wasn\'t found at this branch.');
+                continue;
+            }
+            $result = $this->assignTherapistInternal($line, $appointment, $person, $part);
+            if (! $result['ok']) {
+                $problems[] = "{$name} ({$part->name}): {$result['reason']}";
+            }
+        }
+
+        return $problems;
+    }
+
+    // Every service done by several staff where at least one part has someone (picked by the
+    // desk or the client, or the requested therapist) gets the rest filled now.
+    //
+    // @return array<int, string> warnings for the desk
+    private function fillPickedParts(Appointment $appointment): array
+    {
+        if (! \App\Models\Service::hasParts()) {
+            return [];
+        }
+        $plan = app(AssignmentPlanner::class)->plan($appointment);
+        $rows = array_values(array_filter($plan['services'] ?? [], fn (array $s) => ! empty($s['parts'])
+            && collect($s['parts'])->contains(fn ($p) => $p['staff'] !== null)
+            && collect($s['parts'])->contains(fn ($p) => $p['staff'] === null)));
+
+        return $rows ? $this->fillParts($appointment, $this->rankable($plan), $rows) : [];
+    }
+
+    // AssignmentPlanner's staff, in the shape AutoAssignment ranks.
+    private function rankable(array $plan): array
+    {
+        return array_map(fn (array $p) => [
+            'uuid' => $p['uuid'], 'name' => $p['name'],
+            'workload' => $p['workload'] ?? 0, 'position' => $p['queue_position'] ?? null,
+            'warning' => ($p['warning']['kind'] ?? null) === 'late',
+            'busy' => ($plan['mode'] ?? 'reserve') === 'now' && ($p['state'] ?? '') === 'busy',
+            'can' => array_map(fn ($c) => (bool) $c['ok'], $p['can']),
+        ], $plan['staff'] ?? []);
+    }
+
+    // A service done by several staff at once gets someone for every part still empty: the best
+    // ranked who can do it and isn't already on it (AutoAssignment::bestFor). A part the desk or
+    // the client already chose stays as it is, so choosing one is enough.
+    //
+    // @return array<int, string> warnings for the desk
+    private function fillParts(Appointment $appointment, array $staff, array $services): array
+    {
+        $warnings = [];
+        $items = $appointment->services()->with('serviceVariant')->get()->keyBy('uuid');
+        foreach ($services as $row) {
+            $item = $items->get($row['uuid']);
+            if (! $item || ! $row['needs_staff'] || $item->status !== 'Pending') {
+                continue;
+            }
+            $missing = ServiceParts::missing($item);
+            foreach ($missing as $part) {
+                $on = ServiceParts::staffedRows($item)->pluck('staff_id')->all();
+                $taken = Staff::whereIn('id', $on)->pluck('uuid')->all();
+                $uuid = AutoAssignment::bestFor($row['uuid'], $staff, $taken);
+                $person = $uuid ? $this->resolveStaffForBranch($uuid, $appointment->spa_branch_id) : null;
+                $result = $person
+                    ? $this->assignTherapistInternal($item, $appointment, $person, $part)
+                    : ['ok' => false, 'reason' => 'nobody else free can do it.'];
+                if (! $result['ok']) {
+                    $warnings[] = ($row['name'] ?: 'A service').' ('.$part->name.'): '.$result['reason'];
+                }
+            }
+        }
+
+        return $warnings;
     }
 
     // The Assign drawer's Auto-assign: the same, for a booking that already exists.
@@ -2440,7 +2642,11 @@ class AppointmentService
                     if (! $staff) {
                         $fail("{$name}: that staff member wasn't found or isn't active at this branch.");
                     }
-                    $result = $this->assignTherapistInternal($service, $appointment, $staff);
+                    $part = $this->partFor($service, $item['part_uuid'] ?? null);
+                    if ($part === false) {
+                        $fail("{$name}: that part isn't part of this service.");
+                    }
+                    $result = $this->assignTherapistInternal($service, $appointment, $staff, $part);
                     if (! $result['ok']) {
                         $fail("{$name}: {$result['reason']}");
                     }
@@ -2466,6 +2672,17 @@ class AppointmentService
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));
         });
+    }
+
+    // The part a request names, for a service done by several staff: null when none was named,
+    // false when it isn't one of this service's parts.
+    private function partFor(AppointmentServiceItem $service, ?string $partUuid): \App\Models\ServicePart|false|null
+    {
+        if (! $partUuid) {
+            return null;
+        }
+
+        return ServiceParts::forLine($service)->firstWhere('uuid', $partUuid) ?? false;
     }
 
     public function cancelAssignment(User $user, string $assignmentUuid)
@@ -2609,6 +2826,8 @@ class AppointmentService
             $assignment->update($assignment->staff_id
                 ? ['facility_id' => null]
                 : ['facility_id' => null, 'assignment_status' => 'Cancelled']);
+            // A service done by several staff at once leaves the room together.
+            $this->roomForEveryPart($service, $assignment->id, null);
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($assignment->appointmentService->appointment->uuid));
         });
@@ -2737,75 +2956,126 @@ class AppointmentService
                 ->first();
             abort_if(! $appointment, 422, "This code isn't for a booking at {$branch->branch_name}. Check the code, or use the scanner of the branch the client booked with.");
 
-            $problem = HomeVisitStart::problem($appointment->status, $appointment->appointment_date, BookingPolicy::now());
-            abort_if($problem !== null, 422, (string) $problem);
-
-            $pending = AppointmentServiceItem::where('appointment_id', $appointment->id)
-                ->where('status', 'Pending')
-                // An add-on starts with its main service.
-                ->when(Addon::ready(), fn ($q) => $q->whereNull('parent_appointment_service_id'))
-                ->with('therapistAssignments')
-                ->orderBy('sort_order')
-                ->orderBy('id')
-                ->get();
-            abort_if($pending->isEmpty(), 422, 'There is nothing left to start on this visit.');
-
-            // Arrived: what Check In does, without a queue number.
-            if ($appointment->status === Appointment::STATUS_SCHEDULED) {
-                $appointment->update(['status' => Appointment::STATUS_CHECKED_IN, 'check_in_at' => now()]);
-            }
-
-            $started = collect();
-            $reason = null;
-            foreach ($pending as $service) {
-                $service->setRelation('appointment', $appointment);
-                $result = $this->startServiceInternal($service);
-                if ($result['ok']) {
-                    $started->push($service);
-                } else {
-                    $reason ??= $result['reason'];
-                }
-            }
-            abort_if($started->isEmpty(), 422, $this->scanRefusal($reason));
-
-            $appointment->update(['home_scanned_at' => now()]);
-
-            $staff = TherapistAssignment::whereIn('appointment_service_id', $started->pluck('id'))
-                ->where('assignment_status', 'In Progress')
-                ->whereNotNull('staff_id')
-                ->with('staff')
-                ->get()
-                ->map(fn ($a) => trim("{$a->staff?->first_name} {$a->staff?->last_name}"))
-                ->filter()
-                ->unique()
-                ->values();
-            $services = $started->map(fn (AppointmentServiceItem $s) => $s->displayName())->filter()->values();
-            $client = $appointment->client;
-            $clientName = trim("{$client?->first_name} {$client?->last_name}") ?: 'A client';
-
-            $appointment->setRelation('branch', $branch);
-            $this->clientNotifier->appointment(
-                $appointment,
-                'Your home service has started',
-                ($staff->isNotEmpty() ? $staff->join(', ', ' and ') : 'Your therapist').' started your '.($services->join(', ', ' and ') ?: 'service').'.',
-            );
-            $this->staffNotifier->appointment(
-                $appointment,
-                'Home visit started',
-                ($staff->isNotEmpty() ? $staff->join(', ', ' and ') : 'The staff')." started {$clientName}'s home service by scan. Booking no. {$appointment->appointment_number}.",
-            );
-
-            return [
-                'client_first_name' => $client?->first_name,
-                'booking_number' => $appointment->appointment_number,
-                'address' => $appointment->home_address,
-                'services' => $services->all(),
-                // Services that couldn't start beside those: they follow.
-                'still_to_start' => $pending->count() - $started->count(),
-                'staff' => $staff->all(),
-                'started_at' => now()->toIso8601String(),
-            ];
+            return $this->startHomeVisit($appointment, $branch, null);
         });
+    }
+
+    // The front desk starting a home visit when the client's QR can't be
+    // scanned (no app, a dead phone, no signal): exactly what the scan does —
+    // checked in and started with no queue number, and none of the walk-in
+    // questions (early, late, the queue's size) — and written on the booking
+    // as done at the desk, by whom, rather than by scan.
+    public function startHomeVisitAtDesk(User $user, string $uuid)
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+        if (! $business) {
+            return response()->json(['message' => 'No spa business found for this account.'], 422);
+        }
+
+        $branchIds = $this->branchIds($user);
+
+        return DB::transaction(function () use ($user, $branchIds, $uuid) {
+            $found = $this->appointmentRepository->findByUuidForBranches($uuid, $branchIds, []);
+            $appointment = Appointment::whereKey($found->id)->lockForUpdate()->firstOrFail();
+
+            if (! $appointment->isHomeService()) {
+                return response()->json(['message' => 'Only a home visit starts this way. Check the client in instead.'], 422);
+            }
+            if ($stale = self::staleRefusal($appointment)) {
+                return $stale;
+            }
+            // A suspended branch winds down: starting a visit starts something new.
+            if ($suspended = Suspension::refusal($appointment->branch)) {
+                return $suspended;
+            }
+
+            $this->startHomeVisit($appointment, $appointment->branch, $user);
+
+            return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
+        });
+    }
+
+    // A home visit's start, by scan ($by null) or at the desk ($by): checked in
+    // without a queue number, then the first service that can start and any
+    // that may run beside it. Every rule of startServiceInternal() holds.
+    // Called inside a transaction; abort() rolls the whole thing back.
+    private function startHomeVisit(Appointment $appointment, SpaBranch $branch, ?User $by): array
+    {
+        $problem = HomeVisitStart::problem($appointment->status, $appointment->appointment_date, BookingPolicy::now());
+        abort_if($problem !== null, 422, (string) $problem);
+
+        $pending = AppointmentServiceItem::where('appointment_id', $appointment->id)
+            ->where('status', 'Pending')
+            // An add-on starts with its main service.
+            ->when(Addon::ready(), fn ($q) => $q->whereNull('parent_appointment_service_id'))
+            ->with('therapistAssignments')
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get();
+        abort_if($pending->isEmpty(), 422, 'There is nothing left to start on this visit.');
+
+        // Arrived: what Check In does, without a queue number.
+        if ($appointment->status === Appointment::STATUS_SCHEDULED) {
+            $appointment->update(['status' => Appointment::STATUS_CHECKED_IN, 'check_in_at' => now()]);
+        }
+
+        $started = collect();
+        $reason = null;
+        foreach ($pending as $service) {
+            $service->setRelation('appointment', $appointment);
+            $result = $this->startServiceInternal($service);
+            if ($result['ok']) {
+                $started->push($service);
+            } else {
+                $reason ??= $result['reason'];
+            }
+        }
+        abort_if($started->isEmpty(), 422, $by ? ($reason ?? 'This visit can\'t be started yet.') : $this->scanRefusal($reason));
+
+        // How it was started: the scan's time, or a note of who started it at the desk.
+        if ($by) {
+            $appointment->update(['remarks' => trim(($appointment->remarks ? $appointment->remarks.' · ' : '')."Home visit started at the desk without a scan by {$by->displayName()}")]);
+        } else {
+            $appointment->update(['home_scanned_at' => now()]);
+        }
+
+        $staff = TherapistAssignment::whereIn('appointment_service_id', $started->pluck('id'))
+            ->where('assignment_status', 'In Progress')
+            ->whereNotNull('staff_id')
+            ->with('staff')
+            ->get()
+            ->map(fn ($a) => trim("{$a->staff?->first_name} {$a->staff?->last_name}"))
+            ->filter()
+            ->unique()
+            ->values();
+        $services = $started->map(fn (AppointmentServiceItem $s) => $s->displayName())->filter()->values();
+        $client = $appointment->client;
+        $clientName = trim("{$client?->first_name} {$client?->last_name}") ?: 'A client';
+
+        $appointment->setRelation('branch', $branch);
+        $this->clientNotifier->appointment(
+            $appointment,
+            'Your home service has started',
+            ($staff->isNotEmpty() ? $staff->join(', ', ' and ') : 'Your therapist').' started your '.($services->join(', ', ' and ') ?: 'service').'.',
+        );
+        $this->staffNotifier->appointment(
+            $appointment,
+            'Home visit started',
+            $by
+                ? "{$by->displayName()} started {$clientName}'s home service at the desk, without a scan. Booking no. {$appointment->appointment_number}."
+                : ($staff->isNotEmpty() ? $staff->join(', ', ' and ') : 'The staff')." started {$clientName}'s home service by scan. Booking no. {$appointment->appointment_number}.",
+        );
+
+        return [
+            'client_first_name' => $client?->first_name,
+            'booking_number' => $appointment->appointment_number,
+            'address' => $appointment->home_address,
+            'services' => $services->all(),
+            // Services that couldn't start beside those: they follow.
+            'still_to_start' => $pending->count() - $started->count(),
+            'staff' => $staff->all(),
+            'started_at' => now()->toIso8601String(),
+        ];
     }
 
     // startServiceInternal()'s reasons are worded for the front desk; the
@@ -2899,6 +3169,10 @@ class AppointmentService
         $activeAssignments = $service->therapistAssignments->where('assignment_status', 'Assigned');
         if (ServiceKind::needsTherapist($kind) && $activeAssignments->whereNotNull('staff_id')->isEmpty()) {
             return ['ok' => false, 'reason' => 'Assign at least one staff member before starting this service.'];
+        }
+        // Done by several staff at once: everyone starts together, so every part needs someone.
+        if (ServiceKind::needsTherapist($kind) && ($missing = ServiceParts::missing($service))->isNotEmpty()) {
+            return ['ok' => false, 'reason' => 'Pick who does '.ServiceParts::names($missing).' of '.($service->displayName() ?? 'this service').' before starting it.'];
         }
         if ($service->needsFacility() && ! $service->appointment->isHomeService() && $activeAssignments->whereNotNull('facility_id')->isEmpty()) {
             return ['ok' => false, 'reason' => 'Choose a facility for '.($service->displayName() ?? 'this service').' before starting it.'];
@@ -3411,6 +3685,141 @@ class AppointmentService
         });
     }
 
+    // ── A home visit at the client's door (HomeVisitDoorService) ─────────
+    // Nobody is signed in there: the branch's scanner link and the visit's code are the proof,
+    // the same as a scan. Each is called inside the door's transaction, the appointment locked.
+
+    // The door's "Start service": what a scan has always done.
+    public function startHomeVisitAtDoor(Appointment $appointment, SpaBranch $branch): array
+    {
+        return $this->startHomeVisit($appointment, $branch, null);
+    }
+
+    // The door's "Service done": what is running on the visit is completed as the desk's
+    // Complete does (add-ons with their service, earnings fixed). Then whatever is left that can
+    // start does, since everyone is already at the home; the rest wait for the desk.
+    public function completeHomeVisitServices(Appointment $appointment): void
+    {
+        $lines = fn (string $status) => AppointmentServiceItem::where('appointment_id', $appointment->id)
+            ->where('status', $status)
+            ->when(Addon::ready(), fn ($q) => $q->whereNull('parent_appointment_service_id'))
+            ->with('therapistAssignments')
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        $running = $lines('In Progress');
+        abort_if($running->isEmpty(), 422, 'Nothing is running on this visit to finish.');
+
+        $now = now();
+        foreach ($running as $line) {
+            $line->setRelation('appointment', $appointment);
+            $this->completeLine($line, $now);
+        }
+        foreach ($lines('Pending') as $next) {
+            $next->setRelation('appointment', $appointment);
+            $this->startServiceInternal($next);
+        }
+
+        if ($appointment->queue && ! $appointment->services()->whereIn('status', ['Pending', 'In Progress'])->exists()) {
+            $this->queueRepository->updateStatus($appointment->queue, 'Completed', ['completed_at' => $now]);
+        }
+    }
+
+    // The visit's bill, made the first time the door asks once every service is done (the desk's
+    // Proceed to Billing, with the voucher booked with). A visit with nothing to pay (a package
+    // another client paid for) is settled at once and completes.
+    public function billHomeVisit(Appointment $appointment): Billing
+    {
+        if ($billing = $this->billingRepository->findForAppointment($appointment->id)) {
+            return $billing;
+        }
+        abort_if(
+            $appointment->services()->whereNotIn('status', ['Completed', 'Cancelled'])->exists(),
+            422,
+            'Finish the services first (Service done), then check out.',
+        );
+
+        $amount = max(0, round((float) $appointment->fresh()->total_amount, 2));
+        $billing = $this->billingRepository->create([
+            'appointment_id' => $appointment->id,
+            'spa_business_id' => $appointment->branch->spa_business_id,
+            'spa_branch_id' => $appointment->spa_branch_id,
+            'billing_type' => 'Appointment',
+            'billing_number' => $this->billingRepository->generateBillingNumber(),
+            'subtotal' => $amount,
+            'amount' => $amount,
+            'status' => 'Pending',
+            'issued_at' => now(),
+        ]);
+        $this->billingService->applyReservedVoucher($billing);
+        $this->billingService->settle($billing->fresh());
+
+        return $this->billingRepository->findForAppointment($appointment->id);
+    }
+
+    // The payment the staff took at the door. Every check of the desk's (a method switched on
+    // in Settings → Payments, a reference for an e-wallet, no more than the balance, cash
+    // covering it), recorded as taken at the client's home by $by, with no account behind it.
+    // Paid in full: the bill is Paid and the visit completes (BillingService::settle).
+    public function payHomeVisit(Appointment $appointment, Billing $billing, array $payload, string $by): array
+    {
+        $billing = Billing::whereKey($billing->id)->lockForUpdate()->firstOrFail();
+        $business = SpaBusiness::findOrFail($billing->spa_business_id);
+        if ($rejection = $this->billingService->paymentRejection($billing, $business, $payload)) {
+            abort(422, (string) ($rejection->getData(true)['message'] ?? 'This payment can\'t be taken.'));
+        }
+
+        $amount = round((float) $payload['amount'], 2);
+        $tendered = isset($payload['amount_tendered']) ? round((float) $payload['amount_tendered'], 2) : null;
+        // No received_by at all (not even null): the Payment's own hook would name nobody over it.
+        $payment = $this->paymentRepository->create([
+            'billing_id' => $billing->id,
+            'spa_business_id' => $business->id,
+            'spa_branch_id' => $billing->spa_branch_id,
+            'payment_method' => $payload['payment_method'],
+            'reference_number' => $payload['reference_number'] ?? null,
+            'amount' => $amount,
+            'amount_tendered' => $tendered,
+            'change_given' => $tendered !== null ? round($tendered - $amount, 2) : null,
+            'payment_status' => 'Paid',
+            'paid_at' => now(),
+            'remarks' => "Received at the client's home by {$by}",
+        ] + (History::ready() ? ['received_by_name' => "{$by} at the client's home"] : []));
+
+        $money = '₱'.number_format($amount, 2);
+        $this->clientNotifier->appointment(
+            $appointment,
+            'Payment received',
+            "{$appointment->branch?->branch_name} received your payment of {$money} for booking {$appointment->appointment_number}. Thank you!",
+            'Payment',
+        );
+        // The desk reconciles it: the cash comes back with the staff.
+        $this->staffNotifier->appointment(
+            $appointment,
+            'Payment received at a home visit',
+            "{$by} received {$money} ({$payload['payment_method']}) at the client's home for booking {$appointment->appointment_number}.",
+            null,
+            'Payment',
+        );
+
+        $this->billingService->settle($billing);
+        $billing = $billing->fresh();
+
+        return [
+            'method' => $payment->payment_method,
+            'amount' => $amount,
+            'amount_tendered' => $tendered,
+            'change' => $payment->change_given !== null ? (float) $payment->change_given : null,
+            'reference_number' => $payment->reference_number,
+            'billing_number' => $billing->billing_number,
+            'billing_status' => $billing->status,
+            'balance' => $this->billingService->balance($billing),
+            'paid_at' => $payment->paid_at?->toIso8601String(),
+        ];
+    }
+
     // ── Internal helpers ─────────────────────────────────────────────────
 
     // Aborts the surrounding transaction (422) if the package isn't bookable
@@ -3418,7 +3827,9 @@ class AppointmentService
     // addServiceInternal(). See addPackage() for why packages explode into
     // per-component service lines.
     // $openWork: added to a visit that is already open, which may be finished just after the plan ends.
-    private function addPackageInternal(Appointment $appointment, int $businessId, string $packageUuid, int $quantity, bool $openWork = false): AppointmentPackage
+    // $sharedFrom: Client B (C…) joining the package Client A bought (SharedPackages): this
+    // appointment gets that client's services and no price; Client A paid for it.
+    private function addPackageInternal(Appointment $appointment, int $businessId, string $packageUuid, int $quantity, bool $openWork = false, ?AppointmentPackage $sharedFrom = null): AppointmentPackage
     {
         // Every way a package gets onto an appointment (a client's booking,
         // the front desk) passes here: the plan has to include packages.
@@ -3455,13 +3866,27 @@ class AppointmentService
 
         $price = $home ? (float) ($branchPackage->home_custom_price ?? $package->home_price) : (float) ($branchPackage->custom_price ?? $package->default_price);
 
+        // A package for several clients (a Couples Massage): Client A books and pays for it, and
+        // holds the staff for the others until they are added (SharedPackages). This appointment
+        // gets only its own client's services.
+        $clients = $package->clients();
+        $slot = 1;
+        if ($sharedFrom) {
+            $slot = \App\Support\SharedPackages::nextSlot($sharedFrom) ?? abort(422, "{$package->name} already has all its {$clients} clients.");
+            [$price, $quantity] = [0.0, 1];
+        } elseif ($clients > 1) {
+            $quantity = 1;
+            $staff = \App\Models\Staff::where('spa_branch_id', $appointment->spa_branch_id)->where('role', 'therapist')->where('status', 'active')->count();
+            abort_if($staff < $clients, 422, "{$package->name} is for {$clients} clients, each with their own staff, and only {$staff} work at this branch.");
+        }
+
         $appointmentPackage = AppointmentPackage::create([
             'appointment_id' => $appointment->id,
             'package_id' => $package->id,
             'quantity' => $quantity,
             'unit_price' => $price,
             'subtotal' => $price * $quantity,
-        ]);
+        ] + ($clients > 1 ? ['client_slot' => $slot, 'shared_from_id' => $sharedFrom?->id] : []));
 
         $nextSort = (int) ($appointment->services()->max('sort_order') ?? 0);
         // The line made for each of the package's services, for hanging its
@@ -3469,6 +3894,10 @@ class AppointmentService
         $lineOf = [];
 
         foreach ($package->packageServiceItems as $index => $item) {
+            // Several clients: only what this client gets.
+            if ($clients > 1 && ! $item->isFor($slot)) {
+                continue;
+            }
             // A package names the service and gives it its own minutes
             // (App\Support\PackagePlan). The line still points at the menu
             // length nearest those minutes — only so the rest of the visit
@@ -3608,6 +4037,11 @@ class AppointmentService
             abort(422, 'This service is not available for home service.');
         }
 
+        // Done by several staff at once: the branch must have that many who can do it.
+        if ($shortage = ServiceParts::shortage($branchId, $variant)) {
+            abort(422, $shortage);
+        }
+
         $branchService = BranchService::where('service_variant_id', $variant->id)
             ->where('spa_branch_id', $branchId)
             ->where('is_available', true)
@@ -3681,7 +4115,9 @@ class AppointmentService
     // regardless of what their configured schedule says. Qualification is
     // never bypassed this way — that's a hard skill requirement, not a
     // presence one.
-    private function assignTherapistInternal(AppointmentServiceItem $service, Appointment $appointment, Staff $staff): array
+    // $part: for a service done by several staff at once (Service::parts), which part this person
+    // takes; left out, they take the first part nobody has yet.
+    private function assignTherapistInternal(AppointmentServiceItem $service, Appointment $appointment, Staff $staff, ?\App\Models\ServicePart $part = null): array
     {
         if ($staff->role !== 'therapist') {
             return ['ok' => false, 'reason' => 'This employee doesn\'t perform services.', 'assignment' => null];
@@ -3717,6 +4153,12 @@ class AppointmentService
             }
         }
 
+        // Done by several staff at once: one person per part, each on their own row.
+        $parts = ServiceParts::forLine($service);
+        if ($parts->isNotEmpty()) {
+            return $this->assignPart($service, $staff, $parts, $part);
+        }
+
         // One staff member per service: someone already on it who hasn't
         // started is replaced (their row, and the room on it, are kept);
         // once it is under way the staff can't be changed here.
@@ -3746,6 +4188,57 @@ class AppointmentService
         return ['ok' => true, 'reason' => null, 'assignment' => $assignment];
     }
 
+    // One part of a service done by several staff at once. Whoever is on that part and hasn't
+    // started is replaced; one person can't do two parts of the same service. The row keeps the
+    // part, its name and its share of the commission, and takes the room the other parts are in.
+    private function assignPart(AppointmentServiceItem $service, Staff $staff, \Illuminate\Support\Collection $parts, ?\App\Models\ServicePart $part): array
+    {
+        $rows = ServiceParts::staffedRows($service);
+        if ($part && ! $parts->contains('id', $part->id)) {
+            return ['ok' => false, 'reason' => 'That part isn\'t part of this service.', 'assignment' => null];
+        }
+
+        $already = $rows->firstWhere('staff_id', $staff->id);
+        if (! $part) {
+            // Already on it: nothing to do. Else the first part nobody has yet.
+            if ($already) {
+                return ['ok' => true, 'reason' => null, 'assignment' => $already];
+            }
+            $part = ServiceParts::missing($service, $parts)->first();
+            if (! $part) {
+                return ['ok' => false, 'reason' => 'Every part of this service already has someone. Choose which part to change.', 'assignment' => null];
+            }
+        }
+        if ($already && $already->service_part_id !== $part->id) {
+            $theirs = $already->part_name ?: 'another part';
+
+            return ['ok' => false, 'reason' => "This staff member is already doing {$theirs} of this service. One person can't do two parts.", 'assignment' => null];
+        }
+
+        $partValues = ['service_part_id' => $part->id, 'part_name' => $part->name, 'commission_share' => $part->share_percent];
+        $current = $rows->firstWhere('service_part_id', $part->id);
+        if ($current) {
+            if ($current->assignment_status === 'In Progress') {
+                return ['ok' => false, 'reason' => "{$part->name} has already started with its staff member.", 'assignment' => null];
+            }
+            if ($current->staff_id !== $staff->id) {
+                $current->update(['staff_id' => $staff->id, 'assigned_at' => now()] + $partValues);
+            }
+
+            return ['ok' => true, 'reason' => null, 'assignment' => $current->fresh()];
+        }
+
+        // A room held for the service before anyone was picked is claimed by the first part.
+        $unclaimed = $this->therapistAssignmentRepository->findUnclaimedForService($service->id);
+        $assignment = $unclaimed
+            ? $this->therapistAssignmentRepository->claim($unclaimed, $staff->id)
+            : $this->therapistAssignmentRepository->assign($service->id, $staff->id);
+        $room = $assignment->facility_id ?? $rows->whereNotNull('facility_id')->first()?->facility_id;
+        $assignment->update($partValues + ($room ? ['facility_id' => $room] : []));
+
+        return ['ok' => true, 'reason' => null, 'assignment' => $assignment->fresh()];
+    }
+
     // Unlike assignTherapistInternal() above, rooms ARE time-blocked: a
     // physical room can't serve two appointments at once, so both the
     // service-support check and isFacilityAvailable() are hard gates here,
@@ -3763,8 +4256,23 @@ class AppointmentService
         }
 
         $this->therapistAssignmentRepository->assignFacility($assignment, $facility->id);
+        $this->roomForEveryPart($service, $assignment->id, $facility);
 
         return ['ok' => true, 'reason' => null];
+    }
+
+    // A service done by several staff at once happens in one room: the others' rows follow.
+    private function roomForEveryPart(AppointmentServiceItem $service, int $exceptId, ?Facility $facility): void
+    {
+        if (! \App\Models\Service::hasParts()) {
+            return;
+        }
+        TherapistAssignment::where('appointment_service_id', $service->id)
+            ->where('id', '!=', $exceptId)
+            ->whereNotNull('service_part_id')
+            ->where('assignment_status', 'Assigned')
+            ->get()
+            ->each(fn (TherapistAssignment $row) => $row->update(['facility_id' => $facility?->id]));
     }
 
     // Reserves a room for a service with no therapist assigned yet (rule:

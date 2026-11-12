@@ -25,8 +25,10 @@ class FacilityRequest extends FormRequest
             'name' => [
                 $isCreate ? 'required' : 'sometimes', 'string', 'max:150',
                 new NoEmoji(),
+                // A deleted facility no longer holds its name (the index is over live rows only).
                 Rule::unique('facilities', 'name')
                     ->where(fn ($q) => $q->where('spa_branch_id', $this->resolvedBranchId()))
+                    ->whereNull('deleted_at')
                     ->ignore($this->route('facility'), 'uuid'),
             ],
             'description' => 'nullable|string',
@@ -69,5 +71,12 @@ class FacilityRequest extends FormRequest
         }
 
         return null;
+    }
+
+    public function messages(): array
+    {
+        return [
+            'name.unique' => 'This branch already has a facility with this name.',
+        ];
     }
 }

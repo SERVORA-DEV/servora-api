@@ -85,9 +85,12 @@ class AvailabilityCheckService
             $onFloor = (bool) ($row['in_queue'] ?? false);
             $qualified = ! $serviceId || $this->availability->isStaffQualified($staff->id, $serviceId)['ok'];
             $shift = $this->availability->staffMatchesSchedule($staff->id, $date, $time, $minutes);
+            $away = $shift['leave'] ?? null;
 
             // [status, reason, can_take]
             [$status, $reason, $canTake] = match (true) {
+                // Time off or on leave that day: never offered, whatever else is true (the reason says which).
+                $away !== null => ['unavailable', $away, false],
                 ! $qualified => ['unavailable', "Doesn't do this service", false],
                 isset($conflicts[$staff->id]) => ['busy', $conflicts[$staff->id], false],
                 // Here today: the floor is what counts, whatever their shift says.

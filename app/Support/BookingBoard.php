@@ -53,7 +53,8 @@ class BookingBoard
      * @param  bool  $home  the visit being booked is a home service
      * @return array{slots: list<array{time: string, state: string, free_therapists: int}>, therapists: list<array<string, mixed>>, hours: list<array{hour: string, booked: int, limit: int, full: bool}>}
      */
-    public static function build(array $day, array $therapists, array $busy, int $duration, int $step, ?int $now = null, int $hourLimit = 0, array $hourCounts = [], ?int $soonBefore = null, bool $home = false): array
+    // $travel: a home visit being booked keeps its staff this long before and after it.
+    public static function build(array $day, array $therapists, array $busy, int $duration, int $step, ?int $now = null, int $hourLimit = 0, array $hourCounts = [], ?int $soonBefore = null, bool $home = false, int $travel = 0): array
     {
         $duration = max($duration, 1);
         $step = max($step, 5);
@@ -81,7 +82,7 @@ class BookingBoard
             $slots = [];
             $nextFree = null;
             foreach ($starts as $t) {
-                $state = self::therapistState($therapist, $mine, $t, $t + $duration, $now);
+                $state = self::therapistState($therapist, $mine, $t - $travel, $t + $duration + $travel, $now);
                 if ($state === self::FREE && $t + $duration > $day['close']) {
                     $state = self::PAST_CLOSING;
                 } elseif ($state === self::FREE && $soonBefore !== null && $t < $soonBefore) {
@@ -120,7 +121,7 @@ class BookingBoard
         $any = [];
         foreach ($starts as $i => $t) {
             $free = count(array_filter($rows, fn ($row) => $row['slots'][$i]['state'] === self::FREE));
-            $waiting = array_filter($busy, fn ($b) => ! $b['staff'] && $t < $b['end'] && $t + $duration > $b['start']);
+            $waiting = array_filter($busy, fn ($b) => ! $b['staff'] && $t - $travel < $b['end'] && $t + $duration + $travel > $b['start']);
             $unassigned = count($waiting);
             if ($home) {
                 // The ones in the spa go to the therapists who can't go out first.

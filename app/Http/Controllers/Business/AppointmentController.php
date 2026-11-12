@@ -69,6 +69,13 @@ class AppointmentController extends Controller
             $data['place'] ?? null, (bool) ($data['allow_past_closing'] ?? false));
     }
 
+    // A home visit started at the desk when the client's QR can't be scanned:
+    // what the scan does, with no queue number (AppointmentService::startHomeVisitAtDesk).
+    public function startHomeVisit(Request $request, string $uuid)
+    {
+        return $this->appointmentService->startHomeVisitAtDesk($request->user(), $uuid);
+    }
+
     public function cancel(CancelAppointmentRequest $request, string $uuid)
     {
         return $this->appointmentService->cancelAppointment($request->user(), $uuid, $request->validated()['cancellation_reason'] ?? null);

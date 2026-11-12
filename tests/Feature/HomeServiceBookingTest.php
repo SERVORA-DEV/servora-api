@@ -71,14 +71,14 @@ class HomeServiceBookingTest extends TestCase
         $this->makeBookable($this->branch);
     }
 
-    private function offerHomeService(int $fee = 300, int $radiusKm = 10, int $minMinutes = 0): void
+    private function offerHomeService(int $fee = 300, int $radiusKm = 10, int $travelMinutes = 0): void
     {
         Sanctum::actingAs($this->owner);
         $this->patchJson('/api/business/settings/booking-defaults', [
             'home_service_enabled' => true,
             'home_service_fee' => $fee,
             'home_service_radius_km' => $radiusKm,
-            'home_service_min_minutes' => $minMinutes,
+            'home_service_travel_minutes' => $travelMinutes,
         ])->assertOk();
         BookingPolicy::flush();
     }
@@ -159,32 +159,17 @@ class HomeServiceBookingTest extends TestCase
             ->assertJsonPath('data.total_amount', 700.0);
     }
 
-    // The one service in these tests takes 60 minutes.
-    public function test_the_app_refuses_a_home_visit_shorter_than_the_minimum(): void
+    // There is no shortest home visit any more: the trip is counted as travel time instead.
+    public function test_a_home_visit_of_any_length_is_booked(): void
     {
-        $this->offerHomeService(minMinutes: 90);
-
-        $this->bookHome()->assertStatus(422);
-        $this->assertSame(0, Appointment::count());
-    }
-
-    public function test_a_home_visit_exactly_at_the_minimum_is_booked(): void
-    {
-        $this->offerHomeService(minMinutes: 60);
+        $this->offerHomeService(travelMinutes: 30);
 
         $this->bookHome()->assertSuccessful();
     }
 
-    public function test_the_minimum_is_only_for_home_visits(): void
+    public function test_the_front_desk_books_a_home_visit_with_travel_time(): void
     {
-        $this->offerHomeService(minMinutes: 90);
-
-        $this->bookHome(self::NEAR, ['service_location' => 'In Spa'])->assertSuccessful();
-    }
-
-    public function test_the_front_desk_is_warned_not_stopped_by_the_minimum(): void
-    {
-        $this->offerHomeService(minMinutes: 90);
+        $this->offerHomeService(travelMinutes: 30);
 
         Sanctum::actingAs($this->owner);
         $this->postJson('/api/business/appointment', [
@@ -230,14 +215,14 @@ class HomeServiceBookingTest extends TestCase
 
     public function test_the_branch_page_tells_the_app_what_is_offered(): void
     {
-        $this->offerHomeService(fee: 250, radiusKm: 8, minMinutes: 60);
+        $this->offerHomeService(fee: 250, radiusKm: 8, travelMinutes: 20);
 
         $this->getJson("/api/spas/{$this->branch->uuid}")
             ->assertOk()
             ->assertJsonPath('data.home_service.enabled', true)
             ->assertJsonPath('data.home_service.fee', 0.0)
             ->assertJsonPath('data.home_service.radius_km', 8)
-            ->assertJsonPath('data.home_service.min_minutes', 60)
+            ->assertJsonPath('data.home_service.travel_minutes', 20)
             ->assertJsonPath('data.services.0.home_service_available', true);
     }
 }

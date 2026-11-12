@@ -216,7 +216,9 @@ class ClientBookingService
                     return response()->json(['message' => "{$name} isn't available then. {$schedule['reason']}"], 422);
                 }
 
-                $booked = $this->availabilityService->isStaffAvailable($staffId, $payload['appointment_date'], $payload['appointment_time'], $duration, $appointment->id);
+                // A home visit keeps them for the trip there and back too.
+                [$from, $span] = \App\Service\Business\HomeServiceRules::widen($appointment->isHomeService(), (int) $appointment->spa_branch_id, $payload['appointment_date'], $payload['appointment_time'], $duration);
+                $booked = $this->availabilityService->isStaffAvailable($staffId, $payload['appointment_date'], $from, $span, $appointment->id);
                 if (! $booked['ok']) {
                     return response()->json(['message' => "{$name} isn't available then. {$booked['reason']}"], 422);
                 }
@@ -232,6 +234,7 @@ class ClientBookingService
                 $staffIds->isNotEmpty() ? Staff::find($staffIds->first()) : null,
                 $appointment->id,
                 $appointment->isHomeService(),
+                \App\Support\ServiceParts::needOf($appointment->loadMissing('services.serviceVariant')),
             );
             if ($slotProblem) {
                 return response()->json(['message' => $slotProblem], 422);

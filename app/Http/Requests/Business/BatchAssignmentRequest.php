@@ -20,6 +20,8 @@ class BatchAssignmentRequest extends FormRequest
             // Each line needs a staff member, a facility or both.
             'assignments.*.staff_uuid' => 'nullable|required_without:assignments.*.facility_uuid|uuid|exists:staff,uuid',
             'assignments.*.facility_uuid' => 'nullable|required_without:assignments.*.staff_uuid|uuid|exists:facilities,uuid',
+            // For a service done by several staff at once: which part this person does.
+            'assignments.*.part_uuid' => 'nullable|uuid',
         ];
     }
 }

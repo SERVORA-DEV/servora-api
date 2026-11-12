@@ -90,6 +90,21 @@ final class AutoAssignment
     }
 
     /**
+     * The best-ranked person who can do one service and isn't one of $except (staff uuids): for a
+     * service done by several staff at once, a second person for a part still empty.
+     */
+    public static function bestFor(string $serviceUuid, array $staff, array $except = []): ?string
+    {
+        foreach (self::rank($staff) as $person) {
+            if (! empty($person['can'][$serviceUuid]) && ! in_array($person['uuid'], $except, true)) {
+                return $person['uuid'];
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Staff best first: on time, free now, fewest bookings that day, turn order (those not on the
      * floor last), name.
      *

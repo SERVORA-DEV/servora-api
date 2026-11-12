@@ -29,11 +29,27 @@ class PackageServiceItem extends Model
         // price for its nearest length — see unitPrice()).
         'price',
         'sort_order',
+        // A package for several clients: which of them get this service ([1], [2], [1,2]).
+        // Null: every client.
+        'client_slots',
     ];
+
+    protected function casts(): array
+    {
+        return ['client_slots' => 'array'];
+    }
 
     public function package()
     {
         return $this->belongsTo(Package::class, 'package_id');
+    }
+
+    /** Whether the client in this slot (1 = Client A) gets this service. */
+    public function isFor(int $slot): bool
+    {
+        $slots = Package::hasSharing() ? $this->client_slots : null;
+
+        return $slots === null || $slots === [] || in_array($slot, array_map('intval', $slots), true);
     }
 
     public function service()

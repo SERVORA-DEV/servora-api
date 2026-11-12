@@ -39,7 +39,7 @@ class HomeServiceRules
     }
 
     // What a branch offers, for the apps: on/off, the fee, the area and the
-    // least service time a home visit needs (0 = no minimum).
+    // travel time each way (0 = none), which the staff are kept for too.
     public static function offer(SpaBranch $branch): array
     {
         $policy = BookingPolicy::for($branch);
@@ -54,8 +54,145 @@ class HomeServiceRules
             'staff_available' => $hasStaff,
             'fee' => 0.0, // Legacy fees remain only on existing appointments.
             'radius_km' => (int) $policy['home_service_radius_km'],
-            'min_minutes' => (int) $policy['home_service_min_minutes'],
+            'travel_minutes' => (int) $policy['home_service_travel_minutes'],
         ];
+    }
+
+    // ── Travel time ──────────────────────────────────────────────────────
+    // A home visit takes its staff away for the trip there and back: they are kept from the travel
+    // time before it starts until the travel time after it ends. Booked at 10:00 PM, an hour of
+    // services and 20 minutes of travel keep them from 9:40 PM to 11:20 PM. Every staff clash check
+    // (AppointmentAvailabilityService, BookingSlotService) reads bookings through these.
+
+    private const TRAVEL = 'home-service.travel';
+
+    /** The branch's travel time each way, in minutes (remembered for the request). */
+    public static function travelMinutes(int $branchId): int
+    {
+        if (! app()->bound(self::TRAVEL)) {
+            app()->scoped(self::TRAVEL, fn () => new \ArrayObject());
+        }
+        $memo = app(self::TRAVEL);
+        if (! isset($memo[$branchId])) {
+            $branch = SpaBranch::find($branchId);
+            $memo[$branchId] = $branch ? (int) (BookingPolicy::for($branch)['home_service_travel_minutes'] ?? 0) : 0;
+        }
+
+        return $memo[$branchId];
+    }
+
+    /**
+     * The time a booking keeps its staff: its time to its end, widened by the travel time on both
+     * sides for a home visit.
+     *
+     * @return array{0: \Carbon\Carbon, 1: \Carbon\Carbon}
+     */
+    public static function span(bool $home, int $branchId, \Carbon\Carbon $start, int $minutes): array
+    {
+        $travel = $home ? self::travelMinutes($branchId) : 0;
+
+        return [$start->copy()->subMinutes($travel), $start->copy()->addMinutes($minutes + $travel)];
+    }
+
+    /**
+     * A time and length to check a booking against, widened for a home visit: the time it starts
+     * keeping its staff (H:i) and for how long. For callers that take a start time and minutes.
+     *
+     * @return array{0: string, 1: int}
+     */
+    public static function widen(bool $home, int $branchId, string $date, string $time, int $minutes): array
+    {
+        $travel = $home ? self::travelMinutes($branchId) : 0;
+        if ($travel <= 0) {
+            return [$time, $minutes];
+        }
+        $from = \Carbon\Carbon::parse("{$date} " . substr($time, 0, 5))->subMinutes($travel);
+        // Not before midnight: the day's other bookings are what it is checked against.
+        $from = $from->format('Y-m-d') === $date ? $from : \Carbon\Carbon::parse("{$date} 00:00");
+
+        return [$from->format('H:i'), $minutes + 2 * $travel];
+    }
+
+    /**
+     * The same for a booking that exists, with its own length ($minutes, the services' total).
+     *
+     * @return array{0: \Carbon\Carbon, 1: \Carbon\Carbon}
+     */
+    public static function blockedWindow(Appointment $appointment, int $minutes): array
+    {
+        $start = \Carbon\Carbon::parse($appointment->appointment_date->format('Y-m-d') . ' ' . substr((string) $appointment->appointment_time, 0, 5));
+        if (! $appointment->isHomeService()) {
+            return self::span(false, (int) $appointment->spa_branch_id, $start, $minutes);
+        }
+
+        // A home visit by its actual times when known: from when the staff arrived if later than
+        // booked ($minutes already counts any extension), and once its services are all done,
+        // until the last one ended. Then the trip back.
+        $travel = self::travelMinutes((int) $appointment->spa_branch_id);
+        $arrived = $appointment->check_in_at ? \Carbon\Carbon::parse($appointment->check_in_at) : null;
+        $from = $arrived && $arrived->gt($start) ? $arrived : $start;
+        $end = $from->copy()->addMinutes($minutes);
+        if ($appointment->relationLoaded('services')) {
+            $open = $appointment->services->reject(fn ($s) => $s->status === 'Cancelled');
+            if ($open->isNotEmpty() && $open->every(fn ($s) => $s->status === 'Completed')) {
+                $done = $open->flatMap(fn ($s) => $s->relationLoaded('therapistAssignments') ? $s->therapistAssignments->pluck('completed_at') : collect())->filter()->max();
+                $end = $done ? \Carbon\Carbon::parse($done) : $end;
+            }
+        }
+
+        return [$start->copy()->subMinutes($travel), $end->copy()->addMinutes($travel)];
+    }
+
+    /**
+     * The trips back from home visits already done: each staff member who finished their part of a
+     * home visit and is still on the way back to the spa, with when they are back (completed +
+     * travel). Only when nothing else of that visit is still theirs to do.
+     *
+     * @param  array<int, int>  $staffIds
+     * @return array<int, array{from: \Carbon\Carbon, to: \Carbon\Carbon}> staff id => the trip back
+     */
+    public static function returnTrips(array $staffIds, \Carbon\Carbon $from, \Carbon\Carbon $to): array
+    {
+        if (! $staffIds) {
+            return [];
+        }
+        $rows = \App\Models\TherapistAssignment::query()
+            ->whereIn('staff_id', $staffIds)
+            ->whereIn('assignment_status', ['Completed', 'Assigned', 'In Progress'])
+            ->whereHas('appointmentService.appointment', fn ($q) => $q->where('service_location', self::HOME)
+                ->whereDate('appointment_date', '>=', $from->copy()->subDay()->toDateString())
+                ->whereDate('appointment_date', '<=', $to->toDateString())
+                ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW]))
+            ->with('appointmentService:id,appointment_id', 'appointmentService.appointment:id,spa_branch_id')
+            ->get(['id', 'staff_id', 'appointment_service_id', 'assignment_status', 'completed_at']);
+
+        $trips = [];
+        foreach ($rows->groupBy(fn ($r) => $r->staff_id . ':' . $r->appointmentService?->appointment_id) as $visit) {
+            // Still doing something of this visit: not on the way back yet.
+            if ($visit->contains(fn ($r) => $r->assignment_status !== 'Completed')) {
+                continue;
+            }
+            $done = $visit->pluck('completed_at')->filter()->max();
+            if (! $done) {
+                continue;
+            }
+            $back = \Carbon\Carbon::parse($done)->addMinutes(self::travelMinutes((int) $visit->first()->appointmentService->appointment->spa_branch_id));
+            $left = \Carbon\Carbon::parse($done);
+            if ($left->lt($to) && $back->gt($from)) {
+                $staffId = (int) $visit->first()->staff_id;
+                if (! isset($trips[$staffId]) || $back->gt($trips[$staffId]['to'])) {
+                    $trips[$staffId] = ['from' => $left, 'to' => $back];
+                }
+            }
+        }
+
+        return $trips;
+    }
+
+    /** "On the way back from a home visit until 3:30 PM." */
+    public static function returningLine(\Carbon\Carbon $back): string
+    {
+        return 'On the way back from a home visit until ' . $back->format('g:i A');
     }
 
     /**
@@ -119,6 +256,7 @@ class HomeServiceRules
         return "{$name} isn't available for home service. Please choose someone who is.";
     }
 
+<<<<<<< HEAD
     // Why a home booking of $minutes is too short for this branch, or null
     // when it is long enough (or there is no minimum). The client app is
     // refused with this; the front desk only sees it as a warning.
@@ -134,6 +272,8 @@ class HomeServiceRules
             .BookingPolicy::formatMinutes($minutes).'. Add a service, or book at the spa.';
     }
 
+=======
+>>>>>>> main
     // The columns a home booking stores, once check() has passed.
     public static function attributes(array $payload, array $check): array
     {
