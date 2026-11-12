@@ -141,6 +141,51 @@ final class SharedPackages
         }
     }
 
+    /**
+     * For each of these appointments covered by another client's shared package (Client B, C… of a
+     * Couples Massage): the name of the client who bought it. One query for a whole list.
+     *
+     * @param  iterable<int>  $appointmentIds
+     * @return array<int, string> appointment id => the main client's name (only covered ones)
+     */
+    public static function coveredByFor(iterable $appointmentIds): array
+    {
+        $ids = collect($appointmentIds)->filter()->unique()->values();
+        if ($ids->isEmpty() || ! Package::hasSharing()) {
+            return [];
+        }
+
+        $covered = [];
+        $rows = AppointmentPackage::query()
+            ->whereIn('appointment_id', $ids->all())
+            ->whereNotNull('shared_from_id')
+            ->where('status', '!=', 'Cancelled')
+            ->with('sharedFrom.appointment.client')
+            ->get();
+        foreach ($rows as $row) {
+            $client = $row->sharedFrom?->appointment?->client;
+            $covered[$row->appointment_id] ??= trim(($client?->first_name ?? '') . ' ' . ($client?->last_name ?? '')) ?: Package::slotName(1);
+        }
+
+        return $covered;
+    }
+
+    /** Whether this appointment is covered by another client's shared package. */
+    public static function isCovered(Appointment $appointment): bool
+    {
+        return isset(self::coveredByFor([$appointment->id])[$appointment->id]);
+    }
+
+    /**
+     * Whether a visit closes with nothing to charge: another client's shared package covers it
+     * and it has nothing of its own to pay (an extra service the client added is still theirs).
+     * Only the client who bought the package pays for it.
+     */
+    public static function closesFree(float $total, bool $covered): bool
+    {
+        return $covered && round($total, 2) <= 0;
+    }
+
     /** How many clients Client A's package is for. */
     public static function clientsOf(AppointmentPackage $bought): int
     {

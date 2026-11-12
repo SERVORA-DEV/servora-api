@@ -60,6 +60,7 @@ use App\Support\ServiceAddon;
 use App\Support\ServiceKind;
 use App\Support\ServiceStartRules;
 use App\Support\ServiceVoidRules;
+use App\Support\SharedPackages;
 use App\Support\StaleVisit;
 use App\Support\Suspension;
 use App\Support\VoucherTarget;
@@ -168,6 +169,12 @@ class AppointmentService
         $collection = $this->appointmentRepository->paginateForBranches($this->branchIds($user), $filters, $perPage);
         // The assigned staff's leave / absence / lateness for the whole page at once.
         AssignmentWarningService::instance()->preload($collection->items());
+        // Covered by another client's shared package: who paid, for the whole page in one query.
+        // The desk doesn't ask such a client to pay for it (AppointmentResource `covered_by`).
+        $covered = SharedPackages::coveredByFor(collect($collection->items())->pluck('id'));
+        foreach ($collection->items() as $appointment) {
+            $appointment->setAttribute('covered_by', $covered[$appointment->id] ?? null);
+        }
 
         return AppointmentResource::collection($collection);
     }
@@ -1199,6 +1206,8 @@ class AppointmentService
                 && ! $appointment->services()->whereIn('status', ['Pending', 'In Progress'])->exists()) {
                 $this->queueRepository->updateStatus($appointment->queue, 'Completed', ['completed_at' => now()]);
             }
+            // Covered by another client's shared package: closed with nothing to pay.
+            $this->closeCoveredVisit($appointment);
         });
     }
 
@@ -3484,6 +3493,11 @@ class AppointmentService
             if (! $stillActive && $appointment->queue) {
                 $this->queueRepository->updateStatus($appointment->queue, 'Completed', ['completed_at' => $now]);
             }
+            // A client covered by another client's shared package, with nothing of their own to
+            // pay: closed now, never asked to pay (only the client who bought it pays).
+            if (! $stillActive) {
+                $this->closeCoveredVisit($appointment);
+            }
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));
         });
@@ -3582,6 +3596,11 @@ class AppointmentService
             }
 
             $amount = (float) $appointment->total_amount;
+            // Covered by another client's shared package: a ₱0 bill, settled at once, and the
+            // visit completes — the client is not charged (SharedPackages::closesFree).
+            if ($this->closeCoveredVisit($appointment)) {
+                return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
+            }
             if ($amount <= 0) {
                 return response()->json(['message' => 'This appointment has no billable amount.'], 422);
             }
@@ -3756,6 +3775,37 @@ class AppointmentService
         if ($appointment->queue && ! $appointment->services()->whereIn('status', ['Pending', 'In Progress'])->exists()) {
             $this->queueRepository->updateStatus($appointment->queue, 'Completed', ['completed_at' => $now]);
         }
+    }
+
+    // A visit covered by another client's shared package (Client B of a Couples Massage) with
+    // nothing of its own to pay: once every service is done, a ₱0 bill is made and settled, so the
+    // visit completes and never waits for a payment. Only the client who bought the package pays.
+    // True when it was closed this way. Runs inside the caller's transaction.
+    private function closeCoveredVisit(Appointment $appointment): bool
+    {
+        $appointment = $appointment->fresh();
+        if (! $appointment
+            || $this->billingRepository->findForAppointment($appointment->id)
+            || $appointment->services()->whereNotIn('status', ['Completed', 'Cancelled'])->exists()
+            || ! $appointment->services()->where('status', 'Completed')->exists()
+            || ! SharedPackages::closesFree((float) $appointment->total_amount, SharedPackages::isCovered($appointment))) {
+            return false;
+        }
+
+        $billing = $this->billingRepository->create([
+            'appointment_id' => $appointment->id,
+            'spa_business_id' => $appointment->branch->spa_business_id,
+            'spa_branch_id' => $appointment->spa_branch_id,
+            'billing_type' => 'Appointment',
+            'billing_number' => $this->billingRepository->generateBillingNumber(),
+            'subtotal' => 0,
+            'amount' => 0,
+            'status' => 'Pending',
+            'issued_at' => now(),
+        ]);
+        $this->billingService->settle($billing->fresh());
+
+        return true;
     }
 
     // The visit's bill, made the first time the door asks once every service is done (the desk's

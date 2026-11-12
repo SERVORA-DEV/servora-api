@@ -43,6 +43,16 @@ class AppointmentResource extends JsonResource
             'subtotal' => (float) $this->subtotal,
             'discount_amount' => (float) $this->discount_amount,
             'total_amount' => (float) $this->total_amount,
+            // On the desk's list: the client whose shared package covers this visit (Client B's
+            // Couples Massage), or null. Only the client who bought it pays for it.
+            // The list sets it for a whole page in one query; a single read with its packages
+            // works it out here.
+            'covered_by' => $this->when(
+                array_key_exists('covered_by', $this->resource->getAttributes()) || $this->resource->relationLoaded('packages'),
+                fn () => array_key_exists('covered_by', $this->resource->getAttributes())
+                    ? $this->resource->getAttribute('covered_by')
+                    : (\App\Support\SharedPackages::coveredByFor([$this->resource->id])[$this->resource->id] ?? null),
+            ),
             // Reuses AppointmentAvailabilityService's own overlap-checking
             // math (sum of non-cancelled services' variant durations) so
             // this figure never drifts from what booking conflicts are
