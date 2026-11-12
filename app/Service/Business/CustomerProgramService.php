@@ -18,6 +18,7 @@ use App\Repository\Business\ClientRepository;
 use App\Repository\BillingRepository;
 use App\Repository\PaymentRepository;
 use App\Repository\SpaBusinessRepository;
+use App\Support\AppOnlyPrograms;
 use App\Support\ProgramChannel;
 use App\Support\VoucherTarget;
 use Illuminate\Http\JsonResponse;
@@ -260,8 +261,11 @@ class CustomerProgramService
             if (! $this->rewards->enabledFor($business->id)) {
                 return $this->reject('Customer programs are turned off.');
             }
+            if ($refusal = AppOnlyPrograms::refusal($client->usesApp())) {
+                return $this->reject($refusal);
+            }
 
-            $current = ClientMembership::where('client_id', $client->id)->where('status', 'active')->where('ends_at', '>', now())->lockForUpdate()->first();
+            $current =ClientMembership::where('client_id', $client->id)->where('status', 'active')->where('ends_at', '>', now())->lockForUpdate()->first();
             if ($current && $current->customer_program_id !== $program->id) {
                 return $this->reject("{$client->first_name} already has {$current->displayName()} until " . $current->ends_at->format('M j, Y') . ' — cancel it first.');
             }
@@ -287,8 +291,11 @@ class CustomerProgramService
             if (! $program || $program->trashed() || ! $program->is_active) {
                 return $this->reject('This membership is no longer offered.');
             }
+            if ($refusal = AppOnlyPrograms::refusal($membership->client?->usesApp())) {
+                return $this->reject($refusal);
+            }
             $branch = $membership->branch ?? SpaBranch::whereIn('id', $this->branchIds($user))->firstOrFail();
-            $from = $membership->ends_at->isFuture() ? $membership->ends_at : null;
+            $from =$membership->ends_at->isFuture() ? $membership->ends_at : null;
 
             return $this->startPeriod($user, $business, $branch, $membership->client, $program, $data, from: $from);
         });
@@ -401,7 +408,8 @@ class CustomerProgramService
             'ends_at' => $m->ends_at?->toIso8601String(),
             'price' => (float) $m->price,
             'program' => ['uuid' => $m->program?->uuid, 'name' => $m->displayName()],
-            'client' => ['uuid' => $m->client?->uuid, 'name' => trim(($m->client?->first_name ?? '') . ' ' . ($m->client?->last_name ?? ''))],
+            // `uses_app`: only an app user can be renewed (AppOnlyPrograms).
+            'client' => ['uuid' => $m->client?->uuid, 'name' => trim(($m->client?->first_name ?? '') . ' ' . ($m->client?->last_name ?? '')), 'uses_app' => (bool) $m->client?->usesApp()],
             'branch' => ['uuid' => $m->branch?->uuid, 'name' => $m->branch?->branch_name],
         ];
     }
@@ -430,7 +438,8 @@ class CustomerProgramService
             return $this->noBusiness();
         }
         $client = $this->client($user, $business, $clientUuid);
-        if (! $this->rewards->enabledFor($client->spa_business_id)) {
+        // A client without the app can't use any (AppOnlyPrograms): none to tag.
+        if (! $this->rewards->enabledFor($client->spa_business_id) || ! AppOnlyPrograms::usesHeld($client->usesApp())) {
             return ['data' => []];
         }
         $wallet = ClientVoucher::with('program')->where('client_id', $client->id)->where('status', 'available')
@@ -579,6 +588,12 @@ class CustomerProgramService
             ],
             'client_uuid' => $client->uuid,
             'enabled' => $enabled,
+            // Customer programs are for app users (AppOnlyPrograms). For a client
+            // without the app, `locked_reason` says so; what they hold is listed
+            // but can't be used (`held_usable`), and nothing can be redeemed.
+            'uses_app' => $client->usesApp(),
+            'locked_reason' => AppOnlyPrograms::refusal($client->usesApp()),
+            'held_usable' => AppOnlyPrograms::usesHeld($client->usesApp()),
             'loyalty' => $loyalty ? [
                 'program_uuid' => $loyalty->uuid,
                 'channel' => ProgramChannel::of($loyalty),
@@ -629,6 +644,7 @@ class CustomerProgramService
                 'progress' => $this->progress($p, $client, $visits),
                 'claim_again' => $p->condition_kind === 'points' && ProgramRewardService::claimableAgain($p),
                 'redeemable' => $p->condition_kind === 'points' && $loyalty
+                    && AppOnlyPrograms::allows($client->usesApp())
                     && $client->current_points >= (int) $p->condition_value
                     && ($redeemsLeft === null || $redeemsLeft > 0),
             ])->values(),

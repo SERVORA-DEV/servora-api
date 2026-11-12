@@ -10,6 +10,7 @@ use App\Models\ClientPointEntry;
 use App\Models\ClientVoucher;
 use App\Models\CustomerProgram;
 use App\Support\AppCache;
+use App\Support\AppOnlyPrograms;
 use App\Support\LoyaltyEarning;
 use App\Support\ProgramChannel;
 use App\Support\VoucherTarget;
@@ -88,7 +89,9 @@ class ProgramRewardService
         }
 
         $client = Client::whereKey($appointment->client_id)->lockForUpdate()->first();
-        if (! $client) {
+        // Customer programs are for clients who use the app (AppOnlyPrograms):
+        // a visit by a client without it earns nothing — no points, no vouchers.
+        if (! $client || ! AppOnlyPrograms::allows($client->usesApp())) {
             return;
         }
 
@@ -98,8 +101,8 @@ class ProgramRewardService
         // earns only for visits from there.
         $where = ProgramChannel::whereOf($appointment);
 
-        // Points are for clients who use the app (App\Support\LoyaltyEarning);
-        // the vouchers below are for everyone.
+        // Points are for clients who use the app (App\Support\LoyaltyEarning),
+        // and so is everything else here (checked above).
         $loyalty = $programs->firstWhere('type', 'loyalty');
         if ($loyalty && ProgramChannel::allows(ProgramChannel::of($loyalty), $where) && LoyaltyEarning::earns($client->usesApp()) && ($points = $this->creditPoints($client, $billing, $loyalty)) > 0) {
             $earned[] = number_format($points) . ' points';
@@ -257,6 +260,9 @@ class ProgramRewardService
         if ($branchId && ! $voucher->offeredAt($branchId)) {
             return 'That voucher isn\'t offered at this branch.';
         }
+        if ($refusal = AppOnlyPrograms::refusal($client->usesApp())) {
+            return $refusal;
+        }
 
         $cost = (int) $voucher->condition_value;
         $client = Client::whereKey($client->id)->lockForUpdate()->first();
@@ -369,6 +375,10 @@ class ProgramRewardService
         if (! $client->exists) {
             return true;
         }
+        // Only a client who uses the app can take one (AppOnlyPrograms).
+        if (! AppOnlyPrograms::allows($client->usesApp())) {
+            return false;
+        }
 
         return $this->paidVisitServices($client) === []
             && $this->issuedCount($client, $voucher, 'first_visit') === 0;
@@ -391,7 +401,7 @@ class ProgramRewardService
         }
 
         $client = Client::whereKey($client->id)->lockForUpdate()->first();
-        if (! $client) {
+        if (! $client || ! AppOnlyPrograms::allows($client->usesApp())) {
             return null;
         }
 
@@ -412,6 +422,11 @@ class ProgramRewardService
     public function issueMembershipVouchers(ClientMembership $membership): int
     {
         $membership->loadMissing('program.items', 'client');
+        // Memberships are sold only to app users (CustomerProgramService); a
+        // stray call for anyone else issues nothing.
+        if (! AppOnlyPrograms::allows($membership->client?->usesApp())) {
+            return 0;
+        }
         $count = 0;
         foreach ($membership->program->items->where('type', 'voucher')->where('is_active', true) as $voucher) {
             $this->issueVoucher($membership->client, $voucher, 'membership', membership: $membership, expiresAt: $membership->ends_at);
@@ -518,8 +533,10 @@ class ProgramRewardService
             if (! $this->enabledFor($voucher->spa_business_id)) {
                 continue;
             }
+            // Only app users (AppOnlyPrograms): the birth date is the linked account's.
             $clients = Client::where('spa_business_id', $voucher->spa_business_id)
                 ->where('is_active', true)
+                ->whereNotNull('user_id')
                 ->whereHas('user', fn ($q) => $q->whereNotNull('birth_date')->whereMonth('birth_date', now()->month))
                 ->whereDoesntHave('vouchers', fn ($q) => $q->where('customer_program_id', $voucher->id)->where('source', 'birthday')->whereYear('issued_at', now()->year))
                 ->get();

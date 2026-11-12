@@ -17,6 +17,7 @@ use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\PaymentRepository;
 use App\Repository\SpaBusinessRepository;
+use App\Support\AppOnlyPrograms;
 use App\Support\FinishedVisit;
 use App\Support\PackageShare;
 use App\Support\ProgramChannel;
@@ -300,7 +301,11 @@ class BillingService
 
         $voucher = ClientVoucher::with('program')->find($appointment->client_voucher_id);
         $program = $voucher?->dealProgram();
-        $derived = $voucher && $voucher->isUsable() && $program ? $this->programDiscount($billing, $program) : null;
+        // Only a client who uses the app can use one (AppOnlyPrograms) — the
+        // booking's record may have been unlinked since.
+        $derived = ! AppOnlyPrograms::usesHeld($appointment->client?->usesApp())
+            ? AppOnlyPrograms::MESSAGE
+            : ($voucher && $voucher->isUsable() && $program ? $this->programDiscount($billing, $program) : null);
         if (! is_array($derived)) {
             $appointment->update(['client_voucher_id' => null]);
             $this->tellVoucherNotApplied($appointment, $voucher, $program, is_string($derived) ? $derived : null);
@@ -679,7 +684,14 @@ class BillingService
         $where = ProgramChannel::whereOf($billing->appointment);
         $membershipHere = ! $membership?->program || ProgramChannel::allows(ProgramChannel::of($membership->program), $where);
 
-        $describe = function (CustomerProgram $program, ?ClientVoucher $voucher = null, bool $claimable = false) use ($billing, $heldElsewhere, $reservedHere, $where, $memberItemIds, $membershipHere) {
+        // Customer programs are for app users (AppOnlyPrograms). For a client
+        // without the app everything is listed but greyed out with the reason:
+        // $locked for what is offered, $heldLocked for what they already hold.
+        $usesApp = $client?->usesApp();
+        $locked = AppOnlyPrograms::refusal($usesApp);
+        $heldLocked = AppOnlyPrograms::usesHeld($usesApp) ? null : AppOnlyPrograms::MESSAGE;
+
+        $describe = function (CustomerProgram $program, ?ClientVoucher $voucher = null, bool $claimable = false, ?string $lock = null) use ($billing, $heldElsewhere, $reservedHere, $where, $memberItemIds, $membershipHere) {
             $derived = $this->programDiscount($billing, $program);
             $elsewhere = $voucher && in_array($voucher->id, $heldElsewhere, true);
             $channel = ProgramChannel::of($program);
@@ -692,9 +704,9 @@ class BillingService
                 'name' => $program->name,
                 'type' => is_string($derived) ? null : $derived[0],
                 'value' => is_string($derived) ? null : $derived[1],
-                'unavailable_reason' => $wrongChannel
+                'unavailable_reason' => $lock ?? ($wrongChannel
                     ? ProgramChannel::refusalAt($where)
-                    : ($elsewhere ? 'Reserved for another booking' : (is_string($derived) ? $derived : null)),
+                    : ($elsewhere ? 'Reserved for another booking' : (is_string($derived) ? $derived : null))),
                 'channel' => $channel,
                 // A first-visit voucher not claimed yet: it is claimed when applied.
                 'claimable' => $claimable,
@@ -709,12 +721,12 @@ class BillingService
 
         $discounts = $this->rewards->offeredAt($billing->spa_business_id, $billing->spa_branch_id, 'discount')
             ->filter(fn ($p) => $p->audience !== 'members' || in_array($p->id, $memberItemIds, true))
-            ->map(fn ($p) => $describe($membership ? $membership->held($p) : $p))->values();
+            ->map(fn ($p) => $describe($membership ? $membership->held($p) : $p, lock: in_array($p->id, $memberItemIds, true) ? $heldLocked : $locked))->values();
         // A discount the membership was sold with stays the member's, even
         // if it has since been switched off or removed.
         foreach ($membership?->heldDiscounts() ?? [] as $held) {
             if (! $discounts->contains('program_uuid', $held->uuid)) {
-                $discounts->push($describe($held));
+                $discounts->push($describe($held, lock: $heldLocked));
             }
         }
 
@@ -726,7 +738,7 @@ class BillingService
                 // usable until it is used or expires — whatever has since
                 // happened to the program it came from.
                 ->filter(fn ($v) => $v->dealProgram() !== null)
-                ->map(fn ($v) => $describe($v->dealProgram(), $v))->values()
+                ->map(fn ($v) => $describe($v->dealProgram(), $v, lock: $heldLocked))->values()
             : collect();
 
         // The first-visit voucher a client with no paid visit yet can still
@@ -740,7 +752,9 @@ class BillingService
             $vouchers = $vouchers->values();
         }
 
-        return ['data' => ['enabled' => true, 'discounts' => $discounts, 'vouchers' => $vouchers]];
+        // `locked_reason`: set when the client doesn't use the app — the screens
+        // say why nothing can be applied.
+        return ['data' => ['enabled' => true, 'locked_reason' => $locked, 'held_usable' => $heldLocked === null, 'discounts' => $discounts, 'vouchers' => $vouchers]];
     }
 
     /** @return array{0: CustomerProgram, 1: ClientVoucher}|string */
@@ -749,6 +763,12 @@ class BillingService
         $clientId = $billing->appointment?->client_id;
         $voucher = $clientId ? ClientVoucher::with('program')->where('uuid', $voucherUuid)->where('client_id', $clientId)->lockForUpdate()->first() : null;
         $where = ProgramChannel::whereOf($billing->appointment);
+        // Vouchers are for clients who use the app (AppOnlyPrograms): one they
+        // hold is frozen while they don't, and a new one can't be claimed.
+        $usesApp = $billing->appointment?->client?->usesApp();
+        if (! AppOnlyPrograms::usesHeld($usesApp) || (! $voucher && ! AppOnlyPrograms::allows($usesApp))) {
+            return AppOnlyPrograms::MESSAGE;
+        }
         // Not a voucher the client holds: the id of a first-visit voucher they
         // can still claim. It is given to them now, then used like any other.
         if (! $voucher && $clientId && ($firstVisit = CustomerProgram::where('uuid', $voucherUuid)->where('spa_business_id', $billing->spa_business_id)->where('condition_kind', 'first_visit')->first())) {
@@ -778,6 +798,12 @@ class BillingService
     /** @return array{0: CustomerProgram, 1: null}|string */
     private function discountProgramForBill(Billing $billing, string $programUuid): array|string
     {
+        // Discount programs are for clients who use the app (AppOnlyPrograms);
+        // a member's discount is something they hold (frozen without the app).
+        $usesApp = $billing->appointment?->client?->usesApp();
+        if (! AppOnlyPrograms::usesHeld($usesApp)) {
+            return AppOnlyPrograms::MESSAGE;
+        }
         $membership = $billing->appointment?->client?->activeMembership()->with('program.items')->first();
         $program = CustomerProgram::where('uuid', $programUuid)
             ->where('spa_business_id', $billing->spa_business_id)
@@ -787,6 +813,9 @@ class BillingService
             $held = $membership?->heldDiscounts()->firstWhere('uuid', $programUuid);
 
             return $held ? [$held, null] : 'That discount isn\'t offered at this branch.';
+        }
+        if (! AppOnlyPrograms::allows($usesApp) && ! in_array($program->id, $membership?->perkIds() ?? [], true)) {
+            return AppOnlyPrograms::MESSAGE;
         }
         if ($program->audience === 'members' && ! in_array($program->id, $membership?->perkIds() ?? [], true)) {
             return 'That discount is for members — this client\'s membership doesn\'t include it.';

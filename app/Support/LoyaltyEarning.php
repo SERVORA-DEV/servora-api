@@ -12,8 +12,9 @@ namespace App\Support;
 // such a client had when this rule came in was taken off (the migration
 // 2026_10_18_090000_remove_points_from_clients_without_the_app).
 //
-// Only points. Vouchers earned by visits, spend or a first visit, and
-// memberships, are for every client.
+// Vouchers, discount programs and memberships are app-only too now — see
+// App\Support\AppOnlyPrograms (what a non-app client already holds of those
+// is kept, frozen, rather than removed).
 //
 // Pure — tested in tests/Unit/LoyaltyEarningTest; applied by
 // App\Service\Business\ProgramRewardService::onBillPaid.
