@@ -65,6 +65,8 @@ class ClientResource extends JsonResource
             'last_visit_date' => $this->when(array_key_exists('last_visit_date', $this->resource->getAttributes()), fn () => $this->last_visit_date ? substr((string) $this->last_visit_date, 0, 10) : null),
             'visits_total' => $this->when(array_key_exists('visits_total', $this->resource->getAttributes()), fn () => (float) ($this->visits_total ?? 0)),
             'next_visit_date' => $this->when(array_key_exists('next_visit_date', $this->resource->getAttributes()), fn () => $this->next_visit_date ? substr((string) $this->next_visit_date, 0, 10) : null),
+            // The list's branch: where they last came, else where they were added (ClientService::search).
+            'branch' => $this->when(array_key_exists('list_branch', $this->resource->getAttributes()), fn () => $this->list_branch),
 
             // The client's preferred therapist: the one picked for them by
             // hand (Client::preferredTherapist), or else the one their

@@ -229,7 +229,12 @@ class UserService
             ? array_merge([$clientId], (array) config('services.google.extra_client_ids', []))
             : [$clientId];
 
-        $claims = $this->verifyGoogleIdToken((string) $request->input('credential'), $audiences);
+        // The web app asks Google for an access token from its own button (a popup that
+        // opens straight from the click, so no browser needs to allow Google's embedded
+        // sign-in button); the phone app and older web pages send a Google ID token.
+        $claims = ! $forClient && $request->filled('access_token')
+            ? $this->verifyGoogleAccessToken((string) $request->input('access_token'), $audiences)
+            : $this->verifyGoogleIdToken((string) $request->input('credential'), $audiences);
 
         if ($claims === null) {
             return response()->json([
@@ -251,6 +256,8 @@ class UserService
                 return response()->json([
                     'message' => 'There is no Servora account for this Google email yet. Create one from the sign-up page.',
                     'needs_signup' => true,
+                    // The Google account's own email, for the sign-up page to show.
+                    'email' => $claims['email'],
                 ], 404);
             }
 
@@ -437,6 +444,44 @@ class UserService
             || ! in_array($claims['email_verified'] ?? null, [true, 'true'], true)
             || empty($claims['email'])
             || (int) ($claims['exp'] ?? 0) < time()
+        ) {
+            return null;
+        }
+
+        return $claims;
+    }
+
+    // A Google ACCESS token (what the web app's own "Continue with Google" button gets),
+    // checked the same way as an ID token above: Google says which OAuth client it was
+    // issued to (aud/azp must be ours), that it has not run out, and the verified email
+    // behind it (the token was asked for with the email scope).
+    private function verifyGoogleAccessToken(string $accessToken, array $clientIds): ?array
+    {
+        if ($accessToken === '') {
+            return null;
+        }
+
+        try {
+            $response = Http::timeout(8)->get('https://oauth2.googleapis.com/tokeninfo', [
+                'access_token' => $accessToken,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Google access token verification request failed', ['exception' => $e->getMessage()]);
+
+            return null;
+        }
+
+        if (! $response->ok()) {
+            return null;
+        }
+
+        $claims = $response->json();
+
+        if (! is_array($claims)
+            || ! in_array($claims['aud'] ?? ($claims['azp'] ?? null), $clientIds, true)
+            || ! in_array($claims['email_verified'] ?? null, [true, 'true'], true)
+            || empty($claims['email'])
+            || (int) ($claims['expires_in'] ?? 0) <= 0
         ) {
             return null;
         }

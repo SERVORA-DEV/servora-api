@@ -32,9 +32,15 @@ class PackageResource extends JsonResource
             // False until the migration has run: minutes then snap to the
             // nearest length on the menu and add-ons aren't kept.
 <<<<<<< HEAD
+<<<<<<< HEAD
             'by_service' => Package::byService(),
 =======
             'by_service' => \App\Models\Package::byService(),
+            // How many clients one booking of it is for (a Couples Massage: 2).
+            'client_count' => $this->resource->clients(),
+>>>>>>> main
+=======
+            'by_service' => Package::byService(),
             // How many clients one booking of it is for (a Couples Massage: 2).
             'client_count' => $this->resource->clients(),
 >>>>>>> main
@@ -60,11 +66,17 @@ class PackageResource extends JsonResource
                     'unit_price' => $item->unitPrice(),
                     // True when the owner set it (false: it is the menu price).
 <<<<<<< HEAD
+<<<<<<< HEAD
                     'price_set' => Package::hasLinePrice() && $item->price !== null,
 =======
                     'price_set' => \App\Models\Package::hasLinePrice() && $item->price !== null,
                     // A package for several clients: which of them get it (null: every client).
                     'client_slots' => \App\Models\Package::hasSharing() ? $item->client_slots : null,
+>>>>>>> main
+=======
+                    'price_set' => Package::hasLinePrice() && $item->price !== null,
+                    // A package for several clients: which of them get it (null: every client).
+                    'client_slots' => Package::hasSharing() ? $item->client_slots : null,
 >>>>>>> main
                     'addons' => $this->resource->includedAddons()
                         ->where('service_id', $item->theService()->id)

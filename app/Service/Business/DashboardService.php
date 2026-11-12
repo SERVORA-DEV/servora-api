@@ -87,7 +87,11 @@ class DashboardService
         $perBranch = [];
         if (count($live['branches']) > 1) {
             foreach ($live['branches'] as $id => $branch) {
-                $perBranch[] = $branch + ['revenue' => (float) ($money['revenueByBranch'][$id] ?? 0)];
+                $perBranch[] = $branch + [
+                    'revenue' => (float) ($money['revenueByBranch'][$id] ?? 0),
+                    // The same seven days as revenueLast7Days, oldest first: one line per branch.
+                    'last7Days' => $money['last7DaysByBranch'][$id] ?? array_fill(0, 7, 0.0),
+                ];
             }
         }
 
@@ -155,6 +159,7 @@ class DashboardService
             'topServices' => $this->topServices($branchIds, $periodStart, $periodEnd),
             // Only worth a query when there is more than one branch to compare.
             'revenueByBranch' => count($branchIds) > 1 ? $this->revenueByBranch($branchIds, $periodStart, $periodEnd) : [],
+            'last7DaysByBranch' => count($branchIds) > 1 ? $this->last7DaysByBranch($branchIds) : [],
         ];
     }
 
@@ -206,6 +211,40 @@ class DashboardService
             ->pluck('total', 'spa_branch_id')
             ->map(fn ($total) => (float) $total)
             ->all();
+    }
+
+    /**
+     * Each branch's paid payments on each of the last 7 days (oldest first), by the same rule as
+     * paymentTotals' last7Days, so the branch lines add up to the total line. One grouped query.
+     *
+     * @return array<int, float[]>
+     */
+    private function last7DaysByBranch(array $branchIds): array
+    {
+        $days = [];
+        for ($i = 6; $i >= 0; $i--) {
+            $days[] = Carbon::now()->subDays($i)->toDateString();
+        }
+        $rows = Payment::whereIn('spa_branch_id', $branchIds)
+            ->where('payment_status', 'Paid')
+            ->whereBetween('paid_at', [Carbon::now()->subDays(6)->startOfDay(), Carbon::now()->endOfDay()])
+            ->groupBy('spa_branch_id', DB::raw('date(paid_at)'))
+            ->selectRaw('spa_branch_id, date(paid_at) as day, coalesce(sum(amount), 0) as total')
+            ->toBase()
+            ->get();
+
+        $out = [];
+        foreach ($branchIds as $id) {
+            $out[$id] = array_fill(0, 7, 0.0);
+        }
+        foreach ($rows as $row) {
+            $at = array_search(substr((string) $row->day, 0, 10), $days, true);
+            if ($at !== false && isset($out[$row->spa_branch_id])) {
+                $out[$row->spa_branch_id][$at] = (float) $row->total;
+            }
+        }
+
+        return $out;
     }
 
     // ── Today ───────────────────────────────────────────────────────────

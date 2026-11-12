@@ -183,7 +183,7 @@ class Package extends Model
             $items = $this->packageServiceItems->filter(fn (PackageServiceItem $item) => $item->theService() !== null && $item->isFor($slot));
             $serviceIds = $items->map(fn (PackageServiceItem $item) => $item->theService()->id)->all();
             $total = max($total, PackagePlan::totalMinutes(
-                $items->map(fn (PackageServiceItem $item) => ['minutes' => $item->minutes(), 'quantity' => $item->quantity])->all(),
+                $items->map(fn (PackageServiceItem $item) => ['minutes' => $item->minutes($home), 'quantity' => $item->quantity])->all(),
                 $this->includedAddons()->filter(fn (PackageAddon $row) => in_array($row->service_id, $serviceIds, true))->map(fn (PackageAddon $row) => $row->addon->duration_minutes)->all(),
             ));
         }

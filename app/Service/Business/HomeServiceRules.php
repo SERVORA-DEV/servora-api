@@ -257,6 +257,7 @@ class HomeServiceRules
     }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     // Why a home booking of $minutes is too short for this branch, or null
     // when it is long enough (or there is no minimum). The client app is
     // refused with this; the front desk only sees it as a warning.
@@ -272,6 +273,8 @@ class HomeServiceRules
             .BookingPolicy::formatMinutes($minutes).'. Add a service, or book at the spa.';
     }
 
+=======
+>>>>>>> main
 =======
 >>>>>>> main
     // The columns a home booking stores, once check() has passed.

@@ -93,7 +93,11 @@ class AppointmentController extends Controller
 
     public function skipQueue(Request $request, string $uuid)
     {
-        return $this->appointmentService->skipQueue($request->user(), $uuid);
+        // behind: the booking (uuid) to move this client behind, or "back" for the end of the line.
+        // Left out, they move down one place, as before.
+        $data = $request->validate(['behind' => ['sometimes', 'nullable', 'string', 'max:64']]);
+
+        return $this->appointmentService->skipQueue($request->user(), $uuid, $data['behind'] ?? null);
     }
 
     public function recallQueue(Request $request, string $uuid)

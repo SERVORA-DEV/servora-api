@@ -47,7 +47,11 @@ class PlanAccessController extends Controller
             'date_from' => 'required|date_format:Y-m-d',
             'date_to' => 'required|date_format:Y-m-d|after_or_equal:date_from',
             'branch_uuid' => 'nullable|uuid',
+            // What the list on screen is narrowed to: its dropdown, and its search box.
+            'list_filter' => 'nullable|in:paid,unpaid,refunded,walkin,booking,app,member,service,package',
+            'search' => 'nullable|string|max:100',
         ]);
+        $filter = $data['list_filter'] ?? null;
         $business = $this->businesses->findForUser($request->user());
         abort_unless($business, 404);
         $plan = AppCache::activeSubscription($business->id)?->plan;
@@ -75,25 +79,47 @@ class PlanAccessController extends Controller
         if ($type === 'sales') {
             $columns = ['Bill', 'Issued', 'Branch', 'Amount billed', 'Status'];
             $rows = Billing::with('branch')->whereIn('spa_branch_id', $ids)->where('billing_type', 'Appointment')
-                ->whereBetween('issued_at', [Carbon::parse($from)->startOfDay(), Carbon::parse($to)->endOfDay()])->orderBy('issued_at')->get()
+                ->whereBetween('issued_at', [Carbon::parse($from)->startOfDay(), Carbon::parse($to)->endOfDay()])
+                ->when($filter === 'paid', fn ($q) => $q->where('status', 'Paid'))
+                ->when($filter === 'refunded', fn ($q) => $q->where('status', 'Refunded'))
+                ->when($filter === 'unpaid', fn ($q) => $q->whereNotIn('status', ['Paid', 'Refunded', 'Cancelled']))
+                ->orderBy('issued_at')->get()
                 ->map(fn ($b) => [$b->billing_number, $b->issued_at?->format('Y-m-d'), $b->branch?->branch_name, (float) $b->amount, $b->status])->all();
         } elseif ($type === 'appointments') {
             $columns = ['Booking', 'Date', 'Client', 'Branch', 'Source', 'Status', 'Amount booked'];
-            $rows = $visits->map(fn ($a) => [$a->appointment_number, $a->appointment_date->format('Y-m-d'), trim($a->client?->first_name.' '.$a->client?->last_name), $a->branch?->branch_name, $a->source, $a->status, (float) $a->total_amount])->all();
+            $rows = $visits
+                ->filter(fn ($a) => $filter === 'walkin' ? $a->appointment_type === 'Walk-in' : ($filter === 'booking' ? $a->appointment_type !== 'Walk-in' : true))
+                ->map(fn ($a) => [$a->appointment_number, $a->appointment_date->format('Y-m-d'), trim($a->client?->first_name.' '.$a->client?->last_name), $a->branch?->branch_name, $a->source, $a->status, (float) $a->total_amount])->all();
         } elseif ($type === 'clients') {
             $columns = ['Client', 'Visits', 'Completed', 'Amount booked'];
-            $rows = $visits->groupBy('client_id')->map(fn ($v) => [trim($v->first()->client?->first_name.' '.$v->first()->client?->last_name), $v->count(), $v->where('status', 'completed')->count(), (float) $v->sum('total_amount')])->values()->all();
+            $rows = $visits->groupBy('client_id')
+                ->filter(function ($v) use ($filter) {
+                    $client = $v->first()->client;
+                    if ($filter === 'app') return (bool) $client?->usesApp();
+                    if ($filter === 'member') return (bool) $client?->activeMembership()->exists();
+                    return true;
+                })
+                ->map(fn ($v) => [trim($v->first()->client?->first_name.' '.$v->first()->client?->last_name), $v->count(), $v->where('status', 'completed')->count(), (float) $v->sum('total_amount')])->values()->all();
         } elseif ($type === 'branches') {
             $columns = ['Branch', 'Visits', 'Completed', 'Amount booked'];
             $rows = $visits->groupBy('spa_branch_id')->map(fn ($v) => [$v->first()->branch?->branch_name, $v->count(), $v->where('status', 'completed')->count(), (float) $v->sum('total_amount')])->values()->all();
         } elseif ($type === 'services') {
             $columns = ['Service', 'Quantity', 'Amount booked', 'Refunded'];
-            $rows = $visits->flatMap->services->groupBy('service_name')->map(fn ($v, $name) => [$name, (int) $v->sum('quantity'), (float) $v->sum('subtotal'), (float) $v->sum('refunded_amount')])->values()->all();
+            $rows = $visits->flatMap->services
+                ->filter(fn ($l) => $filter === 'package' ? $l->source_appointment_package_id !== null
+                    : ($filter === 'service' ? $l->source_appointment_package_id === null && $l->addon_id === null : true))
+                ->groupBy('service_name')->map(fn ($v, $name) => [$name, (int) $v->sum('quantity'), (float) $v->sum('subtotal'), (float) $v->sum('refunded_amount')])->values()->all();
         } else {
             $columns = ['Staff', 'Service assignments', 'Completed assignments'];
             $rows = $visits->flatMap->services->flatMap->therapistAssignments->filter(fn ($a) => $a->staff_id !== null)->groupBy('staff_id')
                 ->map(fn ($v) => [trim($v->first()->staff?->first_name.' '.$v->first()->staff?->last_name), $v->count(), $v->where('assignment_status', 'Completed')->count()])->values()->all();
         }
+
+        // The search box: rows with any cell containing the words typed.
+        if ($q = mb_strtolower(trim($data['search'] ?? ''))) {
+            $rows = array_values(array_filter($rows, fn ($row) => collect($row)->contains(fn ($cell) => str_contains(mb_strtolower((string) $cell), $q))));
+        }
+        $rows = array_values($rows);
 
         return ['data' => [
             'title' => ucfirst($type).' report', 'file' => "$type-$from-$to", 'period' => "$from to $to",

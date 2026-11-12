@@ -78,7 +78,39 @@ class PackageRequest extends FormRequest
 
     public function withValidator($validator): void
     {
+        // A package for several clients: each client needs something, and only the clients it is for.
         $validator->after(function ($validator) {
+<<<<<<< HEAD
+=======
+            if (! \App\Models\Package::hasSharing() || ! $this->has('services')) {
+                return;
+            }
+            $existing = $this->route('package') ? \App\Models\Package::where('uuid', $this->route('package'))->value('client_count') : null;
+            $clients = max(1, (int) ($this->input('client_count') ?? $existing ?? 1));
+            $services = collect($this->input('services', []));
+            foreach ($services as $row) {
+                foreach ((array) ($row['client_slots'] ?? []) as $slot) {
+                    if ((int) $slot > $clients) {
+                        $validator->errors()->add('services', \App\Models\Package::slotName((int) $slot) . " isn't in this package — it is for {$clients} " . ($clients === 1 ? 'client' : 'clients') . '.');
+
+                        return;
+                    }
+                }
+            }
+            if ($clients < 2) {
+                return;
+            }
+            foreach (range(1, $clients) as $slot) {
+                $has = $services->contains(fn ($row) => empty($row['client_slots']) || in_array($slot, array_map('intval', (array) $row['client_slots']), true));
+                if (! $has) {
+                    $validator->errors()->add('services', \App\Models\Package::slotName($slot) . ' has no service in this package.');
+                }
+            }
+        });
+
+        // A home-service package: every service in it needs reviewed home options and a home length.
+        $validator->after(function ($validator) {
+>>>>>>> main
             $existing = $this->route('package') ? Package::where('uuid', $this->route('package'))->first() : null;
             if (! ($this->input('home_service_available') ?? $existing?->home_service_available)) {
                 return;

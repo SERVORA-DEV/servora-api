@@ -168,6 +168,8 @@ class ClientAppointmentResource extends JsonResource
             'packages' => $this->packages->map(fn ($p) => [
                 'uuid' => $p->uuid,
                 'name' => $p->displayName(),
+                // So the app leaves out one the front desk took off the booking.
+                'status' => $p->status,
                 // A package for several clients: who else is booked with it, and who paid.
                 'shared' => \App\Support\SharedPackages::summary($p),
             ])->values(),

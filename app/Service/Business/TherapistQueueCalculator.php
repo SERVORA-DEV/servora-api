@@ -6,6 +6,7 @@ use App\Models\Attendance;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
 use App\Models\Staff;
+use App\Models\StaffTimeOff;
 use App\Models\TherapistAssignment;
 use App\Support\RotationTurn;
 use Carbon\Carbon;
@@ -64,6 +65,7 @@ class TherapistQueueCalculator
             ->get()
             ->keyBy('staff_id');
 
+        $timeOffByStaffId = $this->timeOffOn($staffIds, $date);
         $lastCompletedByStaffId = $this->lastCompletedAt($staffIds, $date);
         $activeStatusByStaffId = $this->activeAssignmentStatus($staffIds, $date);
 
@@ -71,7 +73,7 @@ class TherapistQueueCalculator
         $earnings = $this->commissionCalculator->earnings($business, $staffIds);
 
         [$onFloor, $offFloor] = $therapists
-            ->map(function (Staff $staff) use ($attendanceByStaffId, $lastCompletedByStaffId, $activeStatusByStaffId, $earnings) {
+            ->map(function (Staff $staff) use ($attendanceByStaffId, $timeOffByStaffId, $lastCompletedByStaffId, $activeStatusByStaffId, $earnings) {
                 $attendance = $attendanceByStaffId->get($staff->id);
 
                 // On the floor = timed in and not yet timed out. Timing out is
@@ -79,7 +81,10 @@ class TherapistQueueCalculator
                 // else in the codebase reads check_out_at this way yet (the
                 // assignment guards only look at check_in_at), so this is the
                 // first place it carries that meaning.
-                $onFloor = $attendance?->check_in_at !== null && $attendance?->check_out_at === null;
+                // Off that day in Employees (leave, sick, absent) is never in the line, even
+                // when timed in (a time in made before the leave was set).
+                $timeOff = $timeOffByStaffId[$staff->id] ?? null;
+                $onFloor = $attendance?->check_in_at !== null && $attendance?->check_out_at === null && $timeOff === null;
 
                 return [
                     'staff_id' => $staff->id,
@@ -93,6 +98,8 @@ class TherapistQueueCalculator
                     'checked_in_at' => $attendance?->check_in_at,
                     'last_completed_at' => $lastCompletedByStaffId[$staff->id] ?? null,
                     'in_queue' => $onFloor,
+                    // "On leave", "Sick", "Absent" or "Time off" when off that day; null otherwise.
+                    'time_off' => $timeOff,
                     // null when commission is turned off.
                     'earned_today' => $earnings[$staff->id]['today'] ?? null,
                     'earned_period' => $earnings[$staff->id]['period'] ?? null,
@@ -134,6 +141,25 @@ class TherapistQueueCalculator
     public function nextUp(Collection $rows): ?array
     {
         return RotationTurn::nextUp($rows);
+    }
+
+    /**
+     * The time-off label per staff member whose time off covers $date (one query for the roster).
+     *
+     * @return array<int, string>
+     */
+    private function timeOffOn(array $staffIds, string $date): array
+    {
+        if (! StaffTimeOff::ready()) {
+            return [];
+        }
+
+        return StaffTimeOff::whereIn('staff_id', $staffIds)
+            ->where('starts_on', '<=', $date)
+            ->where('ends_on', '>=', $date)
+            ->get(['staff_id', 'type'])
+            ->mapWithKeys(fn (StaffTimeOff $t) => [$t->staff_id => StaffTimeOff::LABELS[$t->type] ?? 'Time off'])
+            ->all();
     }
 
     private function rotationKey(array $row): int

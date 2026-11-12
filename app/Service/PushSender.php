@@ -185,8 +185,12 @@ class PushSender
                 continue;
             }
             $status = $response->json('error.status');
-            // The app was uninstalled or its token replaced.
-            if ($response->status() === 404 || $status === 'UNREGISTERED' || $status === 'INVALID_ARGUMENT') {
+            // The app was uninstalled or its token replaced. INVALID_ARGUMENT is only that when
+            // Firebase says the token is the problem: it is also what a bad message gets, and a
+            // bad message must not delete every phone it was sent to.
+            $badToken = $status === 'INVALID_ARGUMENT'
+                && str_contains(strtolower((string) $response->json('error.message')), 'registration token');
+            if ($response->status() === 404 || $status === 'UNREGISTERED' || $badToken) {
                 $sub->delete();
                 $this->results[] = "Phone #{$sub->id}: no longer installed or signed in there, removed";
             } else {

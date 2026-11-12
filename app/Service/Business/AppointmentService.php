@@ -1312,8 +1312,10 @@ class AppointmentService
         return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
     }
 
-    // Moves a waiting or called client down one place in the line (see below).
-    public function skipQueue(User $user, string $uuid)
+    // Moves a waiting or called client down the line (see below). $behind is the booking
+    // (uuid) they go behind, or "back" for the end of the line; left out, they move down one
+    // place, as before (the mobile app and older screens).
+    public function skipQueue(User $user, string $uuid, ?string $behind = null)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
         if (! $business) {
@@ -1341,6 +1343,26 @@ class AppointmentService
         }
 
         $walkInsFirst = $appointment->branch ? (bool) BookingPolicy::for($appointment->branch)['walk_ins_first_priority'] : false;
+
+        // Behind a chosen client (or to the back): only those behind them now, of their own
+        // kind with "prioritize walk-ins" on. They go right after the one chosen; nobody else moves.
+        if ($behind !== null && $behind !== '') {
+            $line = $this->queueRepository->allBehind($queue->loadMissing('appointment'), $walkInsFirst)->values();
+            if ($line->isEmpty()) {
+                return response()->json(['message' => 'No one is behind this client, so they are already last in line.'], 422);
+            }
+            $at = $behind === 'back'
+                ? $line->count() - 1
+                : $line->search(fn (Queue $q) => $q->appointment?->uuid === $behind);
+            if ($at === false) {
+                return response()->json(['message' => 'That client is no longer behind this one in line. Refresh the queue and try again.'], 422);
+            }
+
+            $this->queueRepository->placeAfter($queue, $line[$at], $line[$at + 1] ?? null);
+
+            return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
+        }
+
         $next = $this->queueRepository->nextBehind($queue->loadMissing('appointment'), $walkInsFirst);
         if (! $next) {
             return response()->json(['message' => 'No one is behind this client, so they are already last in line.'], 422);
@@ -2214,7 +2236,9 @@ class AppointmentService
                 // skips the schedule check entirely once checked in while
                 // always running the qualification check, matching this
                 // exactly.
-                'pickable' => $checkedIn && $qualified && $homeOk,
+                // Never someone off that day in Employees (leave, sick, absent), timed in or not.
+                'pickable' => $checkedIn && $qualified && $homeOk && empty($rotation['time_off']),
+                'time_off' => $rotation['time_off'] ?? null,
                 'checked_in_at' => $attendance?->check_in_at?->format('H:i'),
                 'is_day_off' => $resolved['is_day_off'],
                 'scheduled_start' => $resolved['scheduled_start'],
@@ -3222,6 +3246,13 @@ class AppointmentService
             // Room-only rows (staff_id null, rule 7) have no therapist to
             // check busy-ness for — only the facility check below applies.
             if ($assignment->staff_id) {
+                // Off today (leave, sick, absent — Employees or the desk's "On leave"): they can't
+                // start a client, even when assigned before the leave was set. Give it to someone else.
+                $today = BusinessDay::forBranch((int) $service->appointment->spa_branch_id);
+                if ($away = $this->availabilityService->leaveOn($assignment->staff_id, $today)) {
+                    $who = \App\Models\Staff::find($assignment->staff_id);
+                    return ['ok' => false, 'reason' => trim(($who?->first_name ?? '') . ' ' . ($who?->last_name ?? '')) . " is off today ({$away}). Give the service to someone else."];
+                }
                 $busy = $this->availabilityService->isStaffCurrentlyBusy($assignment->staff_id, $assignment->id, $alongside);
                 if (! $busy['ok']) {
                     return ['ok' => false, 'reason' => $busy['reason']];
@@ -4133,6 +4164,13 @@ class AppointmentService
 
         $duration = $service->lengthMinutes() ?? 30;
         $date = $appointment->appointment_date->format('Y-m-d');
+
+        // Off that day in Employees (leave, sick, absent): never given a client, even when timed in.
+        $off = \App\Models\StaffTimeOff::overlapping($staff->id, $date, $date)->first();
+        if ($off) {
+            $label = \App\Models\StaffTimeOff::LABELS[$off->type] ?? 'Time off';
+            return ['ok' => false, 'reason' => trim("{$staff->first_name} {$staff->last_name}") . " is off that day ({$label}, set in Employees). Pick someone else.", 'assignment' => null];
+        }
 
         $checks = [
             $this->availabilityService->isStaffQualified($staff->id, $service->serviceVariant->service_id),
