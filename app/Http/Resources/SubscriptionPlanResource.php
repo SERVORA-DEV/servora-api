@@ -32,9 +32,9 @@ class SubscriptionPlanResource extends JsonResource
             // hard-coded "Premium".
             'is_most_popular' => (bool) ($this->is_most_popular ?? false),
 
-            // The Free Trial plan, and how long a trial lasts (config/trial.php).
+            // The duration belongs to this plan version; existing trials keep their terms.
             'is_trial' => $this->isTrial(),
-            'trial_days' => $this->when($this->isTrial(), fn () => (int) config('trial.days')),
+            'trial_days' => $this->when($this->isTrial(), fn () => $this->trialDays()),
         ];
     }
 }

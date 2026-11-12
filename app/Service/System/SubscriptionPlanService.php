@@ -229,6 +229,7 @@ class SubscriptionPlanService
             $payload['report_export'] = $payload['export_mode'] !== 'none';
         }
         if ($category !== SubscriptionPlan::TRIAL_CATEGORY) {
+            unset($payload['trial_days']);
             return $payload;
         }
 
