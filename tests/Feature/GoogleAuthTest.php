@@ -243,6 +243,55 @@ class GoogleAuthTest extends TestCase
         $this->assertDatabaseMissing('users', ['email' => self::EMAIL]);
     }
 
+    // The web app's own "Continue with Google" button gets an access token (a popup that
+    // opens from the click), not an ID token: tokeninfo answers with expires_in, not exp/iss.
+    private function fakeGoogleAccessToken(array $claims = []): void
+    {
+        Http::fake([
+            'oauth2.googleapis.com/*' => Http::response(array_merge([
+                'azp' => self::CLIENT_ID,
+                'aud' => self::CLIENT_ID,
+                'scope' => 'openid https://www.googleapis.com/auth/userinfo.email',
+                'expires_in' => '3599',
+                'email' => self::EMAIL,
+                'email_verified' => 'true',
+            ], $claims), 200),
+        ]);
+    }
+
+    public function test_an_access_token_signs_in_an_existing_owner(): void
+    {
+        $owner = User::factory()->create([
+            'role' => 'business_owner',
+            'email' => self::EMAIL,
+            'email_verified_at' => now(),
+            'account_status' => 'Active',
+        ]);
+
+        $this->fakeGoogleAccessToken();
+
+        $this->postJson('/api/auth/google', ['access_token' => 'ya29.fake'])
+            ->assertOk()
+            ->assertJsonPath('user.uuid', $owner->uuid);
+    }
+
+    public function test_an_unknown_email_with_an_access_token_says_which_email_to_sign_up_with(): void
+    {
+        $this->fakeGoogleAccessToken();
+
+        $this->postJson('/api/auth/google', ['access_token' => 'ya29.fake'])
+            ->assertNotFound()
+            ->assertJsonPath('needs_signup', true)
+            ->assertJsonPath('email', self::EMAIL);
+    }
+
+    public function test_an_access_token_issued_for_another_app_is_rejected(): void
+    {
+        $this->fakeGoogleAccessToken(['aud' => 'someone-else.apps.googleusercontent.com', 'azp' => 'someone-else.apps.googleusercontent.com']);
+
+        $this->postJson('/api/auth/google', ['access_token' => 'ya29.fake'])->assertUnauthorized();
+    }
+
     public function test_an_email_google_has_not_verified_is_rejected(): void
     {
         $this->fakeGoogle(['email_verified' => 'false']);
