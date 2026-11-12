@@ -4064,7 +4064,8 @@ class AppointmentService
         if (($variant->service_location ?? HomeServiceRules::IN_SPA) !== $location) {
             abort(422, 'Choose a length and price for the selected booking location.');
         }
-        if ($appointment->isHomeService() && (! $variant->service?->home_service_available || $variant->service?->facility_required)) {
+        // A home visit has no facility, so "Facility required" (a spa matter) does not stop it.
+        if ($appointment->isHomeService() && ! $variant->service?->home_service_available) {
             abort(422, 'This service is not available for home service.');
         }
 

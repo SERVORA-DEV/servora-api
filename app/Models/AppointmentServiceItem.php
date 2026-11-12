@@ -169,6 +169,11 @@ class AppointmentServiceItem extends Model
             return false;
         }
 
+        // A facility is for the spa only: a line booked as a home visit never needs one.
+        if ($this->serviceVariant?->service_location === 'Home Service') {
+            return false;
+        }
+
         return ServiceKind::needsFacility($this->kind(), (bool) History::own(
             $this->facility_required,
             fn () => $this->serviceVariant?->service?->facility_required,

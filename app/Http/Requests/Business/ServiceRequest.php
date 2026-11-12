@@ -169,9 +169,12 @@ class ServiceRequest extends FormRequest
 
             if ($this->hasAny(['variants', 'home_service_available', 'service_type', 'facility_required'])) {
                 $existing = $this->route('service') ? Service::where('uuid', $this->route('service'))->first() : null;
+                // "Facility required" is about the spa only: a home visit has no facility, so a service
+                // that needs one in the spa can still be offered at home. Only a facility-based service
+                // (nobody performs it) cannot go to a client's home.
                 if (($this->input('home_service_available') ?? $existing?->home_service_available)
-                    && ServiceKind::needsFacility($this->input('service_type') ?? $existing?->service_type, (bool) ($this->input('facility_required') ?? $existing?->facility_required))) {
-                    $validator->errors()->add('home_service_available', 'A service requiring a facility cannot be offered at home.');
+                    && ! ServiceKind::needsTherapist($this->input('service_type') ?? $existing?->service_type)) {
+                    $validator->errors()->add('home_service_available', 'A facility-based service cannot be offered at home.');
                 }
                 if (($this->input('home_service_available') ?? $existing?->home_service_available)
                     && ($this->has('variants') ? $variants->where('service_location', 'Home Service')->isEmpty()

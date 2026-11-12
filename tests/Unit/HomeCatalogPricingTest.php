@@ -124,8 +124,9 @@ class HomeCatalogPricingTest extends TestCase
         $item->home_duration_minutes = null;
         $this->assertFalse($package->homeBookable());
         $item->home_duration_minutes = 90;
+        // "Facility required" is about the spa only: a home visit has no facility, so it does not stop it.
         $service->facility_required = true;
-        $this->assertFalse($package->homeBookable());
+        $this->assertTrue($package->homeBookable());
     }
 
     public function test_booking_rejects_an_in_spa_option_for_a_home_visit(): void

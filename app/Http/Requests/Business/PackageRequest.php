@@ -125,7 +125,7 @@ class PackageRequest extends FormRequest
             }
             foreach ($items as $item) {
                 $service = Service::where('spa_business_id', $this->resolvedBusinessId())->where('uuid', $item['service_uuid'] ?? '')->with('variants')->first();
-                if (! $service?->home_service_available || $service->facility_required
+                if (! $service?->home_service_available
                     || ! $service->variants->contains(fn ($v) => $v->service_location === 'Home Service')
                     || empty($item['home_duration_minutes'])) {
                     $validator->errors()->add('services', 'Every included service needs reviewed home-service options and a home duration.');

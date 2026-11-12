@@ -141,7 +141,7 @@ class Package extends Model
         return (bool) $this->home_service_available && $this->home_price !== null
             && $this->packageServiceItems->isNotEmpty()
             && $this->packageServiceItems->every(fn ($i) => $i->theService()?->home_service_available
-                && ! $i->theService()?->facility_required && $i->home_duration_minutes > 0 && $i->guideVariant(true));
+                && $i->home_duration_minutes > 0 && $i->guideVariant(true));
     }
 
     public function business()
