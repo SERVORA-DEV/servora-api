@@ -17,6 +17,11 @@ use Symfony\Component\Console\Attribute\AsCommand;
 // Local only, and only when OPcache isn't on already. Files are still checked
 // for changes on every request (revalidate_freq=0), so editing code works as
 // before.
+//
+// Also on Windows XAMPP: browser pop-ups (Web Push, App\Service\PushSender) need
+// PHP to find openssl.cnf, which stock XAMPP only does when OPENSSL_CONF points
+// at it BEFORE the server process starts (setting it later has no effect). So the
+// server this starts is given it, when the file is there and nothing set it already.
 #[AsCommand(name: 'serve')]
 class ServeCommand extends LaravelServeCommand
 {
@@ -29,6 +34,32 @@ class ServeCommand extends LaravelServeCommand
         'opcache.memory_consumption=192',
         'opcache.max_accelerated_files=20000',
     ];
+
+    protected function startProcess($hasEnvironment)
+    {
+        $this->giveServerOpensslConfig();
+
+        return parent::startProcess($hasEnvironment);
+    }
+
+    // OPENSSL_CONF for the server process (and kept through the .env reload filter).
+    private function giveServerOpensslConfig(): void
+    {
+        if (! $this->laravel->environment('local') || PHP_OS_FAMILY !== 'Windows' || getenv('OPENSSL_CONF')) {
+            return;
+        }
+
+        $config = dirname(PHP_BINARY) . DIRECTORY_SEPARATOR . 'extras' . DIRECTORY_SEPARATOR . 'ssl' . DIRECTORY_SEPARATOR . 'openssl.cnf';
+        if (! is_file($config)) {
+            return;
+        }
+
+        putenv('OPENSSL_CONF=' . $config);
+        $_ENV['OPENSSL_CONF'] = $config;
+        if (! in_array('OPENSSL_CONF', static::$passthroughVariables, true)) {
+            static::$passthroughVariables[] = 'OPENSSL_CONF';
+        }
+    }
 
     protected function serverCommand()
     {
