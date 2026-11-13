@@ -78,6 +78,8 @@ class BranchDetailResource extends JsonResource
         return [
             'uuid' => $this->uuid,
             'branch_name' => $this->branch_name,
+            // The area the owner gave this branch ("Davao"): what tells it from another branch of the same name.
+            'area' => filled($this->code) ? trim((string) $this->code) : null,
             'formatted_address' => $this->formatted_address,
             'latitude' => $this->latitude,
             'longitude' => $this->longitude,
@@ -97,12 +99,19 @@ class BranchDetailResource extends JsonResource
                 // way the owner's preview shows them.
                 'tagline' => $this->business->tagline,
                 'verified' => $this->business->verification_status === 'Verified',
-                'other_branches_count' => SpaBranch::where('spa_business_id', $this->spa_business_id)
-                    ->where('id', '!=', $this->id)
-                    ->where('verification_status', 'Verified')
-                    ->where('operating_status', 'Active')
-                    ->where('listing_visible', true)
-                    ->count(),
+                'other_branches_count' => $this->otherBranches()->count(),
+                // The business's other branches a client can book: each with where it is, so the app can
+                // list them on this branch's page and open one.
+                'other_branches' => $this->otherBranches()->orderBy('branch_name')->limit(30)
+                    ->get(['uuid', 'branch_name', 'code', 'formatted_address', 'latitude', 'longitude'])
+                    ->map(fn (SpaBranch $b) => [
+                        'uuid' => $b->uuid,
+                        'branch_name' => $b->branch_name,
+                        'area' => filled($b->code) ? trim((string) $b->code) : null,
+                        'formatted_address' => $b->formatted_address,
+                        'latitude' => $b->latitude,
+                        'longitude' => $b->longitude,
+                    ])->values(),
             ],
 
             'hours' => BranchHoursCalculator::resolve($this->schedules, Carbon::now()),
@@ -269,5 +278,15 @@ class BranchDetailResource extends JsonResource
                 'summary' => $programs->summaryText($p),
                 'condition' => $p->type === 'voucher' ? ['kind' => $p->condition_kind, 'value' => $p->condition_value] : null,
             ])->values()->all();
+    }
+
+    /** The business's other branches that are listed and bookable (the ones the page can send a client to). */
+    private function otherBranches()
+    {
+        return SpaBranch::where('spa_business_id', $this->spa_business_id)
+            ->where('id', '!=', $this->id)
+            ->where('verification_status', 'Verified')
+            ->where('operating_status', 'Active')
+            ->where('listing_visible', true);
     }
 }

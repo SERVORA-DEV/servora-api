@@ -557,10 +557,57 @@ class AttendanceService
             $updates['check_in_at'] = $payload['check_in_at'] ? Carbon::parse($date . ' ' . $payload['check_in_at']) : null;
         }
         if (array_key_exists('check_out_at', $payload)) {
-            $updates['check_out_at'] = $payload['check_out_at'] ? Carbon::parse($date . ' ' . $payload['check_out_at']) : null;
+            $out = $payload['check_out_at'] ? Carbon::parse($date . ' ' . $payload['check_out_at']) : null;
+            // A time out at or before the time in is after midnight: the shift ended the next day.
+            $in = array_key_exists('check_in_at', $updates) ? $updates['check_in_at'] : $attendance->check_in_at;
+            if ($out && $in && $out->lte($in)) {
+                $out->addDay();
+            }
+            $updates['check_out_at'] = $out;
         }
         if (array_key_exists('remarks', $payload)) {
             $updates['remarks'] = $payload['remarks'];
+        }
+
+        // What the manager decided about the day (Absent, Present, Late) has to hold: the status shown is
+        // worked out from the times, so the times are made to agree with the decision, or the decision is
+        // refused with what to change. Only when the status is being CHANGED (a save of other fields sends
+        // the status it already has, and the people the system worked out as having no time out, left early
+        // or filled in are not asked again).
+        $current = $attendance->resolved_status ?? $attendance->status;
+        $chosen = $payload['status'] ?? null;
+        $computedFamily = in_array($current, ['Incomplete', 'Left Early', 'Fill In'], true) && $chosen === 'Present';
+        if (in_array($chosen, ['Absent', 'Present', 'Late'], true) && $chosen !== $current && ! $computedFamily && $attendance->staff) {
+            if ($chosen === 'Absent') {
+                // Absent means they did not come in: no times (the audit trail keeps the old ones).
+                $updates['check_in_at'] = null;
+                $updates['check_out_at'] = null;
+                $updates['left_early'] = false;
+            } else {
+                $in = array_key_exists('check_in_at', $updates) ? $updates['check_in_at'] : $attendance->check_in_at;
+                $branchSchedule = BranchSchedule::where('spa_branch_id', $attendance->staff->spa_branch_id)
+                    ->where('day_of_week', Carbon::parse($date)->format('l'))->first();
+                $shift = $this->statusCalculator->resolve($attendance->staff, null, $date, $attendance->staff->schedules, $branchSchedule);
+                $start = $shift['scheduled_start'] ? Carbon::parse("{$date} {$shift['scheduled_start']}") : null;
+                $lateAfter = $start?->copy()->addMinutes(AttendanceStatusCalculator::graceMinutesFor($business));
+                $isLate = $in && $lateAfter && $in->gt($lateAfter);
+
+                if ($chosen === 'Late') {
+                    if (! $start) {
+                        return response()->json(['message' => 'They have no shift that day, so they can\'t be late.'], 422);
+                    }
+                    if (! $in) {
+                        return response()->json(['message' => 'Late needs a time in. Set when they came in, after ' . $start->format('g:i A') . ', when their shift started.'], 422);
+                    }
+                    if (! $isLate) {
+                        return response()->json(['message' => 'That time in is on time (their shift starts at ' . $start->format('g:i A') . '). Late needs a time in after it.'], 422);
+                    }
+                } elseif ($isLate) {
+                    // Present for a late arrival excuses it, the same as "Mark Present": recorded as the schedule
+                    // had it, in at the shift's start (the audit trail keeps the time they really came in).
+                    $updates['check_in_at'] = $start->copy();
+                }
+            }
         }
 
         $model = $this->attendanceRepository->updateByUuid($uuid, $updates);

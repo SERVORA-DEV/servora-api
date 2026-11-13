@@ -88,7 +88,6 @@ class BranchCloneTest extends TestCase
             $t->boolean('listing_visible')->default(true);
             $t->timestamps();
             $t->softDeletes();
-            $t->unique(['spa_business_id', 'code']);
         });
         Schema::create('subscription_plans', function (Blueprint $t) {
             $t->id();
@@ -295,9 +294,12 @@ class BranchCloneTest extends TestCase
         $invalid = $this->payload();
         $invalid['copy'] = array_fill_keys(array_keys($invalid['copy']), false);
         $this->postJson($this->url(), $invalid)->assertUnprocessable()->assertJsonValidationErrors('copy');
+        // A branch is told apart by its name and its area together: the same name in the same area is the
+        // same branch twice; the same area under another name, or the same name in another area, is fine.
         $invalid = $this->payload();
+        $invalid['branch']['branch_name'] = 'Original';
         $invalid['branch']['code'] = 'OLD';
-        $this->postJson($this->url(), $invalid)->assertUnprocessable()->assertJsonValidationErrors('branch.code');
+        $this->postJson($this->url(), $invalid)->assertUnprocessable()->assertJsonValidationErrors('branch.branch_name');
         $invalid = $this->payload();
         $invalid['branch']['spa_business_id'] = 999;
         $this->postJson($this->url(), $invalid)->assertUnprocessable()->assertJsonValidationErrors('branch');

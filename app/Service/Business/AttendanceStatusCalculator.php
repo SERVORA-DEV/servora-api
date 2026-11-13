@@ -259,6 +259,12 @@ class AttendanceStatusCalculator
             return $this->result('Absent', null, null, $scheduledStart, $scheduledEnd, $isDayOff, true, false);
         }
 
+        // Marked Present by hand with no times (the system always has a time in when it says Present):
+        // that is the manager's decision, kept as it is.
+        if ($storedStatus === 'Present' && ! $checkIn) {
+            return $this->result('Present', null, null, $scheduledStart, $scheduledEnd, $isDayOff, false, false);
+        }
+
         // Checked in — a real fact, computed regardless of whether a
         // schedule exists for this date.
         if ($checkIn) {
