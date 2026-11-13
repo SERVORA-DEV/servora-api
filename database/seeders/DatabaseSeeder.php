@@ -20,9 +20,10 @@ class DatabaseSeeder extends Seeder
     {
         $audience = User::audienceForRole('system_administrator');
 
-        // Looked up first so re-running `php artisan db:seed` doesn't fail on
-        // the unique email once the admin exists.
-        $admin = User::where('email', 'admin@servora.com')->where('audience', $audience)->first()
+        // Keep the original administrator even after they change their email.
+        // For an existing installation, the first admin is the seeded account.
+        $admin = User::where('role', 'system_administrator')->where('is_primary_admin', true)->first()
+            ?? User::where('role', 'system_administrator')->orderBy('id')->first()
             ?? new User();
 
         // forceFill: `audience` isn't mass-assignable, and it has to be set
@@ -53,6 +54,8 @@ class DatabaseSeeder extends Seeder
 
             'remember_token' => Str::random(10),
         ])->save();
+
+        $admin->forceFill(['is_primary_admin' => true])->save();
 
         UserPermission::updateOrCreate(
             ['user_id' => $admin->id],
