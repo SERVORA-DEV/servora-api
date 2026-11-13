@@ -34,6 +34,8 @@ class PermissionCoverageTest extends TestCase
         'NotificationController@destroy',
         'NotificationController@clearRead',
         'ManagerNotificationPrefsController@update',
+        // Which setup-guide steps this account has ticked off or dismissed: its own progress, nothing to grant.
+        'SetupGuideController@update',
     ];
 
     private const ACCOUNT_ROLES = ['manager', 'front_officer'];

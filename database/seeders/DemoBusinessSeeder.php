@@ -122,7 +122,7 @@ class DemoBusinessSeeder extends Seeder
             ['Kristine', 'Lopez', 'Female', 'frontdesk', 'Full-Time', '1999-12-11', '2024-07-01', null],
             ['Jomar', 'Castillo', 'Male', 'therapist', 'Full-Time', '1993-06-05', '2024-05-15', 'massage'],
             ['Rhea', 'Mercado', 'Female', 'therapist', 'Full-Time', '1996-10-19', '2024-06-01', 'massage'],
-            ['Donna', 'Garcia', 'Female', 'therapist', 'Contractual', '1998-04-23', '2025-01-10', 'skin'],
+            ['Donna', 'Garcia', 'Female', 'therapist', 'Part-Time', '1998-04-23', '2025-01-10', 'skin'],
             ['Precious', 'Ramos', 'Female', 'therapist', 'Part-Time', '2001-08-09', '2025-03-01', 'foot'],
         ],
     ];

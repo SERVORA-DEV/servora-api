@@ -41,19 +41,7 @@ class ServiceRequest extends FormRequest
                     ->whereNull('deleted_at')
                     ->ignore($this->route('service'), 'uuid'),
             ],
-            // Business-scoped like `name` above — identifies the service
-            // itself (e.g. "BM"), not any one of its duration options.
-            'code' => [
-                'nullable', 'string', 'max:20',
-                Rule::unique('services', 'code')
-                    ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
-                    ->whereNotNull('spa_business_id')
-                    ->whereNull('deleted_at')
-                    ->ignore($this->route('service'), 'uuid'),
-            ],
-            // Optional here, unlike on a template (see ServiceTemplateRequest,
-            // where it's required because it's how owners browse the catalog).
-            'category' => ['nullable', Rule::in(config('service_categories'))],
+            // The code (SVC-0001…) is given automatically, so none is taken here.
             // Time-based, procedure-based or facility-based (ServiceKind).
             'service_type' => ['sometimes', Rule::in(ServiceKind::ALL)],
             // A facility has to be chosen before the front desk may start it
@@ -215,7 +203,6 @@ class ServiceRequest extends FormRequest
     {
         return [
             'name.unique' => 'You already have a service with this name.',
-            'code.unique' => 'Another service already uses this code.',
             'parts.*.name.required' => 'Give each part a name, e.g. Upper body.',
             'parts.*.name.distinct' => 'Two parts cannot have the same name.',
             'parts.*.share_percent.required' => 'Give each part its share of the commission.',

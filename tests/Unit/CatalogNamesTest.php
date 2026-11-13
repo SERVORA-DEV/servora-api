@@ -24,12 +24,16 @@ class CatalogNamesTest extends TestCase
 
         $checks = [
             [FacilityRequest::class, ['name']],
-            [ServiceRequest::class, ['name', 'code']],
-            [PackageRequest::class, ['name', 'code']],
+            [ServiceRequest::class, ['name']],
+            [PackageRequest::class, ['name']],
         ];
         foreach ($checks as [$class, $fields]) {
             $request = $class::create('/', 'POST');
             $rules = $request->rules();
+            // The code is given automatically (SVC-0001, PKG-0001), so a request takes none.
+            if ($class !== FacilityRequest::class) {
+                $this->assertArrayNotHasKey('code', $rules, "$class still takes a typed code");
+            }
             foreach ($fields as $field) {
                 $unique = collect($rules[$field])->first(fn ($rule) => $rule instanceof Unique);
                 $this->assertNotNull($unique, "$class $field has no unique rule");

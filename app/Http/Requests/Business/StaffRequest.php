@@ -27,7 +27,7 @@ class StaffRequest extends FormRequest
         $isCreate = $this->isMethod('post');
 
         return [
-            'employee_number' => ['nullable', 'string', 'max:50', Rule::unique('staff', 'employee_number')->where(fn ($q) => $q->where('spa_branch_id', $this->resolvedBranchId()))->ignore($this->route('staff'), 'uuid'), new NoEmoji()],
+            // The employee number (EMP-0001…) is given automatically, so none is taken here.
 
             'first_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji(), new PersonName()],
             'last_name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:100', new NoEmoji(), new PersonName()],
@@ -57,7 +57,7 @@ class StaffRequest extends FormRequest
             'commission_rate' => 'sometimes|nullable|numeric|min:0|max:1000000',
             // The commission plan they are on (App\Models\CommissionPlan); blank: Standard.
             'commission_plan_uuid' => 'sometimes|nullable|uuid',
-            'employment_type' => [$isCreate ? 'required' : 'sometimes', Rule::in(['Full-Time', 'Part-Time', 'Contractual'])],
+            'employment_type' => [$isCreate ? 'required' : 'sometimes', Rule::in(['Full-Time', 'Part-Time'])],
             'status' => ['sometimes', Rule::in(['active', 'inactive', 'on-leave', 'terminated'])],
 
             'emergency_contact_name' => ['nullable', 'string', 'max:150', new PersonName()],

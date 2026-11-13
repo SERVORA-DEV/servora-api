@@ -270,7 +270,9 @@ class StaffService
         // path only runs (and only ever retries) for the generated case: a
         // rare race against another concurrent create on the same branch
         // landing on the same next number.
-        $wasSupplied = ! empty($payload['employee_number']);
+        // The number is always given here, never taken from the request.
+        unset($payload['employee_number']);
+        $wasSupplied = false;
         $attempts = 0;
 
         while (true) {

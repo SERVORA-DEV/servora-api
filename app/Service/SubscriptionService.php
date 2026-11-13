@@ -449,7 +449,7 @@ class SubscriptionService
     public function createSubscription(User $user, array $payload)
     {
         // Paying now happens on Servora's own checkout (CheckoutService) —
-        // card, GCash or Maya, with a billing address and VAT on the invoice.
+        // card, GCash or Maya, with a billing address on the invoice.
         // The hosted-invoice flow below is kept only so an invoice already
         // opened before this change can still be confirmed.
         return response()->json([

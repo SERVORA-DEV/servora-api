@@ -39,7 +39,7 @@ class Billing extends Model
         // Refunded before payment (BillAdjustment "credit"): taken off on top
         // of the discount. amount = subtotal − discount_amount − credit_amount.
         'credit_amount',
-        // Subscription invoices: the 12% VAT included in amount.
+        // Subscription invoices: VAT is not charged any more (0 on new ones; older ones keep what was recorded).
         'vat_amount',
 
         'status',

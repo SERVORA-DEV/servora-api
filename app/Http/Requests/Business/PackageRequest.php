@@ -32,14 +32,7 @@ class PackageRequest extends FormRequest
                     ->whereNull('deleted_at')
                     ->ignore($this->route('package'), 'uuid'),
             ],
-            // Matches the packages table's unique(spa_business_id, code) index.
-            'code' => [
-                'nullable', 'string', 'max:20',
-                Rule::unique('packages', 'code')
-                    ->where(fn ($q) => $q->where('spa_business_id', $this->resolvedBusinessId()))
-                    ->whereNull('deleted_at')
-                    ->ignore($this->route('package'), 'uuid'),
-            ],
+            // The code (PKG-0001…) is given automatically, so none is taken here.
             'description' => 'nullable|string',
             'duration_minutes' => 'nullable|integer|min:1|max:720',
             'default_price' => [$isCreate ? 'required' : 'sometimes', 'numeric', 'min:0', 'max:1000000', 'decimal:0,2'],
@@ -140,7 +133,6 @@ class PackageRequest extends FormRequest
             'services.*.service_uuid.distinct' => 'A package can hold a service once — use the quantity for more of the same.',
             'services.*.service_uuid.required_without' => 'Each line of a package needs a service.',
             'name.unique' => 'You already have a package with this name.',
-            'code.unique' => 'Another package already uses this code.',
         ];
     }
 

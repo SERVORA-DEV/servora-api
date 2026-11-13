@@ -36,12 +36,12 @@ use Illuminate\Support\Str;
 // Payment Session in COMPONENTS mode), so card numbers never reach Servora;
 // a saved method is a Xendit payment token. Every attempt is a
 // CheckoutSession row; complete() is the single, idempotent place a paid
-// attempt becomes a subscription, invoice (with its 12% VAT) and saved
+// attempt becomes a subscription, invoice and saved
 // method — called from the webhook, the status poll or the renewal job.
 class CheckoutService
 {
-    // Plan prices include VAT; invoices split it out.
-    public const VAT_RATE = 0.12;
+    // No VAT: a plan's price is what is charged, and an invoice shows that amount and nothing split out of it.
+    public const VAT_RATE = 0.0;
 
     public const CHANNELS = ['CARDS', 'GCASH', 'PAYMAYA'];
 
@@ -60,7 +60,8 @@ class CheckoutService
 
     public static function vatOf(float $amount): float
     {
-        return round($amount - $amount / (1 + self::VAT_RATE), 2);
+        // Kept so existing callers and the invoice columns stay as they are; always nothing.
+        return 0.0;
     }
 
     // ── Quote ─────────────────────────────────────────────────────────────
@@ -165,8 +166,8 @@ class CheckoutService
             $per = ($live->billing_cycle ?? 'Monthly') === 'Yearly' ? 'year' : 'month';
 
             return [$plan, $live->billing_cycle ?? 'Monthly', (float) $quote['amount_due'], $blocked, [
-                ['label' => 'Plan price difference (VAT included)', 'amount' => max(0, (float) PlanSwitchService::price($plan, $live->billing_cycle ?? 'Monthly') - (float) $quote['paid_this_term'])],
-                ['label' => 'Extra capacity difference (VAT included)', 'amount' => max(0, (float) $quote['extras_price'] - (float) $live->extras_paid)],
+                ['label' => 'Plan price difference', 'amount' => max(0, (float) PlanSwitchService::price($plan, $live->billing_cycle ?? 'Monthly') - (float) $quote['paid_this_term'])],
+                ['label' => 'Extra capacity difference', 'amount' => max(0, (float) $quote['extras_price'] - (float) $live->extras_paid)],
             ]];
         }
 
@@ -189,7 +190,7 @@ class CheckoutService
         $amount = (float) ($price ?? 0) + $extrasAmount;
 
         return [$plan, $cycle, $amount, $blocked, [
-            ['label' => ($cycle === 'Yearly' ? 'Yearly' : 'Monthly').' plan (VAT included)', 'amount' => (float) $price],
+            ['label' => ($cycle === 'Yearly' ? 'Yearly' : 'Monthly').' plan', 'amount' => (float) $price],
             ['label' => ($extras['extra_branches'] ?? 0).' extra branches', 'amount' => (float) $plan->extra_branch_price * ($extras['extra_branches'] ?? 0) * ($cycle === 'Yearly' ? 12 : 1)],
             ['label' => ($extras['extra_accounts'] ?? 0).' extra accounts', 'amount' => (float) $plan->extra_account_price * ($extras['extra_accounts'] ?? 0) * ($cycle === 'Yearly' ? 12 : 1)],
         ]];
@@ -436,7 +437,7 @@ class CheckoutService
 
     /**
      * A paid (or saved) attempt becomes real: the subscription / upgrade /
-     * saved method, the invoice with its VAT, and the payment. Safe to call
+     * saved method, the invoice, and the payment. Safe to call
      * more than once — only the first call does anything.
      *
      * @param  array  $x  Xendit session or payment data: payment_request_id,
