@@ -37,7 +37,7 @@ class AttendanceDetailResource extends JsonResource
             'staff_name' => trim("{$staff?->first_name} {$staff?->last_name}"),
             'position' => $staff?->role,
             'branch_uuid' => $staff?->branch?->uuid,
-            'branch_name' => $staff?->branch?->branch_name,
+            'branch_name' => $staff?->branch ? \App\Support\BranchIdentity::title($staff->branch->branch_name, $staff->branch->code) : null,
             'attendance_date' => $attendance->attendance_date->format('Y-m-d'),
             'scheduled_start' => $calculated['scheduled_start'],
             'scheduled_end' => $calculated['scheduled_end'],

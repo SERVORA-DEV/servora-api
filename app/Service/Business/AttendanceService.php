@@ -95,7 +95,8 @@ class AttendanceService
                 'last_name' => $staff->last_name,
                 'role' => $staff->role,
                 'branch_uuid' => $staff->branch?->uuid,
-                'branch_name' => $staff->branch?->branch_name,
+                // Name and area ("Spa · Manila"): branches of one business may share a name.
+                'branch_name' => $staff->branch ? \App\Support\BranchIdentity::title($staff->branch->branch_name, $staff->branch->code) : null,
                 'status' => $attendance?->status,
                 'check_in_at' => $attendance?->check_in_at?->format('H:i'),
                 'check_out_at' => $attendance?->check_out_at?->format('H:i'),
@@ -263,7 +264,7 @@ class AttendanceService
             ->groupBy('spa_branch_id')
             ->map(fn ($staff) => [
                 'branch_uuid' => $staff->first()->branch?->uuid,
-                'branch_name' => $staff->first()->branch?->branch_name,
+                'branch_name' => $staff->first()->branch ? \App\Support\BranchIdentity::title($staff->first()->branch->branch_name, $staff->first()->branch->code) : null,
                 'active_staff_count' => $staff->count(),
             ])
             ->values();
@@ -305,7 +306,7 @@ class AttendanceService
                 'role' => $a->staff?->role,
                 // Where it was recorded, not where they are now.
                 'branch_uuid' => $a->ownBranch()?->uuid,
-                'branch_name' => $a->ownBranch()?->branch_name,
+                'branch_name' => $a->ownBranch() ? \App\Support\BranchIdentity::title($a->ownBranch()->branch_name, $a->ownBranch()->code) : null,
                 'attendance_date' => $a->attendance_date->format('Y-m-d'),
                 'status' => $a->status,
                 'check_in_at' => $a->check_in_at?->format('H:i'),
@@ -473,7 +474,8 @@ class AttendanceService
                     'staff_name' => trim("{$staff->first_name} {$staff->last_name}"),
                     'position' => $staff->role,
                     'branch_uuid' => $staff->branch?->uuid,
-                    'branch_name' => $staff->branch?->branch_name,
+                    // Name and area ("Spa · Manila"): branches of one business may share a name.
+                'branch_name' => $staff->branch ? \App\Support\BranchIdentity::title($staff->branch->branch_name, $staff->branch->code) : null,
                     'date' => $date,
                     'scheduled_start' => $resolved['scheduled_start'],
                     'scheduled_end' => $resolved['scheduled_end'],
