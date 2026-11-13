@@ -270,6 +270,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('dashboard', [SystemDashboardController::class, 'index'])->middleware('permission:dashboard_view');
 
             Route::get('transactions', [TransactionController::class, 'index'])->middleware('permission:report_view');
+            Route::get('reports/registrations', \App\Http\Controllers\System\RegistrationReportController::class)->middleware('permission:report_view');
+            Route::get('reports/subscriptions', \App\Http\Controllers\System\SubscriptionReportController::class)->middleware('permission:report_view');
 
             // Platform-wide configuration (e.g. the subscription grace
             // period used to compute the Transaction page's Overdue tile).

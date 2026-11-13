@@ -38,6 +38,12 @@ class User extends Authenticatable implements MustVerifyEmail
         return $role === 'client' ? self::AUDIENCE_MOBILE : self::AUDIENCE_WEB;
     }
 
+    // Set only by the database migration/seeder, never from account forms.
+    public function isPrimaryAdmin(): bool
+    {
+        return $this->role === 'system_administrator' && $this->is_primary_admin === true;
+    }
+
     protected $fillable = [
         'uuid',
         'role',
@@ -86,6 +92,7 @@ class User extends Authenticatable implements MustVerifyEmail
     protected function casts(): array
     {
         return [
+            'is_primary_admin' => 'boolean',
             'email_verified_at' => 'datetime',
             'terms_accepted_at' => 'datetime',
             'trial_started_at' => 'datetime',

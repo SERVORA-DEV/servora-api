@@ -19,6 +19,12 @@ class AdminPermissions
     /** @return array<string, bool> */
     public static function effective(User $user): array
     {
+        // The original administrator always retains the whole role bundle,
+        // including permissions introduced after the account was seeded.
+        if ($user->isPrimaryAdmin()) {
+            return array_fill_keys(self::keys(), true);
+        }
+
         $row = $user->permission;
 
         return collect(self::keys())
