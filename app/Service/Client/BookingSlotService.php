@@ -11,6 +11,7 @@ use App\Models\StaffSchedule;
 use App\Service\Business\AppointmentAvailabilityService;
 use App\Service\Business\HomeServiceRules;
 use App\Support\BranchClosures;
+use App\Support\BranchOpenWindows;
 use App\Support\HourlyCapacity;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -80,7 +81,7 @@ class BookingSlotService
         $hourCounts = $hourLimit > 0 ? HourlyCapacity::bookedByHour($branch->id, $date, $excludeAppointmentId) : [];
         $hours = [];
 
-        for ($start = $day['open']->copy(); $start->lt($day['close']) && $start->isSameDay($day['open']); $start->addMinutes(self::STEP_MINUTES)) {
+        foreach ($this->startsOf($day) as ['start' => $start, 'close' => $closeAt]) {
             $end = $start->copy()->addMinutes($duration);
 
             // Times that can't be booked are still listed, as not available,
@@ -88,7 +89,7 @@ class BookingSlotService
             // services to finish by closing, or a closure in the way.
             $problem = match (true) {
                 (bool) BookingPolicy::startTimeProblem($policy, $start) => 'too_soon',
-                $end->gt($day['close']) => 'past_closing',
+                $end->gt($closeAt) => 'past_closing',
                 (bool) $this->closureProblem($day, $start, $end) => 'closed',
                 HourlyCapacity::isFull($hourLimit, $hourCounts[$start->hour] ?? 0) => 'hour_full',
                 default => $this->capacityProblem($ctx, $date, $start, $end, $therapist, $need),
@@ -119,10 +120,12 @@ class BookingSlotService
         $start = Carbon::parse("{$date} {$time}");
         $end = $start->copy()->addMinutes($duration);
 
-        if ($start->lt($day['open']) || $start->gte($day['close'])) {
+        // Inside one of the day's stretches: last night's hours running into this morning, or today's own.
+        $window = collect($day['windows'])->first(fn ($w) => $start->gte($w['open']) && $start->lt($w['to']));
+        if (! $window) {
             return "That time is outside the spa's opening hours.";
         }
-        if ($end->gt($day['close'])) {
+        if ($end->gt($window['close'])) {
             return 'Your services would run past closing time. Please pick an earlier time.';
         }
         if ($closed = $this->closureProblem($day, $start, $end)) {
@@ -170,13 +173,18 @@ class BookingSlotService
         $hourCounts = $hourLimit > 0 ? HourlyCapacity::bookedByHour($branch->id, $date, null) : [];
         $left = $staffIds;
 
-        for ($start = Carbon::parse("{$date} {$time}")->addMinutes(self::STEP_MINUTES); $left && $start->lt($day['close']) && $start->isSameDay($day['open']); $start->addMinutes(self::STEP_MINUTES)) {
-            if ($start->lt($day['open'])) {
+        $after = Carbon::parse("{$date} {$time}");
+
+        foreach ($this->startsOf($day) as ['start' => $start, 'close' => $closeAt]) {
+            if (! $left) {
+                break;
+            }
+            if ($start->lte($after)) {
                 continue;
             }
             $end = $start->copy()->addMinutes($duration);
-            if ($end->gt($day['close'])) {
-                break;
+            if ($end->gt($closeAt)) {
+                continue;
             }
             if (BookingPolicy::startTimeProblem($policy, $start)
                 || $this->closureProblem($day, $start, $end)
@@ -234,9 +242,15 @@ class BookingSlotService
             }
         };
 
-        for ($start = $day['open']->copy(); $start->lt($day['close']) && $start->isSameDay($day['open']); $start->addMinutes(self::STEP_MINUTES)) {
+        foreach ($this->startsOf($day) as ['start' => $start, 'close' => $closeAt, 'first' => $first]) {
+            // A stretch never runs on across the gap between last night's hours and today's own.
+            if ($first) {
+                foreach (array_keys($open) as $id) {
+                    $close($id);
+                }
+            }
             $end = $start->copy()->addMinutes($duration);
-            $dayOk = ! $end->gt($day['close'])
+            $dayOk = ! $end->gt($closeAt)
                 && ! BookingPolicy::startTimeProblem($policy, $start)
                 && ! $this->closureProblem($day, $start, $end)
                 && ! HourlyCapacity::isFull($hourLimit, $hourCounts[$start->hour] ?? 0);
@@ -262,26 +276,35 @@ class BookingSlotService
 
     // ── internals ────────────────────────────────────────────────────────
 
+    // The stretches of this date a client can book (App\Support\BranchOpenWindows): a branch open
+    // until 3 AM is open 12:00 – 3:00 AM on the NEXT date, which is listed there, not on the night
+    // it opened, and that next date is bookable for it even if the branch is closed that day.
     private function dayWindow(int $branchId, string $date): array
     {
-        $schedule = BranchSchedule::where('spa_branch_id', $branchId)
-            ->where('day_of_week', Carbon::parse($date)->format('l'))
-            ->first();
+        $dayName = Carbon::parse($date)->format('l');
+        $before = Carbon::parse($date)->subDay()->format('l');
+        $rows = BranchSchedule::where('spa_branch_id', $branchId)
+            ->whereIn('day_of_week', [$dayName, $before])
+            ->get()
+            ->keyBy('day_of_week');
 
-        if ($schedule?->is_closed) {
+        $set = BranchOpenWindows::for(
+            $rows->get($dayName),
+            $rows->get($before),
+            [BranchOpenWindows::minutes(self::FALLBACK_OPEN), BranchOpenWindows::minutes(self::FALLBACK_CLOSE)],
+        );
+        if ($set['closed']) {
             return ['closed' => true];
         }
 
-        $openTime = $schedule?->opening_time ?: self::FALLBACK_OPEN;
-        $closeTime = $schedule?->closing_time ?: self::FALLBACK_CLOSE;
-        $open = Carbon::parse("{$date} {$openTime}");
-        $close = Carbon::parse("{$date} {$closeTime}");
-
-        // Same conventions as AppointmentAvailabilityService::branchIsOpen:
-        // equal times = open all day; closing <= opening = closes next day.
-        if ($close->lte($open)) {
-            $close->addDay();
-        }
+        $midnight = Carbon::parse($date)->startOfDay();
+        $windows = array_map(fn (array $w) => [
+            'open' => $midnight->copy()->addMinutes($w['from']),
+            'to' => $midnight->copy()->addMinutes($w['to']),
+            'close' => $midnight->copy()->addMinutes($w['close']),
+        ], $set['windows']);
+        $open = $windows[0]['open'];
+        $close = $windows[array_key_last($windows)]['close'];
 
         // Temporary closures that touch this day's hours. One over the whole
         // working day reads as a closed day, with its reason.
@@ -292,7 +315,23 @@ class BookingSlotService
             }
         }
 
-        return ['closed' => false, 'open' => $open, 'close' => $close, 'closures' => $closures];
+        return ['closed' => false, 'open' => $open, 'close' => $close, 'windows' => $windows, 'closures' => $closures];
+    }
+
+    // Every start of the day in order, each with when its stretch really closes (past midnight for
+    // tonight's hours) and whether it is the first of its stretch.
+    private function startsOf(array $day): array
+    {
+        $starts = [];
+        foreach ($day['windows'] as $window) {
+            $first = true;
+            for ($start = $window['open']->copy(); $start->lt($window['to']); $start->addMinutes(self::STEP_MINUTES)) {
+                $starts[] = ['start' => $start->copy(), 'close' => $window['close'], 'first' => $first];
+                $first = false;
+            }
+        }
+
+        return $starts;
     }
 
     // Why [$start, $end) can't be booked because of a temporary closure, or null.
@@ -325,14 +364,24 @@ class BookingSlotService
             ->get()
             ->groupBy('staff_id');
 
+        // A shift that ran past midnight last night (10 PM – 2 AM) is on this morning too.
+        $before = Carbon::parse($date)->subDay()->toDateString();
+        $prevSchedules = StaffSchedule::whereIn('staff_id', $ids)
+            ->where('day_of_week', Carbon::parse($before)->format('l'))
+            ->where(fn ($q) => $q->whereNull('effective_from')->orWhere('effective_from', '<=', $before))
+            ->where(fn ($q) => $q->whereNull('effective_until')->orWhere('effective_until', '>=', $before))
+            ->get()
+            ->groupBy('staff_id');
+
         $onLeave = Attendance::whereIn('staff_id', $ids)
             ->whereDate('attendance_date', $date)
             ->where('status', 'On Leave')
             ->pluck('staff_id')
             ->all();
 
+        // Last night's bookings too: one that runs past midnight still holds its staff this morning.
         $busy = Appointment::where('spa_branch_id', $branch->id)
-            ->whereDate('appointment_date', $date)
+            ->where(fn ($q) => $q->whereDate('appointment_date', $date)->orWhereDate('appointment_date', $before))
             ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW, Appointment::STATUS_COMPLETED])
             ->when($excludeAppointmentId, fn ($q) => $q->where('id', '!=', $excludeAppointmentId))
             ->with(['services.serviceVariant', 'services.therapistAssignments'])
@@ -367,7 +416,7 @@ class BookingSlotService
         // A home visit being booked keeps its staff for the trip there and back too.
         $travel = $home ? \App\Service\Business\HomeServiceRules::travelMinutes($branch->id) : 0;
 
-        return ['therapists' => $therapists, 'others' => $others, 'home' => $home, 'travel' => $travel, 'schedules' => $schedules, 'onLeave' => $onLeave, 'busy' => $busy];
+        return ['therapists' => $therapists, 'others' => $others, 'home' => $home, 'travel' => $travel, 'schedules' => $schedules, 'prevSchedules' => $prevSchedules, 'onLeave' => $onLeave, 'busy' => $busy];
     }
 
     // null = bookable; 'full' = no therapist left; 'therapist_unavailable'
@@ -430,26 +479,31 @@ class BookingSlotService
             return false;
         }
 
-        $rows = $ctx['schedules']->get($staffId);
-        if (! $rows || $rows->isEmpty()) {
+        $rows = $ctx['schedules']->get($staffId) ?? collect();
+        $last = ($ctx['prevSchedules'] ?? collect())->get($staffId) ?? collect();
+        if ($rows->isEmpty() && $last->isEmpty()) {
             return false; // no shift set for the day
         }
 
-        foreach ($rows as $row) {
-            if ($row->is_day_off || ! $row->start_time || ! $row->end_time) {
-                continue;
-            }
-            $shiftStart = Carbon::parse("{$date} {$row->start_time}");
-            $shiftEnd = Carbon::parse("{$date} {$row->end_time}");
-            // Ending at or before it starts (9 AM – 12 AM, or 10 PM – 2 AM): ends the next day.
-            if ($shiftEnd->lte($shiftStart)) {
-                $shiftEnd->addDay();
-            }
-            if ($start->lt($shiftStart) || $end->gt($shiftEnd)) {
-                continue;
-            }
+        // Today's shifts, and last night's that ran into this morning.
+        $before = Carbon::parse($date)->subDay()->toDateString();
+        foreach ([[$date, $rows], [$before, $last]] as [$on, $set]) {
+            foreach ($set as $row) {
+                if ($row->is_day_off || ! $row->start_time || ! $row->end_time) {
+                    continue;
+                }
+                $shiftStart = Carbon::parse("{$on} {$row->start_time}");
+                $shiftEnd = Carbon::parse("{$on} {$row->end_time}");
+                // Ending at or before it starts (9 AM – 12 AM, or 10 PM – 2 AM): ends the next day.
+                if ($shiftEnd->lte($shiftStart)) {
+                    $shiftEnd->addDay();
+                }
+                if ($start->lt($shiftStart) || $end->gt($shiftEnd)) {
+                    continue;
+                }
 
-            return true;
+                return true;
+            }
         }
 
         return false;

@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Repository\SpaBusinessRepository;
 use App\Service\Client\BookingPolicy;
 use App\Support\BookingBoard;
+use App\Support\BranchOpenWindows;
 use App\Support\BranchClosures;
 use App\Support\HourlyCapacity;
 use Carbon\Carbon;
@@ -130,24 +131,31 @@ class BookingBoardService
         return ['data' => $result];
     }
 
-    // The branch's hours for the date, in minutes from its midnight.
+    // The branch's hours for the date, in minutes from its midnight: the tail of last night's
+    // hours (a branch open until 3 AM) is the first stretch of this date, and tonight's hours
+    // stop at midnight, the rest being tomorrow's (App\Support\BranchOpenWindows). A date the
+    // branch doesn't open on still has that tail when the night before ran past midnight.
     private function dayWindow(int $branchId, string $date): array
     {
-        $schedule = BranchSchedule::where('spa_branch_id', $branchId)
-            ->where('day_of_week', Carbon::parse($date)->format('l'))
-            ->first();
+        $dayName = Carbon::parse($date)->format('l');
+        $before = Carbon::parse($date)->subDay()->format('l');
+        $rows = BranchSchedule::where('spa_branch_id', $branchId)
+            ->whereIn('day_of_week', [$dayName, $before])
+            ->get()
+            ->keyBy('day_of_week');
 
-        if ($schedule?->is_closed) {
+        $set = BranchOpenWindows::for(
+            $rows->get($dayName),
+            $rows->get($before),
+            [BookingBoard::minutes(self::FALLBACK_OPEN), BookingBoard::minutes(self::FALLBACK_CLOSE)],
+        );
+        if ($set['closed']) {
             return ['closed' => true, 'reason' => 'The branch is closed on this day.'];
         }
 
-        $open = BookingBoard::minutes($schedule?->opening_time ?: self::FALLBACK_OPEN);
-        $close = BookingBoard::minutes($schedule?->closing_time ?: self::FALLBACK_CLOSE);
-        // Same conventions as AppointmentAvailabilityService::branchIsOpen:
-        // equal times = open all day; closing <= opening = closes next day.
-        if ($close <= $open) {
-            $close += 1440;
-        }
+        $windows = $set['windows'];
+        $open = $windows[0]['from'];
+        $close = $windows[array_key_last($windows)]['close'];
 
         // Temporary closures (a holiday, repairs) touching the day's hours.
         // One over the whole working day reads as a closed day, with its reason.
@@ -165,7 +173,7 @@ class BookingBoardService
             ];
         }
 
-        return ['closed' => false, 'open' => $open, 'close' => $close, 'closures' => $closures];
+        return ['closed' => false, 'open' => $open, 'close' => $close, 'closures' => $closures, 'windows' => $windows];
     }
 
     // Each therapist's shifts for the date, and whether they are on leave.
@@ -180,14 +188,29 @@ class BookingBoardService
             ->get()
             ->groupBy('staff_id');
 
+        // A shift that ran past midnight last night (10 PM – 2 AM) is on this morning too.
+        $before = Carbon::parse($date)->subDay();
+        $carried = StaffSchedule::whereIn('staff_id', $ids)
+            ->where('day_of_week', $before->format('l'))
+            ->where(fn ($q) => $q->whereNull('effective_from')->orWhere('effective_from', '<=', $before->toDateString()))
+            ->where(fn ($q) => $q->whereNull('effective_until')->orWhere('effective_until', '>=', $before->toDateString()))
+            ->get()
+            ->groupBy('staff_id');
+
         $onLeave = Attendance::whereIn('staff_id', $ids)
             ->whereDate('attendance_date', $date)
             ->where('status', 'On Leave')
             ->pluck('staff_id')
             ->all();
 
-        return $therapists->map(function (Staff $staff) use ($schedules, $onLeave, $date) {
+        return $therapists->map(function (Staff $staff) use ($schedules, $carried, $onLeave, $date) {
             $rows = $schedules->get($staff->id) ?? collect();
+            $morning = ($carried->get($staff->id) ?? collect())
+                ->filter(fn ($row) => ! $row->is_day_off && $row->start_time && $row->end_time)
+                ->map(fn ($row) => ['start' => 0, 'end' => BookingBoard::minutes($row->end_time), 'from' => BookingBoard::minutes($row->start_time)])
+                ->filter(fn (array $s) => $s['end'] > 0 && $s['end'] <= $s['from'])
+                ->map(fn (array $s) => ['start' => 0, 'end' => $s['end']])
+                ->values()->all();
 
             return [
                 'id' => $staff->id,
@@ -209,6 +232,8 @@ class BookingBoardService
                         return ['start' => $start, 'end' => $end <= $start ? $end + 1440 : $end];
                     })
                     ->values()->all(),
+                // Last night's shift running into this morning (not shown as theirs today).
+                'morning_shifts' => $morning,
             ];
         })->values()->all();
     }
@@ -218,18 +243,20 @@ class BookingBoardService
     private function busyWindows(int $branchId, string $date, ?int $excludeId = null): array
     {
         $remembers = Appointment::remembersRequests();
+        $midnight = Carbon::parse($date)->startOfDay();
 
+        // Last night's bookings too: one that runs past midnight still holds its staff this morning.
         return Appointment::where('spa_branch_id', $branchId)
-            ->whereDate('appointment_date', $date)
+            ->where(fn ($q) => $q->whereDate('appointment_date', $date)->orWhereDate('appointment_date', $midnight->copy()->subDay()->toDateString()))
             ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW, Appointment::STATUS_COMPLETED])
             ->when($excludeId, fn ($q) => $q->where('id', '!=', $excludeId))
             ->with(['services.serviceVariant', 'services.therapistAssignments'])
             ->get()
-            ->map(function (Appointment $a) use ($remembers) {
+            ->map(function (Appointment $a) use ($remembers, $midnight) {
                 // A home visit keeps its staff for the trip there and back, by its actual times once
                 // under way (HomeServiceRules::blockedWindow).
                 [$from, $to] = HomeServiceRules::blockedWindow($a, max($this->availabilityService->estimatedDurationMinutes($a), 30));
-                $start = BookingBoard::minutes($from->format('H:i'));
+                $start = (int) $midnight->diffInMinutes($from, false);
                 $staff = $a->services
                     ->flatMap(fn ($s) => $s->therapistAssignments->whereIn('assignment_status', ['Assigned', 'In Progress'])->pluck('staff_id'))
                     ->unique()->values()->all();
@@ -244,6 +271,8 @@ class BookingBoardService
                     'home' => $a->isHomeService(),
                 ];
             })
+            // Last night's that were over before midnight don't touch today.
+            ->filter(fn (array $b) => $b['end'] > 0)
             // Staff on the way back from a home visit already done.
             ->merge(collect(HomeServiceRules::returnTrips(
                 \App\Models\Staff::where('spa_branch_id', $branchId)->where('role', 'therapist')->pluck('id')->all(),

@@ -12,6 +12,7 @@ use App\Models\StaffTimeOff;
 use App\Models\TherapistAssignment;
 use App\Repository\Business\StaffServiceRepository;
 use App\Support\BranchClosures;
+use App\Support\BranchOpenWindows;
 use App\Support\ReservationHold;
 use App\Support\RoomCapacity;
 use App\Support\StaleVisit;
@@ -242,6 +243,29 @@ class AppointmentAvailabilityService
             ->where('day_of_week', $dayOfWeek)
             ->first();
 
+        // The first hours of a date can be the end of last night's: a branch open until 3 AM on
+        // Friday takes bookings 12:00 – 3:00 AM on Saturday, whether or not it opens that Saturday
+        // (App\Support\BranchOpenWindows). Those hours are checked against Friday's closing time.
+        $yesterday = BranchSchedule::where('spa_branch_id', $branchId)
+            ->where('day_of_week', Carbon::parse($date)->subDay()->format('l'))
+            ->first();
+        $tail = BranchOpenWindows::tail($yesterday);
+        $midnight = Carbon::parse($date)->startOfDay();
+        if ($tail > 0 && $start->lt($midnight->copy()->addMinutes($tail))) {
+            $endsAt = $midnight->copy()->addMinutes($tail);
+            $minutes = $durationMinutes instanceof \Closure ? $durationMinutes() : $durationMinutes;
+            if ($minutes && $start->copy()->addMinutes((int) $minutes)->gt($endsAt)) {
+                $latest = $endsAt->copy()->subMinutes((int) $minutes);
+
+                return ['ok' => false, 'reason' => "This would still be running when the branch closes at {$endsAt->format('g:i A')}. "
+                    . ($latest->gte($midnight)
+                        ? "For this visit the latest start is {$latest->format('g:i A')}."
+                        : 'Choose fewer services, or another day.')];
+            }
+
+            return ['ok' => true, 'reason' => null];
+        }
+
         if (! $schedule) {
             return ['ok' => true, 'reason' => null];
         }
@@ -263,9 +287,11 @@ class AppointmentAvailabilityService
 
         $time = Carbon::parse("{$date} {$startTime}");
 
+        // Tonight's hours: from opening to closing, or to midnight when the branch stays open past it
+        // (what is left after midnight belongs to the next date, above).
         $inWindow = $close->gt($open)
             ? $time->gte($open) && $time->lt($close)
-            : $time->gte($open) || $time->lt($close);
+            : $time->gte($open);
 
         if (! $inWindow) {
             return ['ok' => false, 'reason' => 'The requested time is outside the branch\'s operating hours.'];
@@ -883,6 +909,15 @@ class AppointmentAvailabilityService
      */
     public function closingFor(int $branchId, string $date, string $startTime): ?Carbon
     {
+        // The first hours of a date can be the end of last night's hours.
+        $tail = BranchOpenWindows::tail(BranchSchedule::where('spa_branch_id', $branchId)
+            ->where('day_of_week', Carbon::parse($date)->subDay()->format('l'))
+            ->first());
+        $midnight = Carbon::parse($date)->startOfDay();
+        if ($tail > 0 && Carbon::parse("{$date} {$startTime}")->lt($midnight->copy()->addMinutes($tail))) {
+            return $midnight->copy()->addMinutes($tail);
+        }
+
         $schedule = BranchSchedule::where('spa_branch_id', $branchId)
             ->where('day_of_week', Carbon::parse($date)->format('l'))
             ->first();

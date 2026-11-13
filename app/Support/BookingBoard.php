@@ -43,7 +43,7 @@ class BookingBoard
     public const DAY_ON_LEAVE = 'on_leave';
 
     /**
-     * @param  array{open: int, close: int, closures: list<array{0: int, 1: int}>}  $day
+     * @param  array{open: int, close: int, closures: list<array{0: int, 1: int}>, windows?: list<array{from: int, to: int, close: int}>}  $day  windows: the stretches of the date that can be booked (BranchOpenWindows), each with when it really closes; without them the day is open to close
      * @param  list<array{id: int, uuid: string, on_leave: bool, has_schedule: bool, shifts: list<array{start: int, end: int}>, home_service?: bool}>  $therapists  home_service: may be sent to a client's home (default yes)
      * @param  list<array{start: int, end: int, staff: list<int>, home?: bool}>  $busy  the day's open bookings; staff = who is on them (empty = nobody yet); home = a home service visit
      * @param  ?int  $now  minutes from midnight when the day is today, else null
@@ -59,14 +59,22 @@ class BookingBoard
         $duration = max($duration, 1);
         $step = max($step, 5);
 
+        // A branch open past midnight is open on two dates: the tail of last night's hours is the
+        // first stretch of this date, and tonight's hours stop at midnight (the rest is tomorrow's).
+        $windows = $day['windows'] ?? [['from' => $day['open'], 'to' => $day['close'], 'close' => $day['close']]];
+
         $starts = [];
-        for ($t = $day['open']; $t < $day['close']; $t += $step) {
-            // The branch's own rule is about the start (the same check the
-            // booking itself makes): not into a closure.
-            if (self::overlapsAny($day['closures'], $t, $t + $duration)) {
-                continue;
+        $closeOf = [];   // when the stretch a start is in really closes
+        foreach ($windows as $window) {
+            for ($t = $window['from']; $t < $window['to']; $t += $step) {
+                // The branch's own rule is about the start (the same check the
+                // booking itself makes): not into a closure.
+                if (self::overlapsAny($day['closures'], $t, $t + $duration)) {
+                    continue;
+                }
+                $starts[] = $t;
+                $closeOf[$t] = $window['close'];
             }
-            $starts[] = $t;
         }
 
         // A start in an hour that is already full can't be booked, for anyone.
@@ -83,7 +91,7 @@ class BookingBoard
             $nextFree = null;
             foreach ($starts as $t) {
                 $state = self::therapistState($therapist, $mine, $t - $travel, $t + $duration + $travel, $now);
-                if ($state === self::FREE && $t + $duration > $day['close']) {
+                if ($state === self::FREE && $t + $duration > $closeOf[$t]) {
                     $state = self::PAST_CLOSING;
                 } elseif ($state === self::FREE && $soonBefore !== null && $t < $soonBefore) {
                     $state = self::TOO_SOON;
@@ -133,7 +141,7 @@ class BookingBoard
                 'time' => self::clock($t),
                 'state' => $now !== null && $t < $now
                     ? self::PAST
-                    : ($t + $duration > $day['close']
+                    : ($t + $duration > $closeOf[$t]
                         ? self::PAST_CLOSING
                         : ($soonBefore !== null && $t < $soonBefore
                         ? self::TOO_SOON
@@ -162,8 +170,9 @@ class BookingBoard
         }
 
         // Only inside a shift: no shift set for the day is not free.
+        // (A shift that ran past midnight last night covers this morning's first hours too.)
         $fits = false;
-        foreach ($therapist['shifts'] as $shift) {
+        foreach (array_merge($therapist['shifts'], $therapist['morning_shifts'] ?? []) as $shift) {
             if ($start >= $shift['start'] && $end <= $shift['end']) {
                 $fits = true;
                 break;
