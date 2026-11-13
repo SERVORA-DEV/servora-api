@@ -84,6 +84,12 @@ class AdminUsersService
         $before = $this->adminUsersRepository->findByUuid($uuid);
         $isSelf = $actor && $actor->id === $before->id;
 
+        // Settings → Profile uses this endpoint for the caller's own personal
+        // details. Only the primary admin may do that; access/status stay fixed.
+        if (! $isSelf || array_key_exists('account_status', $payload) || Arr::only($payload, AdminPermissions::keys())) {
+            $this->assertNotPrimaryAdmin($before);
+        }
+
         // Only flags that actually change count as a permission edit — the
         // edit form sends every flag back even when just the name changed.
         $current = AdminPermissions::effective($before);
@@ -220,6 +226,7 @@ class AdminUsersService
     public function deactivateAdminUsers(string $uuid, User $actor)
     {
         $admin = $this->adminUsersRepository->findByUuid($uuid);
+        $this->assertNotPrimaryAdmin($admin);
 
         if ($admin->id === $actor->id) {
             throw ValidationException::withMessages([
@@ -241,6 +248,12 @@ class AdminUsersService
         }
 
         return new AdminUsersResource($admin->load('permission'));
+    }
+
+    private function assertNotPrimaryAdmin(User $admin): void
+    {
+        abort_if($admin->isPrimaryAdmin(), 403,
+            'The primary administrator is protected. Its full access is fixed, and this account cannot be edited, suspended, or deactivated here.');
     }
 
     // There must always be at least one active administrator who can manage
