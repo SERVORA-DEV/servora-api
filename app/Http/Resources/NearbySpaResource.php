@@ -32,6 +32,8 @@ class NearbySpaResource extends JsonResource
         return [
             'uuid' => $this->uuid,
             'branch_name' => $this->branch_name,
+            // The area the owner gave the branch ("Davao"): what tells it from a branch of the same name.
+            'area' => filled($this->code) ? trim((string) $this->code) : null,
             'formatted_address' => $this->formatted_address,
             'latitude' => $this->latitude,
             'longitude' => $this->longitude,

@@ -22,10 +22,10 @@ class SpaBranchRepository
     // computed in SQL via the Haversine formula so ordering/filtering by it
     // doesn't require pulling every branch into PHP first.
     //
-    // The radius filter has to happen one level up, in a subquery wrapper:
-    // distance_km is a select alias, and PostgreSQL only resolves output
-    // aliases in GROUP BY and ORDER BY — never in WHERE or HAVING.
-    public function nearby(float $lat, float $lng, float $radiusKm, int $limit): Collection
+    // Nothing is cut off by distance: a branch far away still comes back, at the
+    // bottom of the list (nearest first), so a client never misses a spa just
+    // because it is outside some radius. Only $limit caps the list.
+    public function nearby(float $lat, float $lng, int $limit): Collection
     {
         $withDistance = SpaBranch::query()
             ->select('spa_branches.*')
@@ -50,7 +50,6 @@ class SpaBranchRepository
         // to 50 branches is still a fixed handful of queries.
         return SpaBranch::query()
             ->fromSub($withDistance, 'spa_branches')
-            ->where('distance_km', '<=', $radiusKm)
             ->with([
                 'business',
                 'schedules',

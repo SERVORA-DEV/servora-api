@@ -3,27 +3,29 @@
 namespace App\Support;
 
 // One list of genders for every form: owners, admins, staff, clients and
-// bookings all offer the same three answers (web: app/utils/gender.ts).
+// bookings all offer the same two answers (web: app/utils/gender.ts).
 //
-// Two columns predate "Prefer not to say" and are too narrow for it:
-// staff.gender is enum('Male', 'Female', 'Other') and clients.gender is a
-// 10-character string. There the third answer is kept as 'Other', and read
-// back as "Prefer not to say" (users.gender already holds the words). An
-// old 'Other' sent by a form is still accepted, so nothing saved before breaks.
+// "Prefer not to say" is no longer offered or accepted, but records saved with it
+// are still read as it: users.gender holds the words, and staff.gender (an enum)
+// and clients.gender (10 characters) keep it as 'Other'. A form must now send
+// Male or Female, so someone with the old answer picks one the next time they save.
 class Gender
 {
-    public const CHOICES = ['Male', 'Female', 'Prefer not to say'];
+    public const CHOICES = ['Male', 'Female'];
 
-    /** How the third answer is kept in the narrow columns (staff, clients). */
+    /** The answer no longer offered, as it reads on records saved before. */
+    public const UNSAID = 'Prefer not to say';
+
+    /** How that answer was kept in the narrow columns (staff, clients). */
     public const SHORT_FOR_UNSAID = 'Other';
 
-    /** Every value a form may send: the three answers, and the old 'Other'. */
+    /** Every value a form may send. */
     public static function accepted(): array
     {
-        return [...self::CHOICES, self::SHORT_FOR_UNSAID];
+        return self::CHOICES;
     }
 
-    /** One of the three answers, or null for blank or anything else. Case and spaces don't matter. */
+    /** An answer on file (the old "Prefer not to say" included), or null for blank or anything else. Case and spaces don't matter. */
     public static function clean(mixed $value): ?string
     {
         if (! is_string($value)) {
@@ -31,8 +33,8 @@ class Gender
         }
 
         $key = strtolower(trim($value));
-        if ($key === strtolower(self::SHORT_FOR_UNSAID)) {
-            return 'Prefer not to say';
+        if ($key === strtolower(self::SHORT_FOR_UNSAID) || $key === strtolower(self::UNSAID)) {
+            return self::UNSAID;
         }
         foreach (self::CHOICES as $gender) {
             if (strtolower($gender) === $key) {

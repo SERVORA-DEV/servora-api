@@ -38,7 +38,7 @@ class ClientRequest extends FormRequest
             'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji(), new PhMobile()],
             'email' => ['nullable', 'email', new ValidEmail(), 'max:255', new NoEmoji()],
             'notes' => 'nullable|string',
-            'gender' => [$isCreate && Client::hasProfile() ? 'required' : 'nullable', Rule::in([...ClientProfile::GENDERS, Gender::SHORT_FOR_UNSAID])],
+            'gender' => [$isCreate && Client::hasProfile() ? 'required' : 'nullable', Rule::in(ClientProfile::GENDERS)],
             'age' => 'nullable|integer|min:0|max:' . ClientProfile::OLDEST,
         ];
     }
@@ -55,7 +55,7 @@ class ClientRequest extends FormRequest
     {
         return [
             'gender.required' => 'Choose the client\'s gender.',
-            'gender.in' => 'Choose Male, Female or Prefer not to say.',
+            'gender.in' => 'Choose Male or Female.',
         ];
     }
 }

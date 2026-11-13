@@ -56,12 +56,12 @@ class AppointmentRequest extends FormRequest
             'client.email' => ['nullable', 'email', 'max:255', new ValidEmail()],
             // The spa's own record of them (App\Support\ClientProfile):
             // gender is asked of every new client, age is optional.
-            'client.gender' => [Client::hasProfile() ? 'required_with:client' : 'nullable', Rule::in([...ClientProfile::GENDERS, Gender::SHORT_FOR_UNSAID])],
+            'client.gender' => [Client::hasProfile() ? 'required_with:client' : 'nullable', Rule::in(ClientProfile::GENDERS)],
             'client.age' => 'nullable|integer|min:0|max:' . ClientProfile::OLDEST,
             // For a client already on file: what their record is missing,
             // filled in with the booking. Never replaces what is there.
             'client_update' => 'sometimes|array',
-            'client_update.gender' => ['nullable', Rule::in([...ClientProfile::GENDERS, Gender::SHORT_FOR_UNSAID])],
+            'client_update.gender' => ['nullable', Rule::in(ClientProfile::GENDERS)],
             'client_update.age' => 'nullable|integer|min:0|max:' . ClientProfile::OLDEST,
             'client_update.phone_number' => ['nullable', 'string', 'max:20', new PhMobile()],
 
@@ -103,8 +103,8 @@ class AppointmentRequest extends FormRequest
     {
         return [
             'client.gender.required_with' => 'Choose the client\'s gender.',
-            'client.gender.in' => 'Choose Male, Female or Prefer not to say.',
-            'client_update.gender.in' => 'Choose Male, Female or Prefer not to say.',
+            'client.gender.in' => 'Choose Male or Female.',
+            'client_update.gender.in' => 'Choose Male or Female.',
             'client.phone_number.required' => 'Add the client\'s phone number to book a reservation.',
         ];
     }

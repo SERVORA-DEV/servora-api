@@ -38,7 +38,7 @@ class StaffRequest extends FormRequest
             'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji(), new PhMobile()],
 
             // Both are asked for when someone is added, and can't be emptied later.
-            'gender' => [$isCreate ? 'required' : 'sometimes', 'required', Rule::in(['Male', 'Female', 'Other'])],
+            'gender' => [$isCreate ? 'required' : 'sometimes', 'required', Rule::in(\App\Support\Gender::CHOICES)],
             'birth_date' => [$isCreate ? 'required' : 'sometimes', 'required', 'date', 'before:today'],
             'hire_date' => [$isCreate ? 'required' : 'sometimes', 'date'],
 
@@ -79,7 +79,7 @@ class StaffRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'gender.in' => 'Choose Male, Female or Prefer not to say.',
+            'gender.in' => 'Choose Male or Female.',
         ];
     }
 

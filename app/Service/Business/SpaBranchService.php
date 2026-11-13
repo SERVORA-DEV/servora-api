@@ -78,21 +78,21 @@ class SpaBranchService
         $this->availabilityService = $availabilityService;
     }
 
-    // Backs GET /spas/nearby — public, no auth. radiusKm/limit are clamped
-    // rather than trusted as-is so a caller can't force an unbounded scan
-    // (e.g. radius_km=999999) via query params.
+    // Backs GET /spas/nearby — public, no auth. The list is every bookable branch,
+    // nearest first and the farthest last: radius_km is still accepted (older app
+    // versions send it) but no longer cuts anything off. limit is clamped rather
+    // than trusted as-is so a caller can't force an unbounded response.
     public function nearby(float $lat, float $lng, ?float $radiusKm, ?int $limit)
     {
-        $radiusKm = min(max($radiusKm ?? 15, 1), 100);
-        $limit = min(max($limit ?? 20, 1), 50);
+        $limit = min(max($limit ?? 20, 1), 200);
 
         // Cached for 2 minutes per ~100 m of location (AppCache). Any change
         // to any listed spa bumps the marketplace version, so edits show up
         // at once. Open-now is recomputed on every request below.
-        $key = sprintf('nearby:%.3f:%.3f:%s:%d:m%d', $lat, $lng, $radiusKm, $limit, AppCache::version('marketplace'));
-        $cached = AppCache::remember($key, 120, function () use ($lat, $lng, $radiusKm, $limit) {
+        $key = sprintf('nearby:%.3f:%.3f:%d:m%d', $lat, $lng, $limit, AppCache::version('marketplace'));
+        $cached = AppCache::remember($key, 120, function () use ($lat, $lng, $limit) {
             // The query already keeps only bookable branches (MarketplaceReadiness).
-            $branches = $this->spaBranchRepository->nearby($lat, $lng, $radiusKm, $limit);
+            $branches = $this->spaBranchRepository->nearby($lat, $lng, $limit);
             app(ReviewRepository::class)->attachRatings($branches);
             if (BranchClosures::ready() && $branches->isNotEmpty()) {
                 $branches->load(['closures' => BranchClosures::upcomingScope()]);

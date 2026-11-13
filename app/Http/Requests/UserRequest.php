@@ -101,7 +101,7 @@ class UserRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'gender.in' => 'Choose Male, Female or Prefer not to say.',
+            'gender.in' => 'Choose Male or Female.',
         ];
     }
 }

@@ -38,7 +38,7 @@ class SpaBranchController extends Controller
             'lat' => 'required|numeric|between:-90,90',
             'lng' => 'required|numeric|between:-180,180',
             'radius_km' => 'nullable|numeric|min:1|max:100',
-            'limit' => 'nullable|integer|min:1|max:50',
+            'limit' => 'nullable|integer|min:1|max:200',
         ]);
 
         return $this->spaBranchService->nearby(
