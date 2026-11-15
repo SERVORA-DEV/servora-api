@@ -111,6 +111,12 @@ class SpaBranchController extends Controller
         return $this->spaBranchService->updateSpaBranch($request->user(), $uuid, $request->validated());
     }
 
+    // POST business/branch/{uuid}/main — the owner marks this branch as their main one.
+    public function makeMain(Request $request, string $uuid)
+    {
+        return $this->spaBranchService->makeMainBranch($request->user(), $uuid);
+    }
+
     public function bringBack(Request $request, string $uuid)
     {
         return $this->spaBranchService->bringBack($request->user(), $uuid);

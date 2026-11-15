@@ -38,7 +38,7 @@ class BusinessAuditLogService
         $isOwner = $user->role === 'business_owner';
 
         if ($isOwner) {
-            $branches = SpaBranch::where('spa_business_id', $business->id)->orderBy('branch_name')->get(['id', 'uuid', 'branch_name']);
+            $branches = SpaBranch::where('spa_business_id', $business->id)->orderBy('branch_name')->get(['id', 'uuid', 'branch_name', 'code']);
             $picked = ! empty($filters['branch']) ? $branches->firstWhere('uuid', $filters['branch']) : null;
             $branchIds = $picked ? [$picked->id] : null;
         } else {
@@ -98,12 +98,13 @@ class BusinessAuditLogService
         }
 
         $perPage = min(max((int) ($filters['per_page'] ?? self::PER_PAGE), 10), 200);
-        $page = $query->with('user:id,uuid')->orderByDesc('created_at')->orderByDesc('id')->paginate($perPage);
+        $page = $query->with(['user:id,uuid', 'branch:id,uuid,code'])->orderByDesc('created_at')->orderByDesc('id')->paginate($perPage);
         $this->attachLinks($page->getCollection());
 
         return BusinessAuditLogResource::collection($page)->additional([
             'people' => $peopleList,
-            'branches' => $branches->map(fn ($b) => ['id' => $b->uuid, 'name' => $b->branch_name])->values(),
+            // The area tells two branches of one name apart (the web shows it alone when there are several).
+            'branches' => $branches->map(fn ($b) => ['id' => $b->uuid, 'name' => $b->branch_name, 'area' => $b->code])->values(),
         ]);
     }
 

@@ -20,7 +20,8 @@ class SpaBranchCloneRequest extends FormRequest
         if (is_array($this->input('branch'))) {
             $branch = $this->input('branch');
             if (! isset($branch['code']) || is_string($branch['code'])) {
-                $branch['code'] = trim($branch['code'] ?? '') ?: null;
+                // Areas are kept in capitals ("DAVAO"), however they are typed.
+                $branch['code'] = mb_strtoupper(trim($branch['code'] ?? '')) ?: null;
             }
             $this->merge(['branch' => $branch]);
         }

@@ -88,7 +88,8 @@ class SpaBranchUpdateRequest extends FormRequest
     protected function prepareForValidation(): void
     {
         if ($this->has('code')) {
-            $this->merge(['code' => trim((string) $this->input('code')) ?: null]);
+            // Areas are kept in capitals ("DAVAO"), however they are typed.
+            $this->merge(['code' => mb_strtoupper(trim((string) $this->input('code'))) ?: null]);
         }
     }
 

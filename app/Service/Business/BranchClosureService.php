@@ -171,12 +171,53 @@ class BranchClosureService
             return 'A closure can be up to ' . BranchClosures::MAX_DAYS . ' days. To close for longer, deactivate the branch instead.';
         }
 
+        // A closure must take away some open time: the hours and days the
+        // branch is already closed need none.
+        if (! $this->opensDuring($branch, $start, $end)) {
+            return 'The branch is already closed then (outside its opening hours). Pick a time it is open.';
+        }
+
         $other = BranchClosures::overlapping($branch->id, $start, $end)->first(fn (BranchClosure $c) => $c->id !== $exceptId);
         if ($other) {
             return 'This overlaps another closure (' . BranchClosures::period($other) . '). Change that one instead.';
         }
 
         return null;
+    }
+
+    // Whether the branch is open at any moment of [start, end), by its weekly
+    // hours. A branch with no hours set, or a day open overnight / round the
+    // clock, counts as open (nothing to compare with).
+    private function opensDuring(SpaBranch $branch, Carbon $start, Carbon $end): bool
+    {
+        $rows = \App\Models\BranchSchedule::where('spa_branch_id', $branch->id)->get()->keyBy('day_of_week');
+        if ($rows->isEmpty()) {
+            return true;
+        }
+
+        // From the day before (hours that run past midnight) to the last day.
+        for ($day = $start->copy()->subDay()->startOfDay(); $day->lt($end); $day->addDay()) {
+            $row = $rows->get($day->format('l'));
+            if (! $row) {
+                continue;
+            }
+            if ($row->is_closed) {
+                continue;
+            }
+            if (! $row->opening_time || ! $row->closing_time) {
+                return true;
+            }
+            $open = $day->copy()->addMinutes(\App\Support\BranchHours::minutes($row->opening_time));
+            $close = $day->copy()->addMinutes(\App\Support\BranchHours::minutes($row->closing_time));
+            if ($close->lte($open)) {
+                $close->addDay(); // closes after midnight
+            }
+            if ($open->lt($end) && $close->gt($start)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // Appointments still to happen that start inside, or run into, the window.

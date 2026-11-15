@@ -346,6 +346,7 @@ class DashboardService
             ->get([
                 'a.id', 'a.uuid', 'a.appointment_date', 'a.appointment_time', 'a.appointment_type',
                 'a.service_location', 'a.status', 'c.first_name', 'c.last_name', 'b.branch_name',
+                'b.uuid as branch_uuid',
             ]);
         if ($visits->isEmpty()) {
             return [];
@@ -398,6 +399,8 @@ class DashboardService
                 'status' => $visit->status,
                 // Only said when there is more than one branch to tell apart.
                 'branchName' => $severalBranches ? $visit->branch_name : null,
+                // Which branch, so the dashboard can show its area.
+                'branchUuid' => $visit->branch_uuid,
             ];
         })->all();
     }
@@ -426,8 +429,11 @@ class DashboardService
             : collect();
         $serving = $this->servingNow->forStaff($ids);
 
+        // Each staff member's branch, so the dashboard can show its area.
+        $uuidOf = DB::table('spa_branches')->whereIn('id', $branchIds ?: [0])->pluck('uuid', 'id');
+
         $byBranch = [];
-        $rows = $roster->map(function (Staff $staff) use ($attendance, $serving, &$byBranch) {
+        $rows = $roster->map(function (Staff $staff) use ($attendance, $serving, $uuidOf, &$byBranch) {
             $day = $attendance->get($staff->id);
             $with = $serving[$staff->id] ?? null;
 
@@ -451,6 +457,7 @@ class DashboardService
                 'status' => $state,
                 // Who they are with, or the time they timed in or out ('HH:MM').
                 'detail' => $detail,
+                'branchUuid' => $uuidOf[$staff->spa_branch_id] ?? null,
             ];
         });
 
