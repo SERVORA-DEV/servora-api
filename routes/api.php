@@ -802,6 +802,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('frontoffice/schedule', [FrontOfficeLookupController::class, 'schedule'])->middleware('permission:appointment_view');
                 // The branch's time off in a date range (the staff calendar, the dashboard).
                 Route::get('frontoffice/time-off', [StaffTimeOffController::class, 'range'])->middleware('permission:appointment_view');
+                // The branch's regular week for the front desk's Shifts view (read only, own branch).
+                Route::get('frontoffice/shifts', [StaffScheduleController::class, 'branchWeek'])->middleware('permission:attendance_view');
                 // The branch's scanner link (staff start a home visit by
                 // scanning the client's QR — see ScannerController).
                 Route::get('frontoffice/scanner-link', [FrontOfficeLookupController::class, 'scannerLink'])->middleware('permission:attendance_view');

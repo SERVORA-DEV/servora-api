@@ -21,6 +21,8 @@ use Illuminate\Http\JsonResponse;
 // (App\Support\History, CommissionCalculator::freeze).
 class CommissionPlanService
 {
+    public const MAX_PLANS = 20;
+
     /** The standard rate's own name — taken, so no plan can use it. */
     public const STANDARD = 'Standard';
 
@@ -48,6 +50,12 @@ class CommissionPlanService
         }
         if (! CommissionPlan::ready()) {
             return response()->json(['message' => 'Commission plans are not available yet.'], 422);
+        }
+
+        // A short list of levels (Starter, Senior, …) is all a spa needs; the cap
+        // keeps Staff Policies and each employee's plan dropdown easy to read.
+        if (CommissionPlan::where('spa_business_id', $business->id)->count() >= self::MAX_PLANS) {
+            return response()->json(['message' => 'You can have up to '.self::MAX_PLANS.' commission plans. Remove one you no longer use to add another.'], 422);
         }
 
         $clean = $this->clean($business, $payload, null);

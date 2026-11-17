@@ -54,6 +54,39 @@ class StaffScheduleService
             ->additional(['pending_request' => $this->present($this->pendingFor($staff->id))]);
     }
 
+    // The front desk's Shifts view: everyone at its branch who works (active
+    // or on leave) and their regular week, in one read. Read only, and only
+    // what a schedule shows: name, role, status, specialties and the days —
+    // no pay, contact or personal details.
+    public function branchWeek(User $user)
+    {
+        $staff = Staff::whereIn('spa_branch_id', $this->branchIds($user))
+            ->whereIn('status', ['active', 'on-leave'])
+            ->orderBy('first_name')
+            ->orderBy('last_name')
+            ->get();
+
+        $days = \App\Models\StaffSchedule::whereIn('staff_id', $staff->pluck('id'))
+            ->whereNull('effective_from')
+            ->whereNull('effective_until')
+            ->orderByRaw(\App\Support\DayOfWeek::calendarOrder(), \App\Support\DayOfWeek::ORDER)
+            ->get()
+            ->groupBy('staff_id');
+
+        return response()->json([
+            'data' => $staff->map(fn (Staff $member) => [
+                'uuid' => $member->uuid,
+                'first_name' => $member->first_name,
+                'last_name' => $member->last_name,
+                'role' => $member->role,
+                'status' => $member->status,
+                'employment_type' => $member->employment_type,
+                'specialties' => $member->specialtyList(),
+                'days' => StaffScheduleResource::collection($days->get($member->id, collect()))->resolve(),
+            ])->values(),
+        ]);
+    }
+
     // Days omitted from the payload are left/made "not set" (no row at all) —
     // a whole-set replace, so omission is meaningful, same as
     // StaffService::updateServices' empty array meaning "no restrictions
