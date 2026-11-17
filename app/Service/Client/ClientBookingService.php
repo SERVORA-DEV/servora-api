@@ -71,7 +71,13 @@ class ClientBookingService
     // client has already rated this booking's spa (`spa_rated`).
     private function shown(User $user): Builder
     {
-        return $this->mine($user)->with(self::RELATIONS)->addSelect(['spa_rated' => Review::ratedBranchColumn()]);
+        return $this->mine($user)->with(self::RELATIONS)->addSelect([
+            'spa_rated' => Review::ratedBranchColumn(),
+            // Their review of this spa (from any visit there), to update it.
+            'spa_review_uuid' => Review::branchReviewColumn('uuid'),
+            'spa_review_rating' => Review::branchReviewColumn('rating'),
+            'spa_review_at' => Review::branchReviewColumn('reviewed_at'),
+        ]);
     }
 
     private function findMine(User $user, string $uuid): Appointment
@@ -377,6 +383,42 @@ class ClientBookingService
         return (new ClientReviewResource($review->load('appointment.branch.business', 'appointment.services.serviceVariant.service')))
             ->response()
             ->setStatusCode(201);
+    }
+
+    /**
+     * Changes the client's rating of a spa: the stars, the comment and whether
+     * their name shows. It stays their one review of that branch (it is not a
+     * second one), and its date becomes today, as it is what they think now.
+     */
+    public function updateReview(User $user, string $uuid, array $payload)
+    {
+        $review = Review::query()
+            ->where('uuid', $uuid)
+            ->whereHas('appointment', fn ($q) => $q->whereHas('client', fn ($c) => $c->where('user_id', $user->id)))
+            ->with('appointment')
+            ->firstOrFail();
+
+        $before = (int) $review->rating;
+        $review->update([
+            'rating' => $payload['rating'],
+            'comment' => $payload['comment'] ?? null,
+            'is_anonymous' => array_key_exists('is_anonymous', $payload) ? (bool) $payload['is_anonymous'] : $review->is_anonymous,
+            'reviewed_at' => now(),
+        ]);
+
+        $appointment = $review->appointment;
+        if ($appointment) {
+            $this->staffNotifier->appointment(
+                $appointment,
+                'Review updated',
+                "{$this->clientName($appointment)} updated their review from {$before} to {$payload['rating']} stars (booking {$appointment->appointment_number}).",
+                null,
+                'Appointment',
+                false,
+            );
+        }
+
+        return new ClientReviewResource($review->fresh()->load('appointment.branch.business', 'appointment.services.serviceVariant.service'));
     }
 
     public function myReviews(User $user)

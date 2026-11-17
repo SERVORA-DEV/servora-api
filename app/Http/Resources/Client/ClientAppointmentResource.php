@@ -81,6 +81,16 @@ class ClientAppointmentResource extends JsonResource
         return ['reschedules_used' => $used, 'reschedules_left' => max(0, $limit - $used)];
     }
 
+    /** An ISO time for a review's date, whether it came as a date or as raw text from a subquery. */
+    private static function reviewedAt(mixed $value): ?string
+    {
+        if (! $value) {
+            return null;
+        }
+
+        return \Illuminate\Support\Carbon::parse($value)->toIso8601String();
+    }
+
     public function toArray(Request $request): array
     {
         $branch = $this->branch;
@@ -139,6 +149,8 @@ class ClientAppointmentResource extends JsonResource
             'branch' => $branch ? [
                 'uuid' => $branch->uuid,
                 'name' => $branch->branch_name,
+                // The area the owner gave the branch ("Davao"): what tells it from one of the same name.
+                'area' => filled($branch->code) ? trim((string) $branch->code) : null,
                 'formatted_address' => $branch->formatted_address,
                 'latitude' => $branch->latitude !== null ? (float) $branch->latitude : null,
                 'longitude' => $branch->longitude !== null ? (float) $branch->longitude : null,
@@ -203,6 +215,14 @@ class ClientAppointmentResource extends JsonResource
             // client already has, on this visit or another one there.
             'spa_rated' => $spaRated = $this->review !== null || (bool) $this->resource->getAttribute('spa_rated'),
             'can_review' => $this->status === Appointment::STATUS_COMPLETED && ! $spaRated,
+            // Their review of this spa (this visit's, or one from another visit
+            // there): a finished visit offers to update it instead of a new one.
+            'spa_review' => $spaRated && ($this->review?->uuid ?? $this->resource->getAttribute('spa_review_uuid')) ? [
+                'uuid' => $this->review?->uuid ?? $this->resource->getAttribute('spa_review_uuid'),
+                'rating' => (int) ($this->review?->rating ?? $this->resource->getAttribute('spa_review_rating')),
+                // When it was given (or last updated): a visit after it is one to offer an update for.
+                'reviewed_at' => self::reviewedAt($this->review?->reviewed_at ?? $this->resource->getAttribute('spa_review_at')),
+            ] : null,
             // The limit on moving this booking in the app: how many times it
             // has been, and how many are left (null: no count yet).
             ...$this->rescheduleAllowance(),

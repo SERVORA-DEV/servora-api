@@ -212,6 +212,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('appointments/{uuid}/queue', [ClientBookingController::class, 'queue'])->whereUuid('uuid');
             Route::post('appointments/{uuid}/review', [ClientBookingController::class, 'review'])->whereUuid('uuid');
             Route::get('reviews', [ClientBookingController::class, 'reviews']);
+            Route::put('reviews/{uuid}', [ClientBookingController::class, 'updateReview'])->whereUuid('uuid');
             Route::get('spas/{branchUuid}/booking-status', [ClientBookingController::class, 'bookingStatus'])->whereUuid('branchUuid');
 
             Route::get('favorites', [ClientAccountController::class, 'favorites']);

@@ -55,6 +55,12 @@ class ClientBookingController extends Controller
         return $this->bookings->review($request->user(), $uuid, $request->validated());
     }
 
+    // Changes the client's rating of a spa (their one review of that branch).
+    public function updateReview(ClientReviewRequest $request, string $uuid)
+    {
+        return $this->bookings->updateReview($request->user(), $uuid, $request->validated());
+    }
+
     public function reviews(Request $request)
     {
         return $this->bookings->myReviews($request->user());

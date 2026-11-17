@@ -36,7 +36,8 @@ class Review extends Model
 
     // A client rates a spa once. Reviews hang off a visit and are shown per
     // branch (its page, its rating), so "a spa" is the branch: one review per
-    // client per branch, from whichever visit they rated it on.
+    // client per branch, from whichever visit they rated it on. They can update
+    // it later (ClientBookingService::updateReview), which keeps it one.
     public static function ratedBranch(int $clientId, int $branchId): bool
     {
         return self::where('client_id', $clientId)
@@ -48,12 +49,24 @@ class Review extends Model
     // a list of bookings needs no query per booking.
     public static function ratedBranchColumn(): \Illuminate\Database\Query\Builder
     {
+        return self::branchReview()->selectRaw('1');
+    }
+
+    // The client's review of the appointment's branch, one of its columns
+    // (`uuid`, `rating`), so a booking can offer "update your rating".
+    public static function branchReviewColumn(string $column): \Illuminate\Database\Query\Builder
+    {
+        return self::branchReview()->select("reviews.{$column}");
+    }
+
+    private static function branchReview(): \Illuminate\Database\Query\Builder
+    {
         return self::query()->toBase()
-            ->selectRaw('1')
             ->join('appointments as rated_visit', 'rated_visit.id', '=', 'reviews.appointment_id')
             ->whereColumn('reviews.client_id', 'appointments.client_id')
             ->whereColumn('rated_visit.spa_branch_id', 'appointments.spa_branch_id')
             ->whereNull('reviews.deleted_at')
+            ->orderByDesc('reviews.id')
             ->limit(1);
     }
 }
