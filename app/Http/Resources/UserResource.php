@@ -74,6 +74,8 @@ class UserResource extends JsonResource
                 'title' => \App\Support\BranchIdentity::title($b->branch_name, $b->code),
                 'area' => filled($b->code) ? trim((string) $b->code) : null,
                 'level' => $levels[$b->id] ?? 'operation',
+                // The owner's main branch (Branches page): tagged MAIN in the top bar.
+                'is_main' => $b->business !== null && (int) $b->business->main_branch_id === (int) $b->id,
                 'letterhead' => $b->business ? [
                     'business_name' => $b->business->business_name,
                     'legal_name' => $b->business->legal_name,

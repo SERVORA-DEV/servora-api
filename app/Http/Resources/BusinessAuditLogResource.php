@@ -28,6 +28,9 @@ class BusinessAuditLogResource extends JsonResource
                 'level' => $this->actor_level,
             ],
             'branch' => $this->branch_name,
+            // Which branch it was (two may share a name): the web names it by its area.
+            'branch_uuid' => $this->relationLoaded('branch') ? $this->branch?->uuid : null,
+            'branch_area' => $this->relationLoaded('branch') ? $this->branch?->code : null,
             // Cleaned again on the way out, for rows a service wrote itself: only what reads
             // as plain words, numbers and dates (nothing that looks like code).
             'old_values' => $this->old_values ? (BusinessActivityDescriber::readable($this->old_values) ?: null) : null,

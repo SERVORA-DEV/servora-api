@@ -67,6 +67,11 @@ use App\Http\Controllers\System\BusinessController;
 use App\Http\Controllers\System\DashboardController as SystemDashboardController;
 use App\Http\Controllers\System\NotificationController;
 use App\Http\Controllers\System\OwnerVerificationController as SystemOwnerVerificationController;
+use App\Http\Controllers\System\OwnerIdentityChangeController as SystemOwnerIdentityChangeController;
+use App\Http\Controllers\Business\OwnerIdentityChangeController;
+use App\Http\Controllers\Business\BusinessRegistrationChangeController;
+use App\Http\Controllers\System\BusinessRegistrationChangeController as SystemBusinessRegistrationChangeController;
+use App\Http\Controllers\ServoraReviewController;
 use App\Http\Controllers\System\SecurityController;
 use App\Http\Controllers\System\ServiceTemplateController;
 use App\Http\Controllers\System\SubscriberController;
@@ -117,6 +122,10 @@ Route::get('/active-subscription-plans', [SubscriptionPlanController::class, 'di
 // /login/{business_uuid} page on the frontend (see PublicSpaBusinessResource
 // for what's exposed here).
 Route::get('/business/{uuid}/public', [SpaBusinessController::class, 'publicShow']);
+
+// Public: owners' reviews of SERVORA that an administrator published (the
+// website's Reviews page).
+Route::get('/servora-reviews', [ServoraReviewController::class, 'published'])->middleware('throttle:60,1');
 
 // Public: the newest mobile app version and the oldest still accepted, so an installed app can
 // offer (or require) the update. Published with `php artisan mobile:release`.
@@ -327,6 +336,24 @@ Route::middleware('auth:sanctum')->group(function () {
             // decided independently (see OwnerVerificationService) — one
             // "review" resource per account (SpaBusiness uuid), but
             // separate approve/reject actions for each half.
+            // An owner's request to change their name or email: checked against
+            // a new ID and face scan (OwnerIdentityChangeService).
+            // Owners' reviews of SERVORA: published to the website's Reviews page, or hidden.
+            Route::get('servora-reviews', [ServoraReviewController::class, 'adminIndex'])->middleware('permission:spa_business_view');
+            Route::post('servora-reviews/{uuid}/publish', [ServoraReviewController::class, 'publish'])->whereUuid('uuid')->middleware('permission:spa_business_approve');
+            Route::post('servora-reviews/{uuid}/hide', [ServoraReviewController::class, 'hide'])->whereUuid('uuid')->middleware('permission:spa_business_approve');
+
+            Route::get('identity-changes', [SystemOwnerIdentityChangeController::class, 'index'])->middleware('permission:spa_business_view');
+            Route::get('identity-changes/{uuid}', [SystemOwnerIdentityChangeController::class, 'show'])->whereUuid('uuid')->middleware('permission:spa_business_view');
+            Route::post('identity-changes/{uuid}/approve', [SystemOwnerIdentityChangeController::class, 'approve'])->whereUuid('uuid')->middleware('permission:spa_business_approve');
+            Route::post('identity-changes/{uuid}/reject', [SystemOwnerIdentityChangeController::class, 'reject'])->whereUuid('uuid')->middleware('permission:spa_business_reject');
+            // An owner's new company registration (DTI number, names, certificate)
+            // for a verified business (BusinessRegistrationChangeService).
+            Route::get('registration-changes', [SystemBusinessRegistrationChangeController::class, 'index'])->middleware('permission:spa_business_view');
+            Route::get('registration-changes/{uuid}', [SystemBusinessRegistrationChangeController::class, 'show'])->whereUuid('uuid')->middleware('permission:spa_business_view');
+            Route::post('registration-changes/{uuid}/approve', [SystemBusinessRegistrationChangeController::class, 'approve'])->whereUuid('uuid')->middleware('permission:spa_business_approve');
+            Route::post('registration-changes/{uuid}/reject', [SystemBusinessRegistrationChangeController::class, 'reject'])->whereUuid('uuid')->middleware('permission:spa_business_reject');
+
             Route::get('owner-verifications', [SystemOwnerVerificationController::class, 'index'])->middleware('permission:spa_business_view');
             Route::get('owner-verifications/{uuid}', [SystemOwnerVerificationController::class, 'show'])->middleware('permission:spa_business_view');
             Route::put('owner-verifications/{uuid}/{part}/review-checklist', [SystemOwnerVerificationController::class, 'saveChecklist'])->whereIn('part', ['identity', 'business'])->middleware('permission:spa_business_view');
@@ -848,6 +875,31 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('submit', [BusinessOwnerVerificationController::class, 'submit']);
                 });
 
+                // Changing the name or email of a verified owner account: a new
+                // ID and face scan, checked by a system administrator.
+                // The owner's own review of SERVORA (the profile menu's "Rate SERVORA").
+                Route::get('servora-review', [ServoraReviewController::class, 'mine']);
+                Route::put('servora-review', [ServoraReviewController::class, 'save'])->middleware('throttle:10,1,servora-review');
+
+                Route::prefix('owner/identity-change')->group(function () {
+                    Route::get('/', [OwnerIdentityChangeController::class, 'show']);
+                    Route::post('details', [OwnerIdentityChangeController::class, 'details'])->middleware('throttle:20,1,identity-change');
+                    Route::post('email/resend', [OwnerIdentityChangeController::class, 'resendCode'])->middleware('throttle:6,1,identity-change-code');
+                    Route::post('email/confirm', [OwnerIdentityChangeController::class, 'confirmEmail'])->middleware('throttle:10,1,identity-change-confirm');
+                    Route::post('id', [OwnerIdentityChangeController::class, 'saveId']);
+                    Route::post('face-scan', [OwnerIdentityChangeController::class, 'saveFaceScan']);
+                    Route::post('submit', [OwnerIdentityChangeController::class, 'submit']);
+                    Route::post('cancel', [OwnerIdentityChangeController::class, 'cancel']);
+                });
+
+                // Changing the company registration of a verified business: the new
+                // details and certificate, checked by a system administrator.
+                Route::prefix('owner/registration-change')->group(function () {
+                    Route::get('/', [BusinessRegistrationChangeController::class, 'show']);
+                    Route::post('/', [BusinessRegistrationChangeController::class, 'submit'])->middleware('throttle:10,1,registration-change');
+                    Route::post('cancel', [BusinessRegistrationChangeController::class, 'cancel']);
+                });
+
                 // Ahead of the apiResource below on purpose: that registers
                 // GET account/{account} with an unconstrained wildcard, so
                 // declaring this afterwards would route /account/suggest into
@@ -906,6 +958,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 // A branch or staff login a smaller plan put on hold comes
                 // back here, once the plan has room (PlanFitService).
                 Route::post('branch/{uuid}/bring-back', [SpaBranchController::class, 'bringBack'])->whereUuid('uuid');
+                // The owner's main branch (listed first, opened first).
+                Route::post('branch/{uuid}/main', [SpaBranchController::class, 'makeMain'])->whereUuid('uuid');
                 Route::post('account/{uuid}/bring-back', [AccountController::class, 'bringBack'])->whereUuid('uuid');
 
                 Route::get('subscription/confirm/{referenceId}', [SubscriptionController::class, 'confirm']);

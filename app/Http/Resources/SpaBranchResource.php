@@ -64,6 +64,11 @@ class SpaBranchResource extends JsonResource
             // Branch Settings: marketplace listing on/off, and the booking
             // rules this branch sets instead of the business defaults.
             'listing_visible' => (bool) $this->listing_visible,
+
+            // The branch the owner marked as their main one (spa_businesses.
+            // main_branch_id): listed first and picked first. False for every
+            // branch until the owner chooses one.
+            'is_main' => $this->isMainBranch(),
             'booking_overrides' => (object) ($this->booking_overrides ?? []),
 
             'closure_note' => $this->closure_note,
@@ -183,5 +188,19 @@ class SpaBranchResource extends JsonResource
                 ]);
             }),
         ];
+    }
+
+    // Read without loading the `business` relation, so the `business` key
+    // above stays out of responses that did not ask for it.
+    private function isMainBranch(): bool
+    {
+        if (! $this->spa_business_id) {
+            return false;
+        }
+        $business = $this->resource->relationLoaded('business')
+            ? $this->business
+            : \App\Models\SpaBusiness::query()->find($this->spa_business_id);
+
+        return (int) ($business?->main_branch_id ?? 0) === (int) $this->id;
     }
 }

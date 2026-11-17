@@ -581,6 +581,24 @@ class SpaBranchService
 
     // POST business/branch/{uuid}/bring-back — switch a branch the plan put
     // on hold back on, when the plan has room for it again.
+    /**
+     * The owner's main branch: listed first, and the branch the screens open
+     * on. Only the business's main_branch_id changes; no branch row is
+     * touched. A branch that is not live yet can still be the main one.
+     */
+    public function makeMainBranch(User $user, string $uuid)
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+        if (! $business) {
+            return response()->json(['message' => 'No spa business found for this account.'], 422);
+        }
+
+        $branch = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
+        $business->forceFill(['main_branch_id' => $branch->id])->save();
+
+        return response()->json(['data' => ['main_branch_uuid' => $branch->uuid]]);
+    }
+
     public function bringBack(User $user, string $uuid)
     {
         $business = $this->spaBusinessRepository->findForUser($user);

@@ -222,6 +222,9 @@ class CatalogRequestService
             'payload' => CatalogRequest::hasPayload() ? $request->payload : null,
             'status' => $request->status,
             'branch_name' => $request->branch?->branch_name,
+            // Which branch (two may share a name): the web names it by its area.
+            'branch_uuid' => $request->branch?->uuid,
+            'branch_area' => $request->branch?->code,
             'requested_by' => $request->requester ? $this->userName($request->requester) : null,
             'requested_by_me' => $request->requested_by_user_id === $viewer->id,
             'requested_at' => $request->created_at?->toIso8601String(),

@@ -41,10 +41,10 @@ class ClientService
         // Each client's branch for the list: where they last came, else where they were added.
         // One read for the page's branches.
         $ids = $clients->getCollection()->map(fn (Client $c) => $c->last_branch_id ?: $c->spa_branch_id)->filter()->unique()->values()->all();
-        $branchesById = $ids ? \App\Models\SpaBranch::whereIn('id', $ids)->get(['id', 'uuid', 'branch_name'])->keyBy('id') : collect();
+        $branchesById = $ids ? \App\Models\SpaBranch::whereIn('id', $ids)->get(['id', 'uuid', 'branch_name', 'code'])->keyBy('id') : collect();
         $clients->getCollection()->each(function (Client $c) use ($branchesById) {
             $b = $branchesById->get($c->last_branch_id ?: $c->spa_branch_id);
-            $c->setAttribute('list_branch', $b ? ['uuid' => $b->uuid, 'name' => $b->branch_name] : null);
+            $c->setAttribute('list_branch', $b ? ['uuid' => $b->uuid, 'name' => $b->branch_name, 'area' => $b->code] : null);
         });
 
         return ClientResource::collection($clients);
