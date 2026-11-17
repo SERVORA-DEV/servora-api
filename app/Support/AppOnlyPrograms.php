@@ -2,20 +2,21 @@
 
 namespace App\Support;
 
-// Customer programs (loyalty points, vouchers, discount programs and
-// memberships) are for clients who use the Servora app: a client whose record
+// Customer programs (loyalty points, vouchers and memberships) are for
+// clients who use the Servora app: a client whose record
 // at the spa is linked to an app account (clients.user_id —
 // App\Models\Client::usesApp). A walk-in record the front desk made, with no
 // app account, can't join, earn, buy with points, be sold a membership, or
-// have a voucher or program discount put on a bill — at the desk or anywhere.
+// have a voucher put on a bill — at the desk or anywhere.
 //
 // What such a client already holds (vouchers in the wallet, a running
 // membership) is not taken away: it is kept but can't be used while they are
 // without the app (HELD_USABLE = false), and works again as soon as they sign
 // up in the app and their record is linked. Nothing in the database changes.
 //
-// Discounts typed in by hand at checkout are not a customer program and stay
-// open to everyone.
+// Discounts are for everyone: the ones the owner made (senior, PWD, …) and
+// the ones typed in by hand at checkout. Only a discount that is a
+// membership's perk follows the membership (frozen without the app).
 //
 // Pure — tested in tests/Unit/AppOnlyProgramsTest; applied by
 // ProgramRewardService, CustomerProgramService and BillingService.

@@ -122,6 +122,11 @@ class BillingService
         if ($this->requiresReference($method) && blank($payload['reference_number'] ?? null)) {
             return $this->reject("Enter the {$method} reference number.");
         }
+        // A reference that can't be right for the method (letters in a GCash
+        // Ref No., a word typed by mistake) — App\Support\PaymentReference.
+        if ($problem = \App\Support\PaymentReference::problem($method, $payload['reference_number'] ?? null)) {
+            return $this->reject($problem);
+        }
 
         if (\App\Models\BillingAdjustment::ready() && \App\Models\BillingAdjustment::where('billing_id', $billing->id)
             ->where('status', \App\Models\BillingAdjustment::PENDING)->where('kind', \App\Support\BillAdjustment::CREDIT)->exists()) {
@@ -689,9 +694,11 @@ class BillingService
         $where = ProgramChannel::whereOf($billing->appointment);
         $membershipHere = ! $membership?->program || ProgramChannel::allows(ProgramChannel::of($membership->program), $where);
 
-        // Customer programs are for app users (AppOnlyPrograms). For a client
-        // without the app everything is listed but greyed out with the reason:
-        // $locked for what is offered, $heldLocked for what they already hold.
+        // Customer programs (vouchers, points, memberships) are for app users
+        // (AppOnlyPrograms). The discounts the owner made (senior, PWD, …) are
+        // for everyone. For a client without the app the rest is listed but
+        // greyed out with the reason: $heldLocked for what they already hold
+        // (vouchers, a membership's perks).
         $usesApp = $client?->usesApp();
         $locked = AppOnlyPrograms::refusal($usesApp);
         $heldLocked = AppOnlyPrograms::usesHeld($usesApp) ? null : AppOnlyPrograms::MESSAGE;
@@ -726,7 +733,7 @@ class BillingService
 
         $discounts = $this->rewards->offeredAt($billing->spa_business_id, $billing->spa_branch_id, 'discount')
             ->filter(fn ($p) => $p->audience !== 'members' || in_array($p->id, $memberItemIds, true))
-            ->map(fn ($p) => $describe($membership ? $membership->held($p) : $p, lock: in_array($p->id, $memberItemIds, true) ? $heldLocked : $locked))->values();
+            ->map(fn ($p) => $describe($membership ? $membership->held($p) : $p, lock: in_array($p->id, $memberItemIds, true) ? $heldLocked : null))->values();
         // A discount the membership was sold with stays the member's, even
         // if it has since been switched off or removed.
         foreach ($membership?->heldDiscounts() ?? [] as $held) {
@@ -759,7 +766,7 @@ class BillingService
         }
 
         // `locked_reason`: set when the client doesn't use the app — the screens
-        // say why nothing can be applied.
+        // say that vouchers, points and memberships need it (discounts don't).
         return ['data' => ['enabled' => true, 'locked_reason' => $locked, 'held_usable' => $heldLocked === null, 'discounts' => $discounts, 'vouchers' => $vouchers]];
     }
 
@@ -804,12 +811,10 @@ class BillingService
     /** @return array{0: CustomerProgram, 1: null}|string */
     private function discountProgramForBill(Billing $billing, string $programUuid): array|string
     {
-        // Discount programs are for clients who use the app (AppOnlyPrograms);
-        // a member's discount is something they hold (frozen without the app).
+        // The discounts the owner made are for everyone, app or not. A
+        // member's discount is a perk they hold (AppOnlyPrograms: frozen while
+        // they are without the app).
         $usesApp = $billing->appointment?->client?->usesApp();
-        if (! AppOnlyPrograms::usesHeld($usesApp)) {
-            return AppOnlyPrograms::MESSAGE;
-        }
         $membership = $billing->appointment?->client?->activeMembership()->with('program.items')->first();
         $program = CustomerProgram::where('uuid', $programUuid)
             ->where('spa_business_id', $billing->spa_business_id)
@@ -818,9 +823,13 @@ class BillingService
             // No longer on offer — unless this client's membership was sold with it.
             $held = $membership?->heldDiscounts()->firstWhere('uuid', $programUuid);
 
+            if ($held && ! AppOnlyPrograms::usesHeld($usesApp)) {
+                return AppOnlyPrograms::MESSAGE;
+            }
+
             return $held ? [$held, null] : 'That discount isn\'t offered at this branch.';
         }
-        if (! AppOnlyPrograms::allows($usesApp) && ! in_array($program->id, $membership?->perkIds() ?? [], true)) {
+        if (in_array($program->id, $membership?->perkIds() ?? [], true) && ! AppOnlyPrograms::usesHeld($usesApp)) {
             return AppOnlyPrograms::MESSAGE;
         }
         if ($program->audience === 'members' && ! in_array($program->id, $membership?->perkIds() ?? [], true)) {

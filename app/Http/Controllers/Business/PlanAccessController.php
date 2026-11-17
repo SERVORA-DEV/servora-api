@@ -33,7 +33,7 @@ class PlanAccessController extends Controller
         $plan = $business ? AppCache::activeSubscription($business->id)?->plan : null;
         abort_unless($plan && in_array($data['format'], PlanTerms::exportFormats($plan), true), 403, 'Your plan does not include this export format.');
         // Restricted exports must use the server-built, date-filtered Reports export.
-        abort_if($plan->export_days !== null, 403, 'Use Reports to export CSV for the last 30 days.');
+        abort_if($plan->export_days !== null, 403, "Your plan exports the last {$plan->export_days} days, from Reports.");
 
         return ['allowed' => true];
     }
