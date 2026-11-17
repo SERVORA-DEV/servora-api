@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Client;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Client\ClientHomeAddressRequest;
 use App\Http\Requests\Client\ClientProfilePhotoRequest;
 use App\Http\Requests\Client\ClientProfileRequest;
 use App\Service\Client\ClientProfileService;
@@ -30,5 +31,16 @@ class ClientProfileController extends Controller
     public function removePhoto(Request $request)
     {
         return $this->clientProfileService->removePhoto($request->user());
+    }
+
+    // The client's saved home, offered on home-service bookings.
+    public function setHomeAddress(ClientHomeAddressRequest $request)
+    {
+        return $this->clientProfileService->setHomeAddress($request->user(), $request->validated());
+    }
+
+    public function clearHomeAddress(Request $request)
+    {
+        return $this->clientProfileService->clearHomeAddress($request->user());
     }
 }

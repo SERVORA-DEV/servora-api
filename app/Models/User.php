@@ -23,6 +23,25 @@ class User extends Authenticatable implements MustVerifyEmail
         return ['uuid'];
     }
 
+    /**
+     * Whether users has the saved home address columns yet (migration
+     * 2026_11_20_090000_add_home_address_to_users). Until then the app is told
+     * it can't be saved, and booking works as before.
+     */
+    public static function hasHomeAddress(): bool
+    {
+        $known = \Illuminate\Support\Facades\Cache::get('schema:user_home_address');
+        if (is_bool($known)) {
+            return $known;
+        }
+        $ready = \Illuminate\Support\Facades\Schema::hasColumn('users', 'home_address');
+        $ready
+            ? \Illuminate\Support\Facades\Cache::forever('schema:user_home_address', true)
+            : \Illuminate\Support\Facades\Cache::put('schema:user_home_address', false, 60);
+
+        return $ready;
+    }
+
     // The same email can back one owner-side ('web') account and one client
     // ('mobile') account, so uniqueness and login lookups are scoped by this.
     // Always derived from role so the two can't drift apart.
@@ -79,6 +98,12 @@ class User extends Authenticatable implements MustVerifyEmail
         // Agreement to the Terms + Privacy Policy at sign-up (config/legal.php).
         'terms_accepted_at',
         'terms_version',
+
+        // A client's saved home (Personal Information in the app), offered on home-service bookings.
+        'home_address',
+        'home_address_notes',
+        'home_latitude',
+        'home_longitude',
     ];
 
     protected $hidden = [

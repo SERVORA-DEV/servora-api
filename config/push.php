@@ -14,9 +14,13 @@ return [
     ],
 
     // Phones (Firebase Cloud Messaging, HTTP v1): the Firebase project id and
-    // the path to its service account key (Project settings → Service accounts).
+    // its service account key (Project settings → Service accounts), given
+    // either as the key's JSON itself — raw or base64 — in FCM_CREDENTIALS_JSON
+    // (for a server built from git, where the key file never is: Coolify), or
+    // as the path to the file in FCM_CREDENTIALS (a PC). The JSON wins.
     'fcm' => [
         'project_id' => env('FCM_PROJECT_ID'),
+        'credentials_json' => env('FCM_CREDENTIALS_JSON'),
         'credentials' => env('FCM_CREDENTIALS'),
     ],
 ];

@@ -106,6 +106,42 @@ class ClientProfileService
         return new UserResource($user->fresh());
     }
 
+    /**
+     * Saves the client's home: the address at the pin they placed on the map, its notes (landmark,
+     * gate code) and the pin itself. Home-service bookings offer it; each booking still keeps its
+     * own copy, so changing it later never moves a booking already made.
+     */
+    public function setHomeAddress(User $user, array $payload)
+    {
+        if (! User::hasHomeAddress()) {
+            return response()->json(['message' => 'Saving a home address is not available yet. Please try again later.'], 503);
+        }
+
+        $user = $this->userRepository->update($user, [
+            'home_address' => trim($payload['home_address']),
+            'home_address_notes' => filled($payload['home_address_notes'] ?? null) ? trim($payload['home_address_notes']) : null,
+            'home_latitude' => round((float) $payload['home_latitude'], 7),
+            'home_longitude' => round((float) $payload['home_longitude'], 7),
+        ]);
+
+        return new UserResource($user->fresh());
+    }
+
+    /** Forgets the client's saved home. */
+    public function clearHomeAddress(User $user)
+    {
+        if (User::hasHomeAddress()) {
+            $user = $this->userRepository->update($user, [
+                'home_address' => null,
+                'home_address_notes' => null,
+                'home_latitude' => null,
+                'home_longitude' => null,
+            ]);
+        }
+
+        return new UserResource($user->fresh());
+    }
+
     /** Takes the client's own picture down: back to the default avatar. */
     public function removePhoto(User $user)
     {

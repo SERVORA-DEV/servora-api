@@ -197,6 +197,9 @@ Route::middleware('auth:sanctum')->group(function () {
             // The client's own picture (shown to the spas they book with).
             Route::post('profile/photo', [ClientProfileController::class, 'setPhoto'])->middleware('throttle:20,1');
             Route::delete('profile/photo', [ClientProfileController::class, 'removePhoto']);
+            // Their saved home address, offered on home-service bookings.
+            Route::put('home-address', [ClientProfileController::class, 'setHomeAddress']);
+            Route::delete('home-address', [ClientProfileController::class, 'clearHomeAddress']);
             Route::post('change-password', [ClientAccountController::class, 'changePassword']);
             // Password-confirmed; anonymizes the login (see ClientAccountService).
             Route::delete('account', [ClientAccountController::class, 'deleteAccount'])->middleware('throttle:5,1');

@@ -22,7 +22,7 @@ use Minishlink\WebPush\WebPush;
 // Sent after the response, so nobody waits on a push service, and never
 // throws: a pop-up that can't be sent is logged, not an error for whoever
 // caused the notification. Each half (config/push.php) is off until its keys
-// are set.
+// are set, and says so in the log when a device was waiting for it.
 class PushSender
 {
     // What happened to each device on the last send, for `php artisan push:test`.
@@ -35,9 +35,6 @@ class PushSender
 
     public function queue(Notification $notification): void
     {
-        if (! $this->webReady() && ! $this->fcmReady()) {
-            return;
-        }
         $id = $notification->id;
         dispatch(fn () => app(self::class)->send($id))->afterResponse();
     }
@@ -61,10 +58,18 @@ class PushSender
             $web = $subscriptions->where('kind', PushSubscription::KIND_WEB);
             if ($web->isNotEmpty() && $this->webReady()) {
                 $this->sendWeb($notification, $web);
+            } elseif ($web->isNotEmpty()) {
+                $this->results[] = 'Browsers skipped: this server has no VAPID keys (VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY).';
+                Log::warning('Push skipped for '.$web->count().' browser(s): no VAPID keys on this server.');
             }
             $fcm = $subscriptions->where('kind', PushSubscription::KIND_FCM);
             if ($fcm->isNotEmpty() && $this->fcmReady()) {
                 $this->sendFcm($notification, $fcm);
+            } elseif ($fcm->isNotEmpty()) {
+                // Phones are waiting for pop-ups this server can't send: say so
+                // instead of dropping them quietly.
+                $this->results[] = 'Phones skipped: this server has no Firebase key (FCM_PROJECT_ID and FCM_CREDENTIALS_JSON or FCM_CREDENTIALS).';
+                Log::warning('Push skipped for '.$fcm->count().' phone(s): no Firebase key on this server (set FCM_PROJECT_ID and FCM_CREDENTIALS_JSON).');
             }
         } catch (\Throwable $e) {
             $this->results[] = 'Failed: '.$e->getMessage();
@@ -79,9 +84,27 @@ class PushSender
 
     public function fcmReady(): bool
     {
-        $path = config('push.fcm.credentials');
+        return filled(config('push.fcm.project_id')) && $this->fcmCredentials() !== null;
+    }
 
-        return filled(config('push.fcm.project_id')) && filled($path) && is_file($path);
+    // The Firebase service account key (config/push.php): the JSON from the
+    // environment, raw or base64, else the file it names. Null when neither is
+    // usable.
+    private function fcmCredentials(): ?array
+    {
+        $json = trim((string) config('push.fcm.credentials_json'));
+        if ($json !== '') {
+            $key = json_decode(str_starts_with($json, '{') ? $json : (string) base64_decode($json, true), true);
+
+            return is_array($key) && isset($key['client_email'], $key['private_key']) ? $key : null;
+        }
+        $path = config('push.fcm.credentials');
+        if (! filled($path) || ! is_file($path)) {
+            return null;
+        }
+        $key = json_decode((string) file_get_contents($path), true);
+
+        return is_array($key) ? $key : null;
     }
 
     // ── Browsers ─────────────────────────────────────────────────────────
@@ -205,7 +228,7 @@ class PushSender
         return Cache::remember('push:fcm-access-token', now()->addMinutes(50), function () {
             $credentials = new ServiceAccountCredentials(
                 'https://www.googleapis.com/auth/firebase.messaging',
-                json_decode(file_get_contents(config('push.fcm.credentials')), true),
+                $this->fcmCredentials(),
             );
 
             return $credentials->fetchAuthToken()['access_token'];
