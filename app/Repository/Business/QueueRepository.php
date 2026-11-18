@@ -3,6 +3,8 @@
 namespace App\Repository\Business;
 
 use App\Models\Queue;
+use App\Service\Business\HomeServiceRules;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
 class QueueRepository
@@ -54,6 +56,50 @@ class QueueRepository
             ->get();
     }
 
+    /** Only visits at the spa: a home visit is not part of the line (it starts at the client's door). */
+    private function atTheSpa(Builder $q): Builder
+    {
+        return $q->whereHas('appointment', fn ($a) => $a->where(fn ($w) => $w
+            ->whereNull('service_location')
+            ->orWhere('service_location', '!=', HomeServiceRules::HOME)));
+    }
+
+    /**
+     * Everyone ahead of this ticket in the line, in order, the same order as the Front
+     * Officer's Live Queue: still waiting or called, same branch and day, at the spa. With
+     * "prioritize walk-ins" every walk-in is ahead of every booking; within each kind (or
+     * with it off) it is by place in the line, then by ticket.
+     */
+    public function aheadOf(Queue $queue, bool $walkInsFirst)
+    {
+        $key = Queue::lineKey();
+        $at = $queue->lineTime();
+        $isWalkIn = $queue->appointment?->appointment_type === 'Walk-in';
+        $before = fn ($w) => $w->whereRaw("{$key} < ?", [$at])
+            ->orWhere(fn ($tie) => $tie->whereRaw("{$key} = ?", [$at])->where('id', '<', $queue->id));
+        $walkIn = fn ($a) => $a->where('appointment_type', 'Walk-in');
+        $booking = fn ($a) => $a->where(fn ($w) => $w->whereNull('appointment_type')->orWhere('appointment_type', '!=', 'Walk-in'));
+
+        $query = Queue::with('appointment.services.serviceVariant')
+            ->where('spa_branch_id', $queue->spa_branch_id)
+            ->where('appointment_date', $queue->appointment_date->format('Y-m-d'))
+            ->whereIn('queue_status', ['Waiting', 'Called'])
+            ->where('id', '!=', $queue->id);
+        $this->atTheSpa($query);
+
+        if (! $walkInsFirst) {
+            $query->where($before);
+        } elseif ($isWalkIn) {
+            $query->whereHas('appointment', $walkIn)->where($before);
+        } else {
+            // A booking: every walk-in still waiting, then the bookings ahead of it.
+            $query->where(fn ($w) => $w->whereHas('appointment', $walkIn)
+                ->orWhere(fn ($b) => $b->whereHas('appointment', $booking)->where($before)));
+        }
+
+        return $query->orderByRaw($key)->orderBy('id')->get();
+    }
+
     /**
      * The ticket right behind this one in the line: the next one still waiting or
      * called, same branch and day. With "prioritize walk-ins" the line is two lines
@@ -64,7 +110,7 @@ class QueueRepository
         $key = Queue::lineKey();
         $isWalkIn = $queue->appointment?->appointment_type === 'Walk-in';
 
-        return Queue::where('spa_branch_id', $queue->spa_branch_id)
+        $query = Queue::where('spa_branch_id', $queue->spa_branch_id)
             ->where('appointment_date', $queue->appointment_date->format('Y-m-d'))
             ->whereIn('queue_status', ['Waiting', 'Called'])
             ->where('id', '!=', $queue->id)
@@ -72,7 +118,9 @@ class QueueRepository
                 ->orWhere(fn ($tie) => $tie->whereRaw("{$key} = ?", [$queue->lineTime()])->where('id', '>', $queue->id)))
             ->when($sameKindOnly, fn ($q) => $q->whereHas('appointment', fn ($a) => $isWalkIn
                 ? $a->where('appointment_type', 'Walk-in')
-                : $a->where('appointment_type', '!=', 'Walk-in')))
+                : $a->where('appointment_type', '!=', 'Walk-in')));
+
+        return $this->atTheSpa($query)
             ->orderByRaw($key)
             ->orderBy('id')
             ->first();
@@ -87,7 +135,7 @@ class QueueRepository
         $key = Queue::lineKey();
         $isWalkIn = $queue->appointment?->appointment_type === 'Walk-in';
 
-        return Queue::with('appointment.client')
+        $query = Queue::with('appointment.client')
             ->where('spa_branch_id', $queue->spa_branch_id)
             ->where('appointment_date', $queue->appointment_date->format('Y-m-d'))
             ->whereIn('queue_status', ['Waiting', 'Called'])
@@ -96,7 +144,9 @@ class QueueRepository
                 ->orWhere(fn ($tie) => $tie->whereRaw("{$key} = ?", [$queue->lineTime()])->where('id', '>', $queue->id)))
             ->when($sameKindOnly, fn ($q) => $q->whereHas('appointment', fn ($a) => $isWalkIn
                 ? $a->where('appointment_type', 'Walk-in')
-                : $a->where('appointment_type', '!=', 'Walk-in')))
+                : $a->where('appointment_type', '!=', 'Walk-in')));
+
+        return $this->atTheSpa($query)
             ->orderByRaw($key)
             ->orderBy('id')
             ->get();

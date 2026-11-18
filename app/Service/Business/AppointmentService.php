@@ -307,7 +307,7 @@ class AppointmentService
             $home = null;
             if (HomeServiceRules::isHome($payload)) {
                 if (($payload['appointment_type'] ?? null) === 'Walk-in') {
-                    return response()->json(['message' => 'A walk-in can\'t be a home service. Add it as a reservation instead.'], 422);
+                    return response()->json(['message' => 'A walk-in can\'t be a home service. Add it as a booking instead.'], 422);
                 }
                 $home = HomeServiceRules::check($branch, $payload);
                 if (! $home['ok']) {
@@ -357,7 +357,7 @@ class AppointmentService
             // the booking just above. A walk-in is here, so it can do without.
             // abort() rolls back a client record made a moment ago.
             abort_if(($payload['appointment_type'] ?? 'Reservation') !== 'Walk-in' && blank($client->phone_number), 422,
-                "Add the client's phone number to book a reservation.");
+                "Add the client's phone number to add a booking.");
 
             // Someone is going to their door: a phone number and the gender
             // come first (App\Support\ClientProfile). abort() rolls back a
@@ -1311,11 +1311,13 @@ class AppointmentService
         if (! Cache::add("appointment-called:{$appointment->id}", true, now()->addMinutes(2))) {
             return response()->json(['message' => 'This client was called a moment ago. Give them a couple of minutes.'], 422);
         }
+        // For the client's app until the day ends: "The spa is ready for you" on the booking's queue screen.
+        Cache::put(Queue::calledKey($appointment->id), now()->toIso8601String(), now()->endOfDay());
 
         $this->clientNotifier->appointment(
             $appointment,
             ClientNotificationLink::QUEUE_CALL_TITLE,
-            "Please come to {$appointment->branch?->branch_name} and check in at the front desk for booking {$appointment->appointment_number}. Tap to see the queue.",
+            "Please come to {$appointment->branch?->branch_name} and check in with the Front Officer for booking {$appointment->appointment_number}. Tap to see the queue.",
         );
 
         return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
@@ -1335,11 +1337,15 @@ class AppointmentService
         $queue = $appointment->queue;
 
         if (! $queue || ! in_array($queue->queue_status, ['Waiting', 'Called'], true)) {
-            return response()->json(['message' => 'Only a waiting or called client can be skipped.'], 422);
+            return response()->json(['message' => 'Only a client waiting in line can be moved down.'], 422);
         }
         // Someone whose service has begun (or is done) is being served: not skipped.
         if ($appointment->services()->whereIn('status', ['In Progress', 'Completed'])->exists()) {
-            return response()->json(['message' => 'A service for this client has already started, so they can\'t be skipped.'], 422);
+            return response()->json(['message' => 'A service for this client has already started, so they can\'t be moved down.'], 422);
+        }
+        // A home visit is not part of the line at the spa.
+        if ($appointment->isHomeService()) {
+            return response()->json(['message' => 'A home visit isn\'t in the line at the spa, so it can\'t be moved down.'], 422);
         }
 
         // Skipping moves them down one place: they swap with whoever is right behind them,
@@ -1368,6 +1374,7 @@ class AppointmentService
             }
 
             $this->queueRepository->placeAfter($queue, $line[$at], $line[$at + 1] ?? null);
+            Cache::put(Queue::movedDownKey($queue->id), now()->toIso8601String(), now()->addMinutes(30));
 
             return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
         }
@@ -1378,6 +1385,7 @@ class AppointmentService
         }
 
         $this->queueRepository->swapPlaces($queue, $next);
+        Cache::put(Queue::movedDownKey($queue->id), now()->toIso8601String(), now()->addMinutes(30));
 
         return new AppointmentResource($this->appointmentRepository->findByUuid($uuid));
     }
@@ -1398,7 +1406,7 @@ class AppointmentService
         $queue = $appointment->queue;
 
         if (! $queue || ! in_array($queue->queue_status, ['Called', 'Skipped'], true)) {
-            return response()->json(['message' => 'Only a called or skipped client can be recalled to the queue.'], 422);
+            return response()->json(['message' => 'Only a client who was set aside can be put back in line.'], 422);
         }
 
         $this->queueRepository->updateStatus($queue, 'Waiting', ['called_at' => null]);
@@ -3067,7 +3075,7 @@ class AppointmentService
 
         // How it was started: the scan's time, or a note of who started it at the desk.
         if ($by) {
-            $appointment->update(['remarks' => trim(($appointment->remarks ? $appointment->remarks.' · ' : '')."Home visit started at the desk without a scan by {$by->displayName()}")]);
+            $appointment->update(['remarks' => trim(($appointment->remarks ? $appointment->remarks.' · ' : '')."Home visit started without a scan by {$by->displayName()}")]);
         } else {
             $appointment->update(['home_scanned_at' => now()]);
         }
@@ -3095,7 +3103,7 @@ class AppointmentService
             $appointment,
             'Home visit started',
             $by
-                ? "{$by->displayName()} started {$clientName}'s home service at the desk, without a scan. Booking no. {$appointment->appointment_number}."
+                ? "{$by->displayName()} started {$clientName}'s home service without a scan. Booking no. {$appointment->appointment_number}."
                 : ($staff->isNotEmpty() ? $staff->join(', ', ' and ') : 'The staff')." started {$clientName}'s home service by scan. Booking no. {$appointment->appointment_number}.",
         );
 
@@ -3116,15 +3124,15 @@ class AppointmentService
     private function scanRefusal(?string $reason): string
     {
         if ($reason === null) {
-            return 'This visit can\'t be started. Call the front desk.';
+            return 'This visit can\'t be started. Call the Front Officer.';
         }
         if (str_starts_with($reason, 'Assign at least one staff member')) {
-            return 'No staff is assigned to this visit yet. Call the front desk.';
+            return 'No staff is assigned to this visit yet. Call the Front Officer.';
         }
 
         return str_replace(
             'Time them in on Attendance before starting this service.',
-            'Ask the front desk to time them in first.',
+            'Ask a Front Officer to time them in first.',
             $reason,
         );
     }

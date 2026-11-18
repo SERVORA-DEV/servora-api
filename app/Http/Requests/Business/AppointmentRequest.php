@@ -105,7 +105,7 @@ class AppointmentRequest extends FormRequest
             'client.gender.required_with' => 'Choose the client\'s gender.',
             'client.gender.in' => 'Choose Male or Female.',
             'client_update.gender.in' => 'Choose Male or Female.',
-            'client.phone_number.required' => 'Add the client\'s phone number to book a reservation.',
+            'client.phone_number.required' => 'Add the client\'s phone number to add a booking.',
         ];
     }
 }

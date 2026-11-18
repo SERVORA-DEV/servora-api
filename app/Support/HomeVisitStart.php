@@ -82,7 +82,7 @@ class HomeVisitStart
             case 'cancelled':
                 return 'This booking was cancelled.';
             case 'no_show':
-                return 'This booking was marked as a no-show. Call the front desk.';
+                return 'This booking was marked as a no-show. Call the Front Officer.';
             case 'completed':
                 return 'This visit is already finished.';
             case 'in_service':
@@ -90,7 +90,7 @@ class HomeVisitStart
         }
 
         if (! in_array($status, ['scheduled', 'checked_in'], true)) {
-            return 'This booking can\'t be started. Call the front desk.';
+            return 'This booking can\'t be started. Call the Front Officer.';
         }
 
         if ($bookedFor->toDateString() !== $today->toDateString()) {

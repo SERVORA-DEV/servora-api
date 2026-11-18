@@ -79,6 +79,27 @@ class Queue extends Model
         return self::ready() ? 'COALESCE(queued_at, created_at)' : 'created_at';
     }
 
+    /**
+     * Cache key: a Front Officer moved this ticket down the line in the last 30 minutes
+     * (AppointmentService::skipQueue). The client's app says so; nothing is stored in the table.
+     */
+    public static function movedDownKey(int $queueId): string
+    {
+        return "queue-moved-down:{$queueId}";
+    }
+
+    /** Cache key: the spa called this booking (AppointmentService::callQueue) today. */
+    public static function calledKey(int $appointmentId): string
+    {
+        return "appointment-called-at:{$appointmentId}";
+    }
+
+    /** Whether a Front Officer moved this ticket down the line in the last 30 minutes. */
+    public function movedDown(): bool
+    {
+        return in_array($this->queue_status, ['Waiting', 'Called'], true) && Cache::has(self::movedDownKey($this->id));
+    }
+
     /** This ticket's place in the line, as a time. */
     public function lineTime(): \Illuminate\Support\Carbon
     {

@@ -21,7 +21,7 @@ class ScannerController extends Controller
         $branch = Appointment::hasHomeStart() && strlen($token) >= 32
             ? SpaBranch::where('scanner_token', $token)->first()
             : null;
-        abort_if(! $branch, 404, 'This scanner link no longer works. Ask the front desk for the new one.');
+        abort_if(! $branch, 404, 'This scanner link no longer works. Ask a Front Officer for the new one.');
 
         return $branch;
     }

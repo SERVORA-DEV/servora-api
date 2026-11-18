@@ -253,7 +253,7 @@ class ServiceExtensionService
         if ($user) {
             return app(PolicyGate::class)->check($user, $problems);
         }
-        abort_if((bool) $problems, 422, collect($problems)->pluck('message')->filter()->first() ?? 'Extending this service needs the front desk.');
+        abort_if((bool) $problems, 422, collect($problems)->pluck('message')->filter()->first() ?? 'Extending this service needs the Front Officer.');
 
         return [];
     }

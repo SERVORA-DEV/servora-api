@@ -336,7 +336,7 @@ class FrontOfficeDashboardService
         return match ($role) {
             'therapist' => 'Staff',
             'manager' => 'Manager',
-            'frontdesk', 'front_officer' => 'Front desk',
+            'frontdesk', 'front_officer' => 'Front Officer',
             default => ucfirst(str_replace('_', ' ', (string) $role)),
         };
     }

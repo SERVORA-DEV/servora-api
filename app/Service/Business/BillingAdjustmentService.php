@@ -788,7 +788,7 @@ class BillingAdjustmentService
         return match ($role) {
             'business_owner' => 'Owner',
             'manager' => 'Manager',
-            default => 'Front desk',
+            default => 'Front Officer',
         };
     }
 

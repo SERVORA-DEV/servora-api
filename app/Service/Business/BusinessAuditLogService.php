@@ -49,7 +49,7 @@ class BusinessAuditLogService
             // The branch the screen is working on, when the web says which.
             $working = request()->header('X-Branch');
             if ($working && ! $run->contains('uuid', $working) && AccountScope::allBranches($user)->contains('uuid', $working)) {
-                return response()->json(['message' => 'You work this branch at the front desk only, so its Audit Log is not yours to see.'], 403);
+                return response()->json(['message' => 'You work this branch as a Front Officer only, so its Audit Log is not yours to see.'], 403);
             }
             $branches = $run->sortBy('branch_name')->values();
             $wanted = $filters['branch'] ?? $working;

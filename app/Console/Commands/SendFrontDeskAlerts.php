@@ -29,7 +29,7 @@ class SendFrontDeskAlerts extends Command
 {
     protected $signature = 'staff:send-front-desk-alerts';
 
-    protected $description = 'Notify front desk and managers about upcoming bookings and attendance issues.';
+    protected $description = 'Notify Front Officers and managers about upcoming bookings and attendance issues.';
 
     private const STILL_IN_AFTER_MINUTES = 30;
 

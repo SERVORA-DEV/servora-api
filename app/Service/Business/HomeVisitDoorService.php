@@ -100,7 +100,7 @@ class HomeVisitDoorService
                         .implode(' ', $chosen['policy']).' Extend it from the booking to approve.',
                 );
 
-                return $this->visit($appointment, 'Sent to the front desk for approval. The time here updates once they extend it.', 'requested');
+                return $this->visit($appointment, 'Sent to the Front Officer for approval. The time here updates once they extend it.', 'requested');
             }
 
             $result = $this->extensions->extendLine($line, array_filter([
@@ -266,7 +266,7 @@ class HomeVisitDoorService
         abort_if(! $appointment, 422, "This code isn't for a booking at {$branch->branch_name}. Check the code, or use the scanner of the branch the client booked with.");
         abort_if(! $appointment->isHomeService(), 422, 'This booking isn\'t a home visit.');
         abort_if(in_array($appointment->status, [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW], true), 422,
-            $appointment->status === Appointment::STATUS_CANCELLED ? 'This booking was cancelled.' : 'This booking was marked as a no-show. Call the front desk.');
+            $appointment->status === Appointment::STATUS_CANCELLED ? 'This booking was cancelled.' : 'This booking was marked as a no-show. Call the Front Officer.');
         $appointment->setRelation('branch', $branch);
 
         return $appointment;

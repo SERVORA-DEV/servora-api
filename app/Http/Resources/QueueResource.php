@@ -15,6 +15,8 @@ class QueueResource extends JsonResource
             'queue_status' => $this->queue_status,
             // Where it stands in the line (changes when a client is skipped); the ticket number never does.
             'line_at' => $this->lineTime()->copy()->utc()->format('Y-m-d\\TH:i:s.u\\Z'),
+            // A Front Officer moved this client down the line in the last 30 minutes (Queue::movedDown).
+            'moved_down' => $this->movedDown(),
             'called_at' => optional($this->called_at)->toIso8601String(),
             'served_at' => optional($this->served_at)->toIso8601String(),
             'completed_at' => optional($this->completed_at)->toIso8601String(),

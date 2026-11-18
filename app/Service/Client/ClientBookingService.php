@@ -8,6 +8,7 @@ use App\Models\Appointment;
 use App\Models\Attendance;
 use App\Models\Client;
 use App\Models\Queue;
+use App\Repository\Business\QueueRepository;
 use App\Models\Review;
 use App\Models\SpaBranch;
 use App\Models\Staff;
@@ -20,6 +21,7 @@ use App\Support\BusinessDay;
 use App\Support\Suspension;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 // A mobile client's own bookings, across every spa they've booked with.
@@ -55,6 +57,7 @@ class ClientBookingService
         private AppointmentAvailabilityService $availabilityService,
         private StaffNotifier $staffNotifier,
         private BookingSlotService $slotService,
+        private QueueRepository $queueRepository,
     ) {}
 
     private function clientName(Appointment $appointment): string
@@ -271,21 +274,30 @@ class ClientBookingService
         });
     }
 
-    // Live position for the queue screen, polled by the app. Order is FIFO
-    // by created_at, the same order the front desk's queue board uses
-    // (QueueRepository::listForBranchDate).
+    // Live position for the queue screen, polled by the app. "Ahead" is the
+    // same line the Front Officer's Live Queue shows (QueueRepository::aheadOf):
+    // by place in the line, walk-ins first when the branch prioritizes them.
     public function queue(User $user, string $uuid)
     {
         $appointment = $this->findMine($user, $uuid);
         $ticket = $appointment->queue;
 
         if (! $ticket) {
+            // Called by the spa (AppointmentService::callQueue) and not checked in yet.
+            $called = $appointment->status === Appointment::STATUS_SCHEDULED
+                ? Cache::get(Queue::calledKey($appointment->id))
+                : null;
+
             return response()->json(['data' => [
                 'appointment_uuid' => $appointment->uuid,
                 'in_queue' => false,
                 'status' => $appointment->status,
+                'called' => (bool) $called,
+                'called_at' => $called,
                 'message' => $appointment->status === Appointment::STATUS_SCHEDULED
-                    ? 'You join the queue when you check in at the front desk.'
+                    ? ($called
+                        ? 'The spa is ready for you. Please come in and check in with the Front Officer.'
+                        : 'You join the queue when you check in with the Front Officer.')
                     : null,
             ]]);
         }
@@ -293,11 +305,11 @@ class ClientBookingService
         $date = $ticket->appointment_date->format('Y-m-d');
         $sameDay = Queue::where('spa_branch_id', $ticket->spa_branch_id)->where('appointment_date', $date);
 
-        $ahead = (clone $sameDay)
-            ->where('queue_status', 'Waiting')
-            ->whereRaw(Queue::lineKey().' < ?', [$ticket->lineTime()])
-            ->with('appointment.services.serviceVariant')
-            ->get();
+        $ticket->setRelation('appointment', $appointment);
+        $walkInsFirst = $appointment->branch
+            ? (bool) (BookingPolicy::for($appointment->branch)['walk_ins_first_priority'] ?? false)
+            : false;
+        $ahead = $this->queueRepository->aheadOf($ticket, $walkInsFirst);
 
         $nowServing = (clone $sameDay)
             ->whereIn('queue_status', ['Called', 'Serving'])
@@ -317,7 +329,7 @@ class ClientBookingService
             ? max($this->availabilityService->estimatedDurationMinutes($q->appointment), 30)
             : 30);
 
-        $waiting = $ticket->queue_status === 'Waiting';
+        $waiting = in_array($ticket->queue_status, ['Waiting', 'Called'], true);
 
         return response()->json(['data' => [
             'appointment_uuid' => $appointment->uuid,
@@ -327,6 +339,10 @@ class ClientBookingService
             'queue_status' => $ticket->queue_status,
             'now_serving' => $nowServing,
             'ahead' => $waiting ? $ahead->count() : 0,
+            // Their place in line (1 = next), the same number the Front Officer's Live Queue shows.
+            'position' => $waiting ? $ahead->count() + 1 : null,
+            // A Front Officer moved them down the line in the last 30 minutes.
+            'moved_down' => $ticket->movedDown(),
             'estimated_wait_minutes' => $waiting ? (int) ceil($minutesAhead / $therapists) : 0,
             'called_at' => optional($ticket->called_at)->toIso8601String(),
             'updated_at' => now()->toIso8601String(),

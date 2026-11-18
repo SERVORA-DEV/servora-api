@@ -219,7 +219,7 @@ class BillingService
 
             // The front desk can only use the discounts the owner made; a voucher is the client's, from the app.
             if ($voucherUuid && $user->role === 'front_officer') {
-                return $this->reject('Vouchers are used in the client\'s mobile app, not at the front desk.');
+                return $this->reject('Vouchers are used in the client\'s mobile app, not by the Front Officer.');
             }
 
             $program = null;

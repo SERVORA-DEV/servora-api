@@ -351,7 +351,7 @@ class AccountService
             return response()->json(['message' => 'This staff member already has an account.'], 422);
         }
         if (! array_key_exists($staff->role, Staff::ACCOUNT_ROLE_MAP)) {
-            return response()->json(['message' => 'Only Manager or Front Desk staff can be granted a login.'], 422);
+            return response()->json(['message' => 'Only Managers and Front Officers can be given a login.'], 422);
         }
         if ($staff->branch?->plan_hold_at) {
             return response()->json(['message' => "{$staff->branch->branch_name} is on hold, so no logins can be added there.", 'code' => 'PLAN_HOLD'], 422);

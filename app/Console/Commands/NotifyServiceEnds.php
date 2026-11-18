@@ -13,7 +13,7 @@ class NotifyServiceEnds extends Command
 {
     protected $signature = 'appointments:notify-service-ends';
 
-    protected $description = 'Notify front desk and managers when a service in progress has run its time.';
+    protected $description = 'Notify Front Officers and managers when a service in progress has run its time.';
 
     public function handle(ServiceEndNotifier $notifier): int
     {
