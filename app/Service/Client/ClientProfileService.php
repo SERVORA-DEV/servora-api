@@ -49,8 +49,8 @@ class ClientProfileService
         }
 
         // The email an account signed up with is immutable here: it is the
-        // login identifier and the key for password_reset_tokens and
-        // email_verification_otps, and it has already been OTP-verified.
+        // login identifier and the key for its one-time codes
+        // (App\Support\Access\OneTimeCodes), and it has already been OTP-verified.
         // Changing it behind the user's back would strand email_verified_at on
         // an address nobody proved they own. This branch only fires for an
         // account created without an email — impossible today (users.email is

@@ -4,7 +4,7 @@ namespace App\Enums;
 
 /**
  * A manager's request for a service or package the catalog doesn't have:
- * catalog_requests.status (CatalogRequestService).
+ * approval_requests.status for catalog requests (CatalogRequestService).
  */
 enum CatalogRequestStatus: string
 {

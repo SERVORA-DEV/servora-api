@@ -110,7 +110,7 @@ class ProgramRequestService
 
         $waiting = ProgramRequest::where('spa_branch_id', $branch->id)->where('status', ProgramRequestStatus::Pending->value);
 
-        if ((clone $waiting)->where('type', $type)->whereRaw('LOWER(name) = ?', [$lower])->exists()) {
+        if ((clone $waiting)->where('kind', $type)->whereRaw('LOWER(name) = ?', [$lower])->exists()) {
             return $this->refuse("\"{$name}\" has already been requested and is waiting for the owner.");
         }
 

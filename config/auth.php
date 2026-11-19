@@ -92,6 +92,9 @@ return [
     |
     */
 
+    // Not used by Servora: a forgotten password is reset with an emailed code
+    // (App\Service\Auth\PasswordResetService, codes in one_time_codes), not with
+    // Laravel's reset links. Kept so the framework's defaults stay complete.
     'passwords' => [
         'users' => [
             'provider' => 'users',

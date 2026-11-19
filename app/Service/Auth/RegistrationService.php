@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Repository\UserRepository;
 use App\Service\Concerns\ChecksOtpCodes;
 use App\Service\Concerns\SendsOtpMail;
+use App\Support\Access\OneTimeCodes;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -201,14 +202,7 @@ class RegistrationService
     {
         $otp = (string) random_int(100000, 999999);
 
-        DB::table('email_verification_otps')->updateOrInsert(
-            ['email' => $user->email, 'audience' => $user->audience],
-            [
-                'otp' => Hash::make($otp),
-                'created_at' => now(),
-                'attempts' => 0,
-            ]
-        );
+        OneTimeCodes::put(OneTimeCodes::EMAIL_VERIFICATION, $user, Hash::make($otp));
 
         // The row is written before the send and left in place even if the
         // send fails, so a code that did go out (slow SMTP, delayed inbox)
@@ -234,29 +228,29 @@ class RegistrationService
             ], 200);
         }
 
-        $record = DB::table('email_verification_otps')->where('email', $user->email)->where('audience', $user->audience)->first();
+        $record = OneTimeCodes::find(OneTimeCodes::EMAIL_VERIFICATION, $user);
 
         if (! $record) {
             return response()->json(['message' => 'Invalid code.'], 422);
         }
 
         if (Carbon::parse($record->created_at)->addMinutes(self::OTP_EXPIRY_MINUTES)->isPast()) {
-            DB::table('email_verification_otps')->where('email', $user->email)->where('audience', $user->audience)->delete();
+            OneTimeCodes::forget(OneTimeCodes::EMAIL_VERIFICATION, $user);
 
             return response()->json([
                 'message' => 'This code has expired. Please register again to receive a new one.'
             ], 410);
         }
 
-        if (! Hash::check($payload['otp'], $record->otp)) {
-            return $this->rejectOtpGuess('email_verification_otps', $user, (int) $record->attempts);
+        if (! Hash::check($payload['otp'], $record->code_hash)) {
+            return $this->rejectOtpGuess(OneTimeCodes::EMAIL_VERIFICATION, $user, (int) $record->attempts);
         }
 
         $user->markEmailAsVerified();
         $user->account_status = AccountStatus::Active->value;
         $user->save();
 
-        DB::table('email_verification_otps')->where('email', $user->email)->where('audience', $user->audience)->delete();
+        OneTimeCodes::forget(OneTimeCodes::EMAIL_VERIFICATION, $user);
 
         return response()->json([
             'message' => 'Email verified successfully. You can now sign in.'

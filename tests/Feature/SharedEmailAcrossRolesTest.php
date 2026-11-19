@@ -120,8 +120,8 @@ class SharedEmailAcrossRolesTest extends TestCase
             'email' => self::EMAIL, 'audience' => 'mobile',
         ])->assertOk();
 
-        $this->assertDatabaseHas('password_reset_tokens', ['email' => self::EMAIL, 'audience' => 'mobile']);
-        $this->assertDatabaseMissing('password_reset_tokens', ['email' => self::EMAIL, 'audience' => 'web']);
+        $this->assertDatabaseHas('one_time_codes', ['purpose' => 'password_reset', 'email' => self::EMAIL, 'audience' => 'mobile']);
+        $this->assertDatabaseMissing('one_time_codes', ['purpose' => 'password_reset', 'email' => self::EMAIL, 'audience' => 'web']);
         $this->assertSame($ownerHash, $owner->fresh()->password);
     }
 
@@ -132,8 +132,8 @@ class SharedEmailAcrossRolesTest extends TestCase
         $client = $this->client(['email_verified_at' => null]);
 
         $this->postJson('/api/auth/resend-registration-otp', ['email' => self::EMAIL])->assertOk();
-        $this->assertDatabaseHas('email_verification_otps', ['email' => self::EMAIL, 'audience' => 'mobile']);
-        $this->assertDatabaseMissing('email_verification_otps', ['email' => self::EMAIL, 'audience' => 'web']);
+        $this->assertDatabaseHas('one_time_codes', ['purpose' => 'email_verification', 'email' => self::EMAIL, 'audience' => 'mobile']);
+        $this->assertDatabaseMissing('one_time_codes', ['purpose' => 'email_verification', 'email' => self::EMAIL, 'audience' => 'web']);
 
         $this->assertNull($owner->fresh()->email_verified_at);
     }

@@ -2,16 +2,23 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Schema;
 
 // A manager's request for a service or package the catalog doesn't have,
 // waiting for the owner — see CatalogRequestService.
+//
+// Kept in approval_requests with the other requests a manager makes of the owner
+// (subject 'catalog'); this model sees only its own rows and marks the ones it makes.
 class CatalogRequest extends Model
 {
     use HasUuids;
+
+    public const SUBJECT = 'catalog';
+
+    protected $table = 'approval_requests';
 
     protected $fillable = [
         'uuid',
@@ -22,7 +29,7 @@ class CatalogRequest extends Model
         'name',
         'category',
         'details',
-        // The form the manager filled in (see the migration that adds it).
+        // The form the manager filled in.
         'payload',
         'status',
         'decided_by_user_id',
@@ -38,18 +45,26 @@ class CatalogRequest extends Model
         ];
     }
 
-    // Whether the payload column exists yet (the migration has been run).
-    // Until then a request is only a name and a note, as before.
+    protected static function booted(): void
+    {
+        static::addGlobalScope('subject', fn (Builder $q) => $q->where('approval_requests.subject', self::SUBJECT));
+        static::creating(fn (self $request) => $request->setAttribute('subject', self::SUBJECT));
+    }
+
+    /** The manager's note, kept in the shared `note` column. */
+    protected function details(): Attribute
+    {
+        return Attribute::make(
+            get: fn ($value, array $attributes) => $attributes['note'] ?? null,
+            set: fn ($value) => ['note' => $value],
+        );
+    }
+
+    // The form a request carries. (Was a check that the payload column had been added; it is
+    // always there in approval_requests. Kept until the old tables are dropped.)
     public static function hasPayload(): bool
     {
-        $known = Cache::get('schema:catalog_request_payload');
-        if (is_bool($known)) {
-            return $known;
-        }
-        $ready = Schema::hasColumn('catalog_requests', 'payload');
-        $ready ? Cache::forever('schema:catalog_request_payload', true) : Cache::put('schema:catalog_request_payload', false, 60);
-
-        return $ready;
+        return true;
     }
 
     public function uniqueIds()

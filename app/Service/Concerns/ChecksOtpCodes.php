@@ -3,7 +3,7 @@
 namespace App\Service\Concerns;
 
 use App\Models\User;
-use Illuminate\Support\Facades\DB;
+use App\Support\Access\OneTimeCodes;
 
 /**
  * The rules every one-time code (sign-up, password reset, the second factor by email) follows:
@@ -17,25 +17,22 @@ trait ChecksOtpCodes
     private const MAX_OTP_ATTEMPTS = 5;
 
     /**
-     * Records a wrong OTP / reset-token guess against its row and, once the
-     * cap is hit, deletes the row so the code can no longer be guessed;
+     * Records a wrong OTP / reset-token guess against its code and, once the
+     * cap is hit, throws the code away so it can no longer be guessed;
      * the user has to request a fresh one. Shared by the password-reset and
-     * registration OTP checks ($table is one of two fixed table names,
-     * never user input).
+     * registration OTP checks ($purpose is one of OneTimeCodes' purposes).
      */
-    private function rejectOtpGuess(string $table, User $user, int $attempts, string $message = 'Invalid code.')
+    private function rejectOtpGuess(string $purpose, User $user, int $attempts, string $message = 'Invalid code.')
     {
-        $query = DB::table($table)->where('email', $user->email)->where('audience', $user->audience);
-
         if ($attempts + 1 >= self::MAX_OTP_ATTEMPTS) {
-            $query->delete();
+            OneTimeCodes::forget($purpose, $user);
 
             return response()->json([
                 'message' => 'Too many incorrect attempts. Please request a new code.'
             ], 429);
         }
 
-        $query->increment('attempts');
+        OneTimeCodes::countWrongGuess($purpose, $user);
 
         return response()->json(['message' => $message], 422);
     }

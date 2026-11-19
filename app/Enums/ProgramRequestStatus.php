@@ -4,7 +4,7 @@ namespace App\Enums;
 
 /**
  * A manager's request for a new voucher, discount or membership for their branch:
- * program_requests.status (ProgramRequestService).
+ * approval_requests.status for program requests (ProgramRequestService).
  */
 enum ProgramRequestStatus: string
 {

@@ -8,8 +8,8 @@ use App\Repository\AuditLogRepository;
 use App\Repository\UserRepository;
 use App\Service\Concerns\ChecksOtpCodes;
 use App\Service\Concerns\SendsOtpMail;
+use App\Support\Access\OneTimeCodes;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 
@@ -53,14 +53,7 @@ class PasswordResetService
 
         $otp = (string) random_int(100000, 999999);
 
-        DB::table('password_reset_tokens')->updateOrInsert(
-            ['email' => $user->email, 'audience' => $user->audience],
-            [
-                'token' => Hash::make($otp),
-                'created_at' => now(),
-                'attempts' => 0,
-            ]
-        );
+        OneTimeCodes::put(OneTimeCodes::PASSWORD_RESET, $user, Hash::make($otp));
 
         $sent = $this->deliver(
             $user->email,
@@ -85,31 +78,28 @@ class PasswordResetService
             return response()->json(['message' => 'Invalid code.'], 422);
         }
 
-        $record = DB::table('password_reset_tokens')->where('email', $user->email)->where('audience', $user->audience)->first();
+        $record = OneTimeCodes::find(OneTimeCodes::PASSWORD_RESET, $user);
 
         if (! $record) {
             return response()->json(['message' => 'Invalid code.'], 422);
         }
 
         if (Carbon::parse($record->created_at)->addMinutes(self::OTP_EXPIRY_MINUTES)->isPast()) {
-            DB::table('password_reset_tokens')->where('email', $user->email)->where('audience', $user->audience)->delete();
+            OneTimeCodes::forget(OneTimeCodes::PASSWORD_RESET, $user);
 
             return response()->json([
                 'message' => 'This code has expired. Please request a new one.'
             ], 410);
         }
 
-        if (! Hash::check($payload['otp'], $record->token)) {
-            return $this->rejectOtpGuess('password_reset_tokens', $user, (int) $record->attempts);
+        if (! Hash::check($payload['otp'], $record->code_hash)) {
+            return $this->rejectOtpGuess(OneTimeCodes::PASSWORD_RESET, $user, (int) $record->attempts);
         }
 
+        // The code is swapped for a reset token, kept in its place (the code can't be used twice).
         $resetToken = Str::random(64);
 
-        DB::table('password_reset_tokens')->where('email', $user->email)->where('audience', $user->audience)->update([
-            'token' => Hash::make($resetToken),
-            'created_at' => now(),
-            'attempts' => 0,
-        ]);
+        OneTimeCodes::put(OneTimeCodes::PASSWORD_RESET, $user, Hash::make($resetToken));
 
         return response()->json([
             'message' => 'Code verified. You may now reset your password.',
@@ -125,18 +115,18 @@ class PasswordResetService
             return response()->json(['message' => 'Invalid or expired reset token.'], 422);
         }
 
-        $record = DB::table('password_reset_tokens')->where('email', $user->email)->where('audience', $user->audience)->first();
+        $record = OneTimeCodes::find(OneTimeCodes::PASSWORD_RESET, $user);
 
         if (! $record) {
             return response()->json(['message' => 'Invalid or expired reset token.'], 422);
         }
 
-        if (! Hash::check($payload['reset_token'], $record->token)) {
-            return $this->rejectOtpGuess('password_reset_tokens', $user, (int) $record->attempts, 'Invalid or expired reset token.');
+        if (! Hash::check($payload['reset_token'], $record->code_hash)) {
+            return $this->rejectOtpGuess(OneTimeCodes::PASSWORD_RESET, $user, (int) $record->attempts, 'Invalid or expired reset token.');
         }
 
         if (Carbon::parse($record->created_at)->addMinutes(self::RESET_TOKEN_EXPIRY_MINUTES)->isPast()) {
-            DB::table('password_reset_tokens')->where('email', $user->email)->where('audience', $user->audience)->delete();
+            OneTimeCodes::forget(OneTimeCodes::PASSWORD_RESET, $user);
 
             return response()->json([
                 'message' => 'This reset session has expired. Please start again.'
@@ -147,7 +137,7 @@ class PasswordResetService
             'password' => $payload['password'],
         ]);
 
-        DB::table('password_reset_tokens')->where('email', $user->email)->where('audience', $user->audience)->delete();
+        OneTimeCodes::forget(OneTimeCodes::PASSWORD_RESET, $user);
 
         foreach ($user->tokens as $token) {
             $this->auditLogRepository->recordSessionEnded($user->id, $token, 'password_reset');
