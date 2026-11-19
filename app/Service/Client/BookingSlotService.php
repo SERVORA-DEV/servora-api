@@ -12,6 +12,7 @@ use App\Models\BranchSchedule;
 use App\Models\SpaBranch;
 use App\Models\Staff;
 use App\Models\StaffSchedule;
+use App\Models\StaffTimeOff;
 use App\Service\Business\AppointmentAvailabilityService;
 use App\Service\Business\HomeServiceRules;
 use App\Support\Branches\BranchClosures;
@@ -390,11 +391,20 @@ class BookingSlotService
             ->get()
             ->groupBy('staff_id');
 
+        // Away for the day: marked "On leave" on the attendance roster, or time off
+        // set on the employee (Employees → Time off) — the same two that
+        // AppointmentAvailabilityService::leaveOn() refuses a booking for.
         $onLeave = Attendance::whereIn('staff_id', $ids)
             ->whereDate('attendance_date', $date)
             ->where('status', AttendanceStatus::OnLeave->value)
-            ->pluck('staff_id')
-            ->all();
+            ->pluck('staff_id');
+        if (StaffTimeOff::ready()) {
+            $onLeave = $onLeave->merge(StaffTimeOff::whereIn('staff_id', $ids)
+                ->where('starts_on', '<=', $date)
+                ->where('ends_on', '>=', $date)
+                ->pluck('staff_id'));
+        }
+        $onLeave = $onLeave->map(fn ($id) => (int) $id)->unique()->values()->all();
 
         return ['schedules' => $schedules, 'prevSchedules' => $prevSchedules, 'onLeave' => $onLeave];
     }

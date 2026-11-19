@@ -12,12 +12,15 @@ use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
 use App\Models\Staff;
 use App\Models\StaffSchedule;
+use App\Models\StaffTimeOff;
 use App\Models\TherapistAssignment;
 use App\Models\User;
 use App\Service\Business\AppointmentService;
 use App\Service\Business\SpaBranchService;
+use App\Service\Client\BookingSlotService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\JsonResponse;
+use Laravel\Sanctum\Sanctum;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\Concerns\MakesBranchesBookable;
 use Tests\TestCase;
@@ -505,5 +508,83 @@ class TherapistAvailabilityTest extends TestCase
             . '?from=2027-03-01&to=2027-04-30')
             ->assertOk()
             ->assertJsonPath('data.days_off', []);
+    }
+
+    // ── Time off ─────────────────────────────────────────────────────────
+    //
+    // Time off set on the employee (Employees → Time off, StaffTimeOff) means
+    // no booking that day, whatever their shifts say — for the time chips, the
+    // booking itself and the staff step, not only when they are asked for by name.
+
+    private function timeOff(Staff $staff, string $from, string $to): void
+    {
+        StaffTimeOff::create(['staff_id' => $staff->id, 'type' => 'leave', 'starts_on' => $from, 'ends_on' => $to]);
+    }
+
+    /** POST /client/appointments at 10:00 on DATE, as a new client. */
+    private function bookOverHttp(?string $therapistUuid)
+    {
+        Sanctum::actingAs($this->client());
+        $payload = $this->bookingPayload($therapistUuid);
+        $payload['client']['gender'] = 'Female';
+
+        return $this->postJson('/api/client/appointments', $payload);
+    }
+
+    /** @return list<string> the bookable start times on DATE */
+    private function bookableTimes(?Staff $therapist = null): array
+    {
+        $slots = app(BookingSlotService::class)->slots($this->branch, self::DATE, 60, $therapist)['slots'];
+
+        return array_values(array_column(array_filter($slots, fn ($s) => $s['available']), 'time'));
+    }
+
+    public function test_with_the_only_therapist_on_time_off_nothing_is_offered_or_booked(): void
+    {
+        $this->workWeekExcept();
+        $this->assertNotEmpty($this->bookableTimes(), 'a working day to begin with');
+
+        $this->timeOff($this->therapist, self::DATE, self::DATE);
+
+        $this->assertSame([], $this->bookableTimes());
+        $this->assertSame([], $this->bookableTimes($this->therapist));
+        $this->assertNotNull(app(BookingSlotService::class)->bookingProblem($this->branch, self::DATE, '10:00', 60));
+
+        $this->bookOverHttp(null)->assertStatus(422);
+        $this->bookOverHttp($this->therapist->uuid)->assertStatus(422);
+        $this->assertSame(0, Appointment::count());
+    }
+
+    public function test_a_colleague_still_takes_the_booking_but_not_as_the_one_away(): void
+    {
+        $this->workWeekExcept();
+        $colleague = Staff::factory()->create(['spa_branch_id' => $this->branch->id, 'role' => 'therapist', 'status' => 'active']);
+        StaffSchedule::create(['staff_id' => $colleague->id, 'day_of_week' => self::DAY, 'start_time' => '09:00:00', 'end_time' => '18:00:00']);
+        $this->timeOff($this->therapist, self::DATE, self::DATE);
+
+        $this->assertContains('10:00', $this->bookableTimes());
+        $this->assertSame([], $this->bookableTimes($this->therapist));
+
+        $this->bookOverHttp($this->therapist->uuid)->assertStatus(422);
+        $this->bookOverHttp(null)->assertSuccessful();
+        $this->assertSame(1, Appointment::count());
+        // Not given to the therapist who is away.
+        $this->assertSame(0, TherapistAssignment::where('staff_id', $this->therapist->id)->count());
+    }
+
+    // The staff step (free-times) and "next free at" skip the days away, agreeing with the calendar.
+    public function test_the_staff_step_skips_days_off_on_time_off(): void
+    {
+        $this->workWeekExcept();
+        $this->timeOff($this->therapist, self::DATE, '2027-03-03');
+
+        $free = $this->getJson("/api/spas/{$this->branch->uuid}/therapists/free-times?duration_minutes=60&days=7&from=" . self::DATE)
+            ->assertOk()
+            ->json('data.0');
+        $this->assertSame($this->therapist->uuid, $free['uuid']);
+        $this->assertSame('2027-03-04', $free['date']);
+
+        $this->assertSame([self::DATE, '2027-03-03'], array_values(array_intersect($this->daysOff(), [self::DATE, '2027-03-03', '2027-03-04'])));
+        $this->assertSame([$this->therapist->id => null], app(BookingSlotService::class)->nextFreeStarts($this->branch, self::DATE, '10:00', 60, [$this->therapist->id]));
     }
 }
