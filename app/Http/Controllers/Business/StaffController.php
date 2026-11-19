@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Business\StaffEarningsRequest;
 use App\Http\Requests\Business\StaffRequest;
 use App\Http\Requests\Business\StaffServiceRequest;
 use App\Service\Business\StaffEarningsService;
@@ -11,12 +12,9 @@ use Illuminate\Http\Request;
 
 class StaffController extends Controller
 {
-    private StaffService $staffService;
-
-    public function __construct(StaffService $staffService)
-    {
-        $this->staffService = $staffService;
-    }
+    public function __construct(
+        private StaffService $staffService,
+    ) {}
 
     public function index(Request $request)
     {
@@ -49,12 +47,9 @@ class StaffController extends Controller
     }
 
     // What they earned between two dates, line by line (the employee page).
-    public function earnings(Request $request, StaffEarningsService $earnings, string $uuid)
+    public function earnings(StaffEarningsRequest $request, StaffEarningsService $earnings, string $uuid)
     {
-        $data = $request->validate([
-            'from' => ['nullable', 'date_format:Y-m-d'],
-            'to' => ['nullable', 'date_format:Y-m-d'],
-        ]);
+        $data = $request->validated();
 
         return $earnings->forStaff($request->user(), $uuid, $data['from'] ?? null, $data['to'] ?? null);
     }

@@ -8,12 +8,9 @@ use Illuminate\Http\Request;
 
 class FrontOfficeDashboardController extends Controller
 {
-    private FrontOfficeDashboardService $frontOfficeDashboardService;
-
-    public function __construct(FrontOfficeDashboardService $frontOfficeDashboardService)
-    {
-        $this->frontOfficeDashboardService = $frontOfficeDashboardService;
-    }
+    public function __construct(
+        private FrontOfficeDashboardService $frontOfficeDashboardService,
+    ) {}
 
     public function index(Request $request)
     {

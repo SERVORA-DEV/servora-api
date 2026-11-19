@@ -8,14 +8,14 @@ use App\Models\Service;
 use App\Models\User;
 use App\Repository\Business\AddonRepository;
 use App\Repository\SpaBusinessRepository;
-use App\Support\ServiceAddon;
+use App\Support\Catalog\ServiceAddon;
 use Illuminate\Support\Facades\DB;
 
 // The owner's add-ons: the extras the front desk can put on a service during
 // a visit (App\Models\Addon). Each says which service categories it goes
 // with, and either every service in them or only the ones ticked — the rules
-// are in App\Support\ServiceAddon. What happens on a visit is in
-// AppointmentService::addAddon.
+// are in App\Support\Catalog\ServiceAddon. What happens on a visit is in
+// VisitItemsService::addAddon.
 class AddonService
 {
     public function __construct(

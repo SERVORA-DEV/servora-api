@@ -8,12 +8,9 @@ use Illuminate\Http\Request;
 
 class SpaBusinessController extends Controller
 {
-    private SpaBusinessService $spaBusinessService;
-
-    public function __construct(SpaBusinessService $spaBusinessService)
-    {
-        $this->spaBusinessService = $spaBusinessService;
-    }
+    public function __construct(
+        private SpaBusinessService $spaBusinessService,
+    ) {}
 
     public function me(Request $request)
     {

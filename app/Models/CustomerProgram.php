@@ -19,7 +19,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 //                condition a client earns it by (condition_kind/condition_value). It can be for
 //                certain services only — usableKind/usableCategory/usableServices say what it
 //                comes off, earnKind/earnCategory/earnServices which visits count toward an
-//                "after N visits" one (see App\Support\VoucherTarget); usableOn and earnOn are
+//                "after N visits" one (see App\Support\Programs\VoucherTarget); usableOn and earnOn are
 //                the readable forms, written on save
 //   discount   — for every client, or members/promos only (audience; values: kind, percent, appliesTo, eligible)
 //   membership — a paid bundle of vouchers + discounts (values: price, billing, perks; items())

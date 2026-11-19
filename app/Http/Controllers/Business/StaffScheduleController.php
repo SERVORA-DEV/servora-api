@@ -3,18 +3,16 @@
 namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Business\DeclineRequest;
 use App\Http\Requests\Business\StaffScheduleRequest;
 use App\Service\Business\StaffScheduleService;
 use Illuminate\Http\Request;
 
 class StaffScheduleController extends Controller
 {
-    private StaffScheduleService $staffScheduleService;
-
-    public function __construct(StaffScheduleService $staffScheduleService)
-    {
-        $this->staffScheduleService = $staffScheduleService;
-    }
+    public function __construct(
+        private StaffScheduleService $staffScheduleService,
+    ) {}
 
     public function show(Request $request, string $uuid)
     {
@@ -44,9 +42,9 @@ class StaffScheduleController extends Controller
         return $this->staffScheduleService->approve($request->user(), $uuid);
     }
 
-    public function rejectRequest(Request $request, string $uuid)
+    public function rejectRequest(DeclineRequest $request, string $uuid)
     {
-        $reason = $request->validate(['reason' => 'nullable|string|max:500'])['reason'] ?? null;
+        $reason = $request->validated()['reason'] ?? null;
 
         return $this->staffScheduleService->reject($request->user(), $uuid, $reason);
     }

@@ -2,7 +2,7 @@
 
 namespace App\Support;
 
-use App\Services\ImageUploadService;
+use App\Service\Uploads\ImageUploadService;
 
 // A person's profile picture lives in users.profile_photo. What is stored there
 // depends on where it came from: a Cloudinary public_id for a picture uploaded

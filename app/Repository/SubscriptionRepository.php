@@ -2,15 +2,12 @@
 
 namespace App\Repository;
 
+use App\Enums\PlanChangeStatus;
+use App\Enums\SubscriptionStatus;
 use App\Models\Subscription;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 class SubscriptionRepository
 {
-    public function paginate(int $perPage = 15)
-    {
-        return Subscription::latest()->paginate($perPage);
-    }
 
     public function create(array $payload)
     {
@@ -20,11 +17,6 @@ class SubscriptionRepository
     public function findByUuid(string $uuid)
     {
         return Subscription::where('uuid', $uuid)->firstOrFail();
-    }
-
-    public function findByField(string $field, $value)
-    {
-        return Subscription::where($field, $value)->firstOrFail();
     }
 
     // The most recent subscription a business has ever had — active,
@@ -49,7 +41,7 @@ class SubscriptionRepository
     public function findActiveForBusiness(int $spaBusinessId)
     {
         return Subscription::where('spa_business_id', $spaBusinessId)
-            ->where('status', 'Active')
+            ->where('status', SubscriptionStatus::Active->value)
             ->where(function ($query) {
                 $query->whereNull('expires_at')
                     ->orWhere('expires_at', '>', now());
@@ -109,7 +101,7 @@ class SubscriptionRepository
     public function findActiveOrInGraceForBusiness(int $spaBusinessId, int $graceDays)
     {
         return Subscription::where('spa_business_id', $spaBusinessId)
-            ->where('status', 'Active')
+            ->where('status', SubscriptionStatus::Active->value)
             ->where(function ($query) use ($graceDays) {
                 $query->whereNull('expires_at')
                     ->orWhere('expires_at', '>', now())
@@ -145,7 +137,7 @@ class SubscriptionRepository
 
         return Subscription::with(['business.owner', 'business.settings', 'plan', 'pendingPlan', 'scheduledPlan', 'paymentMethod'])
             ->whereIn('id', $latestIdsPerBusiness)
-            ->where('status', 'Active')
+            ->where('status', SubscriptionStatus::Active->value)
             ->where(fn ($q) => $this->notDeclined($q))
             ->whereNotNull('expires_at')
             ->whereBetween('expires_at', [
@@ -166,7 +158,7 @@ class SubscriptionRepository
 
         return Subscription::with(['business.owner', 'plan'])
             ->whereIn('id', $latestIdsPerBusiness)
-            ->where('status', 'Active')
+            ->where('status', SubscriptionStatus::Active->value)
             ->where(function ($query) use ($planId) {
                 $query->where('subscription_plan_id', $planId)
                     ->orWhere('pending_plan_id', $planId);
@@ -181,7 +173,7 @@ class SubscriptionRepository
     private function notDeclined($query)
     {
         return $query->whereNull('plan_change_status')
-            ->orWhere('plan_change_status', '!=', 'declined');
+            ->orWhere('plan_change_status', '!=', PlanChangeStatus::Declined->value);
     }
 
     // How many businesses are currently lapsed: each business can have
@@ -199,7 +191,7 @@ class SubscriptionRepository
 
         // A subscription the owner chose to let end isn't "overdue".
         return Subscription::whereIn('id', $latestIdsPerBusiness)
-            ->where('status', 'Active')
+            ->where('status', SubscriptionStatus::Active->value)
             ->where('is_trial', false)
             ->where(fn ($q) => $this->notDeclined($q))
             ->whereNotNull('expires_at')
@@ -218,12 +210,5 @@ class SubscriptionRepository
     {
         $model = $this->findByUuid($uuid);
         return $model->delete();
-    }
-
-    public function restore(string $uuid)
-    {
-        $model = Subscription::withTrashed()->where('uuid', $uuid)->firstOrFail();
-        $model->restore();
-        return $model;
     }
 }

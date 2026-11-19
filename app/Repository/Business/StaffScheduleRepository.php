@@ -3,7 +3,7 @@
 namespace App\Repository\Business;
 
 use App\Models\StaffSchedule;
-use App\Support\DayOfWeek;
+use App\Support\Branches\DayOfWeek;
 
 // Only ever touches "current" rows — effective_from/effective_until left
 // NULL, per StaffScheduleService's decision to not build a versioning UI yet.

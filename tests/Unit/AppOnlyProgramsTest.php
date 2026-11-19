@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\AppOnlyPrograms;
+use App\Support\Programs\AppOnlyPrograms;
 use PHPUnit\Framework\TestCase;
 
 // Customer programs (points, vouchers, discounts, memberships) are for

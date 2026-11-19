@@ -6,16 +6,12 @@ use App\Http\Requests\UserRequest;
 use App\Service\System\AdminUsersService;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
-use Illuminate\Http\JsonResponse;
 
 class AdminUsersController extends Controller
 {
-    private AdminUsersService $adminUsersService;
-
-    public function __construct(AdminUsersService $adminUsersService)
-    {
-        $this->adminUsersService = $adminUsersService;
-    }
+    public function __construct(
+        private AdminUsersService $adminUsersService,
+    ) {}
 
     public function index(Request $request)
     {
@@ -42,9 +38,4 @@ class AdminUsersController extends Controller
     {
         return $this->adminUsersService->deactivateAdminUsers($uuid, $request->user());
     }
-
-    // public function restore(string $uuid)
-    // {
-    //     return $this->adminUsersService->restoreAdminUsers($uuid);
-    // }
 }

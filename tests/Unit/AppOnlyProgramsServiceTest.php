@@ -12,7 +12,7 @@ use App\Models\SpaBranch;
 use App\Repository\NotificationRepository;
 use App\Service\Business\BillingService;
 use App\Service\Business\ProgramRewardService;
-use App\Support\AppOnlyPrograms;
+use App\Support\Programs\AppOnlyPrograms;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -115,6 +115,16 @@ class AppOnlyProgramsServiceTest extends TestCase
             $t->timestamp('used_at')->nullable();
             $t->integer('used_billing_id')->nullable();
             $t->integer('used_by')->nullable();
+            $t->timestamps();
+        });
+        // Read when a discount goes on a bill (members-only discounts check the client's membership).
+        Schema::create('client_memberships', function (Blueprint $t) {
+            $t->id();
+            $t->integer('client_id');
+            $t->integer('customer_program_id')->nullable();
+            $t->string('status')->nullable();
+            $t->timestamp('starts_at')->nullable();
+            $t->timestamp('ends_at')->nullable();
             $t->timestamps();
         });
         Schema::create('client_point_entries', function (Blueprint $t) {
@@ -310,11 +320,15 @@ class AppOnlyProgramsServiceTest extends TestCase
         $this->assertSame(0, ClientVoucher::count());
     }
 
-    public function test_a_discount_program_is_only_for_app_users(): void
+    // The discounts the owner made are for every client, app or not (only a member's held
+    // discounts stay app-only, AppOnlyPrograms).
+    public function test_a_discount_for_every_client_goes_on_a_walk_ins_bill_too(): void
     {
-        $discount = $this->program(['type' => 'discount', 'name' => 'App 10%', 'values' => ['percent' => 10, 'kind' => '%']]);
+        $discount = $this->program(['type' => 'discount', 'name' => 'Everyone 10%', 'values' => ['percent' => 10, 'kind' => '%']]);
         $walkIn = $this->client(false);
 
-        $this->assertSame(AppOnlyPrograms::MESSAGE, $this->billingCall('discountProgramForBill', $this->bill($walkIn), $discount->uuid));
+        $result = $this->billingCall('discountProgramForBill', $this->bill($walkIn), $discount->uuid);
+        $this->assertIsArray($result);
+        $this->assertSame($discount->id, $result[0]->id);
     }
 }

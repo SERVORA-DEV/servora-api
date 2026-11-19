@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AssignmentStatus;
 use Illuminate\Support\Facades\DB;
 
 // Who is performing a service right now, and which: the therapist's
@@ -27,13 +28,13 @@ class ServingNow
             ->leftJoin('services as sv', 'sv.id', '=', 'v.service_id')
             ->leftJoin('clients as c', 'c.id', '=', 'a.client_id')
             ->whereIn('ta.staff_id', $staffIds)
-            ->where('ta.assignment_status', 'In Progress')
-            ->where('s.status', 'In Progress')
+            ->where('ta.assignment_status', AssignmentStatus::InProgress->value)
+            ->where('s.status', AssignmentStatus::InProgress->value)
             ->whereNull('a.deleted_at')
             // A service left running from a day that is over is not being performed any more (StaleVisit).
-            ->where('a.appointment_date', '>=', \App\Support\StaleVisit::today())
+            ->where('a.appointment_date', '>=', \App\Support\Visits\StaleVisit::today())
             ->orderBy('ta.started_at')
-            ->get(['ta.staff_id', DB::raw((\App\Support\History::ready() ? 'coalesce(s.service_name, sv.name)' : 'sv.name') . ' as service'), 'c.first_name', 'c.last_name'])
+            ->get(['ta.staff_id', DB::raw((\App\Support\Activity\History::ready() ? 'coalesce(s.service_name, sv.name)' : 'sv.name') . ' as service'), 'c.first_name', 'c.last_name'])
             ->unique('staff_id')
             ->mapWithKeys(fn ($row) => [(int) $row->staff_id => [
                 'service' => $row->service,

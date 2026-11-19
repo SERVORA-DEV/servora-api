@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\History;
+use App\Support\Activity\History;
 use PHPUnit\Framework\TestCase;
 
 // A record's own copy comes first; the live value is only a fallback.

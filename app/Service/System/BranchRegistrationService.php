@@ -2,28 +2,21 @@
 
 namespace App\Service\System;
 
+use App\Enums\VerificationStatus;
 use App\Models\User;
 use App\Repository\System\BranchRegistrationRepository;
 use App\Repository\AuditLogRepository;
 use App\Http\Resources\SpaBranchResource;
-use App\Service\NotificationService;
+use App\Service\Notifications\NotificationService;
 use Illuminate\Http\Request;
 
 class BranchRegistrationService
 {
-    private BranchRegistrationRepository $branchRegistrationRepository;
-    private AuditLogRepository $auditLogRepository;
-    private NotificationService $notificationService;
-
     public function __construct(
-        BranchRegistrationRepository $branchRegistrationRepository,
-        AuditLogRepository $auditLogRepository,
-        NotificationService $notificationService
-    ) {
-        $this->branchRegistrationRepository = $branchRegistrationRepository;
-        $this->auditLogRepository = $auditLogRepository;
-        $this->notificationService = $notificationService;
-    }
+        private BranchRegistrationRepository $branchRegistrationRepository,
+        private AuditLogRepository $auditLogRepository,
+        private NotificationService $notificationService,
+    ) {}
 
     public function listPending(int $perPage = 15)
     {
@@ -44,7 +37,7 @@ class BranchRegistrationService
     {
         $branch = $this->branchRegistrationRepository->findByUuid($uuid);
 
-        if ($branch->verification_status !== 'Pending') {
+        if ($branch->verification_status !== VerificationStatus::Pending->value) {
             return response()->json([
                 'message' => 'Only a pending registration can be approved.',
             ], 422);
@@ -53,7 +46,7 @@ class BranchRegistrationService
         $oldValues = $branch->only(['verification_status', 'verified_by', 'verified_at', 'rejection_reason']);
 
         $branch = $this->branchRegistrationRepository->update($uuid, [
-            'verification_status' => 'Verified',
+            'verification_status' => VerificationStatus::Verified->value,
             'verified_by' => $admin->id,
             'verified_at' => now(),
             'rejection_reason' => null,
@@ -80,7 +73,7 @@ class BranchRegistrationService
     {
         $branch = $this->branchRegistrationRepository->findByUuid($uuid);
 
-        if ($branch->verification_status !== 'Pending') {
+        if ($branch->verification_status !== VerificationStatus::Pending->value) {
             return response()->json([
                 'message' => 'Only a pending registration can be rejected.',
             ], 422);
@@ -89,7 +82,7 @@ class BranchRegistrationService
         $oldValues = $branch->only(['verification_status', 'verified_by', 'verified_at', 'rejection_reason']);
 
         $branch = $this->branchRegistrationRepository->update($uuid, [
-            'verification_status' => 'Rejected',
+            'verification_status' => VerificationStatus::Rejected->value,
             'verified_by' => $admin->id,
             'verified_at' => now(),
             'rejection_reason' => $reason,

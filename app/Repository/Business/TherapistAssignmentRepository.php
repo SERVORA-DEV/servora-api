@@ -2,6 +2,7 @@
 
 namespace App\Repository\Business;
 
+use App\Enums\AssignmentStatus;
 use App\Models\TherapistAssignment;
 
 class TherapistAssignmentRepository
@@ -17,7 +18,7 @@ class TherapistAssignmentRepository
             ['appointment_service_id' => $appointmentServiceId, 'staff_id' => $staffId],
             [
                 'facility_id' => $facilityId,
-                'assignment_status' => 'Assigned',
+                'assignment_status' => AssignmentStatus::Assigned->value,
                 'assigned_at' => now(),
                 'started_at' => null,
                 'completed_at' => null,
@@ -33,7 +34,7 @@ class TherapistAssignmentRepository
     {
         return TherapistAssignment::where('appointment_service_id', $appointmentServiceId)
             ->whereNull('staff_id')
-            ->where('assignment_status', 'Assigned')
+            ->where('assignment_status', AssignmentStatus::Assigned->value)
             ->first();
     }
 
@@ -56,7 +57,7 @@ class TherapistAssignmentRepository
             ['appointment_service_id' => $appointmentServiceId, 'staff_id' => null],
             [
                 'facility_id' => $facilityId,
-                'assignment_status' => 'Assigned',
+                'assignment_status' => AssignmentStatus::Assigned->value,
                 'assigned_at' => now(),
                 'started_at' => null,
                 'completed_at' => null,
@@ -74,7 +75,7 @@ class TherapistAssignmentRepository
             ['appointment_service_id' => $appointmentServiceId, 'staff_id' => null],
             [
                 'facility_id' => null,
-                'assignment_status' => 'Assigned',
+                'assignment_status' => AssignmentStatus::Assigned->value,
                 'assigned_at' => now(),
                 'started_at' => null,
                 'completed_at' => null,
@@ -82,21 +83,9 @@ class TherapistAssignmentRepository
         );
     }
 
-    public function findByUuidForService(string $uuid, int $appointmentServiceId)
-    {
-        return TherapistAssignment::where('uuid', $uuid)
-            ->where('appointment_service_id', $appointmentServiceId)
-            ->firstOrFail();
-    }
-
-    public function findByUuid(string $uuid)
-    {
-        return TherapistAssignment::where('uuid', $uuid)->firstOrFail();
-    }
-
     public function cancel(TherapistAssignment $assignment): TherapistAssignment
     {
-        $assignment->update(['assignment_status' => 'Cancelled']);
+        $assignment->update(['assignment_status' => AssignmentStatus::Cancelled->value]);
         return $assignment;
     }
 

@@ -2,6 +2,8 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
 use App\Http\Resources\StaffTimeOffResource;
 use App\Models\StaffTimeOff;
 use App\Models\User;
@@ -55,7 +57,7 @@ class StaffTimeOffService
 
         // Someone timed in right now can't be put off today: the desk times them out first, so
         // attendance, the queue and the dashboards never say "here" and "on leave" at once.
-        $today = \App\Support\BusinessDay::forBranch($staff->spa_branch_id ? (int) $staff->spa_branch_id : null);
+        $today = \App\Support\Branches\BusinessDay::forBranch($staff->spa_branch_id ? (int) $staff->spa_branch_id : null);
         if ($payload['starts_on'] <= $today && $payload['ends_on'] >= $today
             && \App\Models\Attendance::where('staff_id', $staff->id)->where('attendance_date', $today)
                 ->whereNotNull('check_in_at')->whereNull('check_out_at')->exists()) {
@@ -142,8 +144,8 @@ class StaffTimeOffService
             ->leftJoin('clients as c', 'c.id', '=', 'a.client_id')
             ->leftJoin('spa_branches as br', 'br.id', '=', 'a.spa_branch_id')
             ->whereIn('ta.staff_id', $rows->pluck('staff_id')->unique()->all())
-            ->where('ta.assignment_status', 'Assigned')
-            ->whereIn('a.status', ['scheduled', 'checked_in'])
+            ->where('ta.assignment_status', AssignmentStatus::Assigned->value)
+            ->whereIn('a.status', [AppointmentStatus::Scheduled->value, AppointmentStatus::CheckedIn->value])
             ->whereNull('a.deleted_at')
             ->whereBetween('a.appointment_date', [$from, $to])
             ->orderBy('a.appointment_date')

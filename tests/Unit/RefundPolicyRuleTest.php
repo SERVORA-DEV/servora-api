@@ -2,8 +2,8 @@
 
 namespace Tests\Unit;
 
-use App\Support\BillAdjustment;
-use App\Support\RefundPolicyRule;
+use App\Support\Billing\BillAdjustment;
+use App\Support\Billing\RefundPolicyRule;
 use PHPUnit\Framework\TestCase;
 
 // The owner's refund policies: how much each gives back, and when one has to be used.

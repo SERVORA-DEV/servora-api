@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\ServiceKind;
+use App\Support\Catalog\ServiceKind;
 use PHPUnit\Framework\TestCase;
 
 // Time-based, procedure-based, facility-based: what each needs and allows.

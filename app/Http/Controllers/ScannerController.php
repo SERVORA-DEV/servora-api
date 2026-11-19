@@ -2,15 +2,17 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\ActionRefused;
+use App\Exceptions\NotFound;
 use App\Models\Appointment;
 use App\Models\SpaBranch;
-use App\Service\Business\AppointmentService;
 use App\Service\Business\HomeVisitDoorService;
-use App\Support\HomeVisitStart;
+use App\Service\Business\HomeVisitService;
+use App\Support\Visits\HomeVisitStart;
 use Illuminate\Http\Request;
 
 // A branch's scanner: the page a member of staff opens on their own phone to
-// start a home visit by scanning the client's QR (App\Support\HomeVisitStart).
+// start a home visit by scanning the client's QR (App\Support\Visits\HomeVisitStart).
 // Nobody is signed in — the secret in the link says which branch it is, and
 // only that branch's bookings can be started through it. The front desk hands
 // the link out and can replace it (FrontOfficeLookupService::scannerLink).
@@ -21,7 +23,7 @@ class ScannerController extends Controller
         $branch = Appointment::hasHomeStart() && strlen($token) >= 32
             ? SpaBranch::where('scanner_token', $token)->first()
             : null;
-        abort_if(! $branch, 404, 'This scanner link no longer works. Ask a Front Officer for the new one.');
+        throw_if(! $branch, NotFound::class, 'This scanner link no longer works. Ask a Front Officer for the new one.');
 
         return $branch;
     }
@@ -37,7 +39,7 @@ class ScannerController extends Controller
         ]]);
     }
 
-    public function start(Request $request, string $token, AppointmentService $appointments)
+    public function start(Request $request, string $token, HomeVisitService $homeVisits)
     {
         $branch = $this->branch($token);
 
@@ -46,7 +48,7 @@ class ScannerController extends Controller
             return response()->json(['message' => 'That isn\'t a Servora home-service code. Scan the QR on the client\'s booking, or type the code under it.'], 422);
         }
 
-        return response()->json(['data' => $appointments->startHomeVisitByCode($branch, $code)]);
+        return response()->json(['data' => $homeVisits->startHomeVisitByCode($branch, $code)]);
     }
 
     // ── The visit at the door, step by step (HomeVisitDoorService) ──────
@@ -56,7 +58,7 @@ class ScannerController extends Controller
     private function code(Request $request): string
     {
         $code = HomeVisitStart::read($request->input('code'));
-        abort_if($code === null, 422, 'That isn\'t a Servora home-service code. Scan the QR on the client\'s booking, or type the code under it.');
+        throw_if($code === null, ActionRefused::class, 'That isn\'t a Servora home-service code. Scan the QR on the client\'s booking, or type the code under it.');
 
         return $code;
     }

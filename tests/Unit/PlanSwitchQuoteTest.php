@@ -4,9 +4,8 @@ namespace Tests\Unit;
 
 use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
-use App\Service\PlanAccessService;
-use App\Service\PlanSwitchService;
-use Carbon\Carbon;
+use App\Service\Subscription\PlanAccessService;
+use App\Service\Subscription\PlanSwitchService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -93,27 +92,6 @@ class PlanSwitchQuoteTest extends TestCase
         $this->assertSame('downgrade', $quote['type']);
         $this->assertSame(6166.0, $quote['new_price']);
         $this->assertSame(0.0, $quote['amount_due']);
-    }
-
-    public function test_the_additive_migration_preserves_old_rows_and_defaults_to_no_extras(): void
-    {
-        Schema::create('subscription_plans', function (Blueprint $table) {
-            $table->id();
-            $table->string('name');
-        });
-        Schema::create('subscriptions', function (Blueprint $table) {
-            $table->id();
-        });
-        DB::table('subscription_plans')->insert(['name' => 'Purchased terms']);
-        DB::table('subscriptions')->insert(['id' => 1]);
-        $migration = require database_path('migrations/2026_11_09_100000_add_subscription_entitlements.php');
-        $migration->up();
-        $this->assertSame('Purchased terms', DB::table('subscription_plans')->value('name'));
-        $this->assertNull(DB::table('subscription_plans')->value('app_booking_limit'));
-        $this->assertNull(DB::table('subscription_plans')->value('export_mode'));
-        $this->assertEquals(0, DB::table('subscriptions')->value('extra_accounts'));
-        $migration->down();
-        $this->assertSame('Purchased terms', DB::table('subscription_plans')->value('name'));
     }
 
     private function quotaFixture(): void

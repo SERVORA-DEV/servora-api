@@ -8,9 +8,9 @@ use App\Models\Payment;
 use App\Models\SpaBranch;
 use App\Models\User;
 use App\Repository\SpaBusinessRepository;
-use App\Support\AccountScope;
-use App\Support\ActivityRecorder;
-use App\Support\BusinessActivityDescriber as Describer;
+use App\Support\Access\AccountScope;
+use App\Support\Activity\ActivityRecorder;
+use App\Support\Activity\BusinessActivityDescriber as Describer;
 use Closure;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
@@ -23,7 +23,7 @@ use Throwable;
 // the row is written once the answer is ready — only for a change that went
 // through (a 2xx answer to a POST, PUT, PATCH or DELETE).
 //
-// The row says, in its own copy (App\Support\History): who, in which role and
+// The row says, in its own copy (App\Support\Activity\History): who, in which role and
 // at what level, at which branch, what it was about and a sentence for it
 // (BusinessActivityDescriber), with the fields that changed.
 class RecordBusinessActivity

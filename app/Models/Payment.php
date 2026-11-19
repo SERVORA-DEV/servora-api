@@ -42,7 +42,7 @@ class Payment extends Model
         'voided_by',
         // The staff member who took the payment.
         'received_by',
-        // Their name at the time (App\Support\History).
+        // Their name at the time (App\Support\Activity\History).
         'received_by_name',
 
         'remarks',
@@ -64,7 +64,7 @@ class Payment extends Model
     protected static function booted(): void
     {
         static::saving(function (self $payment) {
-            if (\App\Support\History::ready() && ($payment->isDirty('received_by') || ($payment->received_by && $payment->received_by_name === null))) {
+            if (\App\Support\Activity\History::ready() && ($payment->isDirty('received_by') || ($payment->received_by && $payment->received_by_name === null))) {
                 $payment->received_by_name = self::nameOf($payment->received_by ? User::find($payment->received_by) : null);
             }
         });

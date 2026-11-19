@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Business;
 
+use App\Exceptions\NotFound;
 use App\Http\Controllers\Controller;
 use App\Repository\SpaBusinessRepository;
 use App\Service\Business\HomeServiceReadiness;
@@ -20,7 +21,7 @@ class HomeServiceReadinessController extends Controller
     public function show(Request $request, HomeServiceReadiness $readiness): JsonResponse
     {
         $business = $this->businesses->findForUser($request->user());
-        abort_unless($business, 404);
+        throw_unless($business, NotFound::class);
 
         return response()->json([
             'data' => $readiness->present($business->id, $this->businesses->branchesForUser($request->user())),

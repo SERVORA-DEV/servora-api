@@ -2,6 +2,9 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
+use App\Enums\AttendanceStatus;
 use App\Models\Attendance;
 use App\Models\BranchSchedule;
 use App\Models\SpaBusiness;
@@ -14,8 +17,8 @@ use App\Repository\Business\AttendanceRepository;
 use App\Repository\Business\StaffRepository;
 use App\Repository\SpaBusinessRepository;
 use Carbon\Carbon;
-use App\Support\BusinessDay;
-use App\Support\CheckOutRules;
+use App\Support\Branches\BusinessDay;
+use App\Support\Staff\CheckOutRules;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -54,7 +57,7 @@ class FrontOfficeAttendanceService
     {
         $this->rollover->forBranches($branchIds);
 
-        return BusinessDay::forBranch($staff?->spa_branch_id ?? \App\Support\AccountScope::workingBranchId($branchIds));
+        return BusinessDay::forBranch($staff?->spa_branch_id ?? \App\Support\Access\AccountScope::workingBranchId($branchIds));
     }
 
     // Same scoping AttendanceService::branchIds uses — resolves to the
@@ -98,7 +101,7 @@ class FrontOfficeAttendanceService
 
         // Whether staff can be timed in right now (only while the branch is open), so the
         // screen can say so instead of offering a button the API would refuse.
-        $week = BusinessDay::week((int) \App\Support\AccountScope::workingBranchId($branchIds));
+        $week = BusinessDay::week((int) \App\Support\Access\AccountScope::workingBranchId($branchIds));
         $open = BusinessDay::isOpen($week, now());
         $opens = $open ? null : BusinessDay::opensNext($week, now());
 
@@ -166,7 +169,7 @@ class FrontOfficeAttendanceService
         // extra hours), not a normal scheduled shift. Covering for someone
         // always counts as a fill-in too.
         $hasShift = $this->statusCalculator->hasWorkingScheduleForDate($staff->schedules, $date);
-        $status = ($hasShift && ! $coveringFor) ? 'Present' : 'Fill In';
+        $status = ($hasShift && ! $coveringFor) ? AttendanceStatus::Present->value : AttendanceStatus::FillIn->value;
 
         // Someone timed out (or sent home on leave) while the branch was open is done for the day:
         // there is no "time back in". A time-out made while the branch was closed (before it opened)
@@ -174,7 +177,7 @@ class FrontOfficeAttendanceService
         if ($existing?->check_in_at && $existing->check_out_at && BusinessDay::isOpen($week, $existing->check_out_at)) {
             return response()->json(['message' => $this->nameOf($staff) . ' is already timed out for today.'], 422);
         }
-        if ($existing && ! $existing->check_in_at && $existing->status === 'On Leave') {
+        if ($existing && ! $existing->check_in_at && $existing->status === AttendanceStatus::OnLeave->value) {
             return response()->json(['message' => $this->nameOf($staff) . ' is on leave today, so they can\'t be timed in.'], 422);
         }
         $payload = ['check_in_at' => now(), 'check_out_at' => null, 'status' => $status, 'left_early' => false];
@@ -277,13 +280,13 @@ class FrontOfficeAttendanceService
             if ($off = $this->statusCalculator->timeOffOn($staff->id, $date)) {
                 return response()->json(['message' => "{$name} is already on leave until " . $off->ends_on->format('M j') . ' (set in Employees).'], 422);
             }
-            if ($existing?->status === 'On Leave') {
+            if ($existing?->status === AttendanceStatus::OnLeave->value) {
                 return response()->json(['message' => "{$name} is already marked on leave today."], 422);
             }
             if (! $this->statusCalculator->hasWorkingScheduleForDate($staff->schedules, $date)) {
                 return response()->json(['message' => "{$name} has no shift today, so there's nothing to mark."], 422);
             }
-            $payload = ['status' => 'On Leave'];
+            $payload = ['status' => AttendanceStatus::OnLeave->value];
         }
 
         $model = $this->attendanceRepository->upsert($staff->id, $date, $payload + [
@@ -408,10 +411,10 @@ class FrontOfficeAttendanceService
             'days' => $rows,
             'summary' => [
                 'days_worked' => $worked->count(),
-                'late_days' => $worked->where('status', 'Late')->count(),
-                'fill_in_days' => $worked->where('status', 'Fill In')->count(),
-                'absent_days' => collect($rows)->where('status', 'Absent')->count(),
-                'leave_days' => collect($rows)->where('status', 'On Leave')->count(),
+                'late_days' => $worked->where('status', AttendanceStatus::Late->value)->count(),
+                'fill_in_days' => $worked->where('status', AttendanceStatus::FillIn->value)->count(),
+                'absent_days' => collect($rows)->where('status', AttendanceStatus::Absent->value)->count(),
+                'leave_days' => collect($rows)->where('status', AttendanceStatus::OnLeave->value)->count(),
                 'earned_today' => $earnings['today'] ?? null,
                 'earned_period' => $earnings['period'] ?? null,
                 'earned_range' => $dailyEarnings ? round(array_sum($dailyEarnings), 2) : null,
@@ -431,8 +434,8 @@ class FrontOfficeAttendanceService
         $dayOfWeek = Carbon::parse($date)->format('l');
         $grace = AttendanceStatusCalculator::graceMinutesFor($business);
         $overtime = AttendanceStatusCalculator::overtimeAllowedFor($business);
-        $week = BusinessDay::week((int) \App\Support\AccountScope::workingBranchId($branchIds));
-        $past = ! $live && $date < BusinessDay::forBranch((int) \App\Support\AccountScope::workingBranchId($branchIds));
+        $week = BusinessDay::week((int) \App\Support\Access\AccountScope::workingBranchId($branchIds));
+        $past = ! $live && $date < BusinessDay::forBranch((int) \App\Support\Access\AccountScope::workingBranchId($branchIds));
         $dayStart = BusinessDay::opensAt($week, $date) ?? Carbon::parse($date)->startOfDay();
         $dayEnd = $past ? (BusinessDay::nextOpening($week, $date) ?? Carbon::parse($date)->endOfDay()) : null;
         $earnings = $live || $past
@@ -470,7 +473,7 @@ class FrontOfficeAttendanceService
                 'first_name' => $staff->first_name,
                 'last_name' => $staff->last_name,
                 'role' => $staff->role,
-                // What they do, main one first (App\Support\StaffSpecialty).
+                // What they do, main one first (App\Support\Staff\StaffSpecialty).
                 'specialties' => $staff->specialtyList(),
                 'check_in_at' => $attendance?->check_in_at?->format('H:i'),
                 'check_out_at' => $attendance?->check_out_at?->format('H:i'),
@@ -505,7 +508,7 @@ class FrontOfficeAttendanceService
 
     private function candidateRows(SpaBusiness $business, array $branchIds, ?int $excludeStaffId = null): array
     {
-        $date = BusinessDay::forBranch(\App\Support\AccountScope::workingBranchId($branchIds));
+        $date = BusinessDay::forBranch(\App\Support\Access\AccountScope::workingBranchId($branchIds));
         $roster = $this->attendanceRepository->rosterForRange($branchIds, $date, $date);
         // The shift being covered (when someone is): a therapist with their own shift that day
         // can cover it only if the two don't overlap — otherwise the gap just moves to theirs.
@@ -518,7 +521,7 @@ class FrontOfficeAttendanceService
             ->filter(function (Staff $s) use ($date, $coveredShift) {
                 $a = $s->attendance->first();
                 $onFloor = $a?->check_in_at && ! $a->check_out_at;
-                if ($onFloor || $a?->status === 'On Leave' || $a?->left_early) {
+                if ($onFloor || $a?->status === AttendanceStatus::OnLeave->value || $a?->left_early) {
                     return false;
                 }
                 // On leave dates set in Employees: not asked to cover.
@@ -570,8 +573,8 @@ class FrontOfficeAttendanceService
             ->join('appointments as a', 'a.id', '=', 's.appointment_id')
             ->leftJoin('clients as c', 'c.id', '=', 'a.client_id')
             ->where('ta.staff_id', $staff->id)
-            ->where('ta.assignment_status', 'Assigned')
-            ->whereIn('a.status', ['scheduled', 'checked_in'])
+            ->where('ta.assignment_status', AssignmentStatus::Assigned->value)
+            ->whereIn('a.status', [AppointmentStatus::Scheduled->value, AppointmentStatus::CheckedIn->value])
             ->whereNull('a.deleted_at')
             ->whereDate('a.appointment_date', $date)
             ->orderBy('a.appointment_time')

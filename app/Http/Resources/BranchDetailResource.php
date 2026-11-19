@@ -2,6 +2,8 @@
 
 namespace App\Http\Resources;
 
+use App\Enums\OperatingStatus;
+use App\Enums\VerificationStatus;
 use App\Models\SpaBranch;
 use App\Models\SpaBusinessSetting;
 use App\Service\Business\CustomerProgramService;
@@ -9,12 +11,12 @@ use App\Service\Business\HomeServiceRules;
 use App\Service\Business\MarketplaceReadiness;
 use App\Service\Business\ProgramRewardService;
 use App\Service\Client\BookingPolicy;
-use App\Services\ImageUploadService;
+use App\Service\Uploads\ImageUploadService;
 use App\Support\AppCache;
-use App\Support\BranchHoursCalculator;
-use App\Support\ProgramChannel;
-use App\Support\ReminderPolicy;
-use App\Support\SocialLinks;
+use App\Support\Branches\BranchHoursCalculator;
+use App\Support\Programs\ProgramChannel;
+use App\Support\Visits\ReminderPolicy;
+use App\Support\Branches\SocialLinks;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -98,7 +100,7 @@ class BranchDetailResource extends JsonResource
                 // "N other locations" — shown on the app's branch page the
                 // way the owner's preview shows them.
                 'tagline' => $this->business->tagline,
-                'verified' => $this->business->verification_status === 'Verified',
+                'verified' => $this->business->verification_status === VerificationStatus::Verified->value,
                 'other_branches_count' => $this->otherBranches()->count(),
                 // The business's other branches a client can book: each with where it is, so the app can
                 // list them on this branch's page and open one.
@@ -197,7 +199,7 @@ class BranchDetailResource extends JsonResource
 
             // duration_minutes is what a booking of this package will take:
             // its fixed duration — the minutes each service has in it, plus
-            // the add-ons that come with it (App\Support\PackagePlan).
+            // the add-ons that come with it (App\Support\Catalog\PackagePlan).
             'packages' => $this->packages->map(function ($bp) use ($price) {
                 $items = $bp->package->packageServiceItems->filter(fn ($i) => $i->theService() !== null)->values();
 
@@ -250,7 +252,7 @@ class BranchDetailResource extends JsonResource
                 'first_name' => $staff->first_name,
                 'last_name' => $staff->last_name,
                 'role' => $staff->role,
-                // What they do, main one first (App\Support\StaffSpecialty) —
+                // What they do, main one first (App\Support\Staff\StaffSpecialty) —
                 // sent for the app to show; it doesn't yet.
                 'specialties' => $staff->specialtyList(),
                 // Whether they can be sent to a client's home (HomeServiceRules).
@@ -285,8 +287,8 @@ class BranchDetailResource extends JsonResource
     {
         return SpaBranch::where('spa_business_id', $this->spa_business_id)
             ->where('id', '!=', $this->id)
-            ->where('verification_status', 'Verified')
-            ->where('operating_status', 'Active')
+            ->where('verification_status', VerificationStatus::Verified->value)
+            ->where('operating_status', OperatingStatus::Active->value)
             ->where('listing_visible', true);
     }
 }

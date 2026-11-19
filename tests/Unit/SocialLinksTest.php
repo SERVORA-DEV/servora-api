@@ -4,7 +4,7 @@ namespace Tests\Unit;
 
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
-use App\Support\SocialLinks;
+use App\Support\Branches\SocialLinks;
 use PHPUnit\Framework\TestCase;
 
 // Turning what an owner typed into links people can open, and which link a

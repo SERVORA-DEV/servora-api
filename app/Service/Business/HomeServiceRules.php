@@ -2,6 +2,10 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentServiceStatus;
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
+use App\Enums\StaffStatus;
 use App\Models\Appointment;
 use App\Models\SpaBranch;
 use App\Models\Staff;
@@ -133,8 +137,8 @@ class HomeServiceRules
         $from = $arrived && $arrived->gt($start) ? $arrived : $start;
         $end = $from->copy()->addMinutes($minutes);
         if ($appointment->relationLoaded('services')) {
-            $open = $appointment->services->reject(fn ($s) => $s->status === 'Cancelled');
-            if ($open->isNotEmpty() && $open->every(fn ($s) => $s->status === 'Completed')) {
+            $open = $appointment->services->reject(fn ($s) => $s->status === AppointmentServiceStatus::Cancelled->value);
+            if ($open->isNotEmpty() && $open->every(fn ($s) => $s->status === AppointmentServiceStatus::Completed->value)) {
                 $done = $open->flatMap(fn ($s) => $s->relationLoaded('therapistAssignments') ? $s->therapistAssignments->pluck('completed_at') : collect())->filter()->max();
                 $end = $done ? \Carbon\Carbon::parse($done) : $end;
             }
@@ -158,18 +162,18 @@ class HomeServiceRules
         }
         $rows = \App\Models\TherapistAssignment::query()
             ->whereIn('staff_id', $staffIds)
-            ->whereIn('assignment_status', ['Completed', 'Assigned', 'In Progress'])
+            ->whereIn('assignment_status', [AssignmentStatus::Completed->value, AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value])
             ->whereHas('appointmentService.appointment', fn ($q) => $q->where('service_location', self::HOME)
                 ->whereDate('appointment_date', '>=', $from->copy()->subDay()->toDateString())
                 ->whereDate('appointment_date', '<=', $to->toDateString())
-                ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW]))
+                ->whereNotIn('status', [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value]))
             ->with('appointmentService:id,appointment_id', 'appointmentService.appointment:id,spa_branch_id')
             ->get(['id', 'staff_id', 'appointment_service_id', 'assignment_status', 'completed_at']);
 
         $trips = [];
         foreach ($rows->groupBy(fn ($r) => $r->staff_id . ':' . $r->appointmentService?->appointment_id) as $visit) {
             // Still doing something of this visit: not on the way back yet.
-            if ($visit->contains(fn ($r) => $r->assignment_status !== 'Completed')) {
+            if ($visit->contains(fn ($r) => $r->assignment_status !== AssignmentStatus::Completed->value)) {
                 continue;
             }
             $done = $visit->pluck('completed_at')->filter()->max();
@@ -239,7 +243,7 @@ class HomeServiceRules
     {
         return Staff::where('spa_branch_id', $branch->id)
             ->where('role', 'therapist')
-            ->where('status', 'active')
+            ->where('status', StaffStatus::Active->value)
             ->forHomeService()
             ->exists();
     }
@@ -279,7 +283,7 @@ class HomeServiceRules
     public static function ineligibleServices(Appointment $appointment): array
     {
         return $appointment->services()
-            ->where('status', '!=', 'Cancelled')
+            ->where('status', '!=', AppointmentServiceStatus::Cancelled->value)
             ->with('serviceVariant.service')
             ->get()
             // An add-on goes wherever its main service goes: it isn't judged on its own.

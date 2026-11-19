@@ -13,12 +13,6 @@ class ProgramRequest extends Model
 {
     use HasUuids;
 
-    public const PENDING = 'pending';
-    // The owner approved it: the program exists (customer_program_id).
-    public const APPROVED = 'approved';
-    public const DECLINED = 'declined';
-    public const WITHDRAWN = 'withdrawn';
-
     // Loyalty is one program for the whole business, so it isn't asked for.
     public const TYPES = ['voucher', 'discount', 'membership'];
 

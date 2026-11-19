@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\ServiceEndNotice;
+use App\Support\Visits\ServiceEndNotice;
 use Carbon\Carbon;
 use PHPUnit\Framework\TestCase;
 

@@ -123,7 +123,7 @@ class GoogleAuthTest extends TestCase
 
         $this->fakeGoogle();
 
-        $this->clientSignIn()->assertOk()->assertJsonPath('user.uuid', $client->uuid);
+        $this->clientSignIn()->assertOk()->assertJsonPath('user.uuid', (string) $client->uuid);
     }
 
     // Tapping "Sign up with Google" with an account that already exists is a
@@ -144,7 +144,7 @@ class GoogleAuthTest extends TestCase
 
         $this->clientSignIn(agree: true, password: 'Another-Pass-999')
             ->assertOk()
-            ->assertJsonPath('user.uuid', $client->uuid)
+            ->assertJsonPath('user.uuid', (string) $client->uuid)
             ->assertJsonStructure(['token']);
 
         $this->assertSame(1, User::where('email', self::EMAIL)->where('role', 'client')->count());
@@ -163,7 +163,7 @@ class GoogleAuthTest extends TestCase
 
         $this->fakeGoogle();
 
-        $this->signIn(agree: true, password: 'Another-Pass-999')->assertOk()->assertJsonPath('user.uuid', $owner->uuid);
+        $this->signIn(agree: true, password: 'Another-Pass-999')->assertOk()->assertJsonPath('user.uuid', (string) $owner->uuid);
 
         $this->assertSame(1, User::where('email', self::EMAIL)->count());
         $this->assertTrue(Hash::check('Original-Pass-1', $owner->fresh()->password));
@@ -182,7 +182,7 @@ class GoogleAuthTest extends TestCase
 
         $this->fakeGoogle();
 
-        $this->clientSignIn()->assertOk()->assertJsonPath('user.uuid', $client->uuid);
+        $this->clientSignIn()->assertOk()->assertJsonPath('user.uuid', (string) $client->uuid);
 
         $client->refresh();
         $this->assertNotNull($client->email_verified_at);
@@ -209,7 +209,7 @@ class GoogleAuthTest extends TestCase
 
         $this->fakeGoogle();
 
-        $this->signIn()->assertOk()->assertJsonPath('user.uuid', $owner->uuid);
+        $this->signIn()->assertOk()->assertJsonPath('user.uuid', (string) $owner->uuid);
 
         $this->assertSame(1, User::where('email', self::EMAIL)->count());
     }
@@ -272,7 +272,7 @@ class GoogleAuthTest extends TestCase
 
         $this->postJson('/api/auth/google', ['access_token' => 'ya29.fake'])
             ->assertOk()
-            ->assertJsonPath('user.uuid', $owner->uuid);
+            ->assertJsonPath('user.uuid', (string) $owner->uuid);
     }
 
     public function test_an_unknown_email_with_an_access_token_says_which_email_to_sign_up_with(): void

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Client;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Client\RedeemRewardRequest;
 use App\Service\Client\ClientRewardsService;
 use Illuminate\Http\Request;
 
@@ -28,9 +29,9 @@ class ClientRewardsController extends Controller
         return $this->rewards->history($request->user(), $businessUuid);
     }
 
-    public function redeem(Request $request)
+    public function redeem(RedeemRewardRequest $request)
     {
-        $data = $request->validate(['program_uuid' => ['required', 'uuid']]);
+        $data = $request->validated();
 
         return $this->rewards->redeem($request->user(), $data['program_uuid']);
     }

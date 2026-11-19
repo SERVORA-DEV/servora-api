@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\SessionActivity;
+use App\Support\Access\SessionActivity;
 use Carbon\Carbon;
 use PHPUnit\Framework\TestCase;
 

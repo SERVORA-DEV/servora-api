@@ -4,11 +4,12 @@ namespace Tests\Feature;
 
 use App\Models\SpaBusiness;
 use App\Models\User;
-use App\Services\ImageUploadService;
+use App\Service\Uploads\ImageUploadService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Laravel\Sanctum\Sanctum;
 use Mockery;
+use Tests\Concerns\FakesImages;
 use Tests\TestCase;
 
 // Covers /business/settings/* — the owner's Business Settings pages on web.
@@ -17,6 +18,7 @@ use Tests\TestCase;
 //   DB_PASSWORD=... php artisan test --filter=BusinessSettingsTest
 class BusinessSettingsTest extends TestCase
 {
+    use FakesImages;
     use RefreshDatabase;
 
     private User $owner;
@@ -90,7 +92,7 @@ class BusinessSettingsTest extends TestCase
         $this->app->instance(ImageUploadService::class, $images);
 
         $this->post('/api/business/settings/identity', $this->identity([
-            'logo' => UploadedFile::fake()->image('logo.png', 300, 300),
+            'logo' => $this->fakeImage('logo.png'),
         ]), ['Accept' => 'application/json'])->assertOk();
         $this->assertSame('business-logos/new', $this->business->refresh()->business_logo);
 

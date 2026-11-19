@@ -2,6 +2,10 @@
 
 namespace App\Service;
 
+use App\Enums\ServoraReviewStatus;
+use App\Enums\VerificationStatus;
+use App\Exceptions\ActionRefused;
+use App\Exceptions\NotSetUp;
 use App\Models\ServoraReview;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
@@ -44,16 +48,16 @@ class ServoraReviewService
 
     public function save(User $owner, array $data, ?Request $request = null)
     {
-        abort_unless($this->ready(), 503, 'Reviews are not set up on this server yet.');
+        throw_unless($this->ready(), NotSetUp::class, 'Reviews are not set up on this server yet.');
         $business = $this->verifiedBusiness($owner);
-        abort_unless($business, 422, 'You can rate SERVORA once your business is verified.');
+        throw_unless($business, ActionRefused::class, 'You can rate SERVORA once your business is verified.');
 
         $review = ServoraReview::firstOrNew(['user_id' => $owner->id]);
         $before = $review->exists ? $review->only(['rating', 'title', 'body', 'status']) : null;
 
         // Already on the page: the edit waits beside it, and the page keeps
         // showing what was published until the edit is checked.
-        if ($review->exists && $review->status === 'Published' && $this->editsReady()) {
+        if ($review->exists && $review->status === ServoraReviewStatus::Published->value && $this->editsReady()) {
             $review->update([
                 'spa_business_id' => $business->id,
                 'pending_rating' => (int) $data['rating'],
@@ -77,7 +81,7 @@ class ServoraReviewService
             'body' => trim($data['body']),
             'show_business' => (bool) ($data['show_business'] ?? true),
             // Every new or edited review is checked before it is shown.
-            'status' => 'Pending',
+            'status' => ServoraReviewStatus::Pending->value,
             'reviewed_by' => null,
             'reviewed_at' => null,
         ]);
@@ -102,7 +106,7 @@ class ServoraReviewService
 
         return response()->json(Cache::remember(self::PUBLIC_CACHE, 300, function () {
             $rows = ServoraReview::query()
-                ->where('status', 'Published')
+                ->where('status', ServoraReviewStatus::Published->value)
                 ->with(['user:id,first_name,last_name,profile_photo', 'business:id,business_name,created_at'])
                 ->orderByDesc('published_at')
                 ->limit(300)
@@ -148,12 +152,12 @@ class ServoraReviewService
 
     public function adminList(string $status)
     {
-        abort_unless($this->ready(), 503, 'Reviews are not set up on this server yet.');
+        throw_unless($this->ready(), NotSetUp::class, 'Reviews are not set up on this server yet.');
         $rows = ServoraReview::query()
             ->with(['user:id,first_name,last_name,email', 'business:id,uuid,business_name'])
-            ->when($status === 'Pending' && $this->editsReady(), fn ($q) => $q->where(fn ($w) => $w->where('status', 'Pending')->orWhereNotNull('pending_at')))
-            ->when($status === 'Pending' && ! $this->editsReady(), fn ($q) => $q->where('status', 'Pending'))
-            ->when(! in_array($status, ['All', 'Pending'], true), fn ($q) => $q->where('status', $status))
+            ->when($status === ServoraReviewStatus::Pending->value && $this->editsReady(), fn ($q) => $q->where(fn ($w) => $w->where('status', ServoraReviewStatus::Pending->value)->orWhereNotNull('pending_at')))
+            ->when($status === ServoraReviewStatus::Pending->value && ! $this->editsReady(), fn ($q) => $q->where('status', ServoraReviewStatus::Pending->value))
+            ->when(! in_array($status, ['All', ServoraReviewStatus::Pending->value], true), fn ($q) => $q->where('status', $status))
             ->orderByDesc('updated_at')
             ->limit(300)
             ->get();
@@ -194,13 +198,13 @@ class ServoraReviewService
             // Edited); hiding turns the edit down and leaves the earlier words up.
             if ($this->editsReady() && $review->hasPendingEdit()) {
                 $clear = ['pending_rating' => null, 'pending_title' => null, 'pending_body' => null, 'pending_show_business' => null, 'pending_at' => null, 'reviewed_by' => $admin->id, 'reviewed_at' => now()];
-                if ($status === 'Published') {
+                if ($status === ServoraReviewStatus::Published->value) {
                     $review->update([
                         'rating' => $review->pending_rating,
                         'title' => $review->pending_title,
                         'body' => $review->pending_body,
                         'show_business' => (bool) $review->pending_show_business,
-                        'status' => 'Published',
+                        'status' => ServoraReviewStatus::Published->value,
                         'edited_at' => now(),
                     ] + $clear);
                     $this->notifications->create($review->user_id, 'Your Review Is Live', 'Your edit is now on our Reviews page.', 'System');
@@ -209,9 +213,9 @@ class ServoraReviewService
                     $this->notifications->create($review->user_id, 'Review Edit Not Published', 'Your edit wasn\'t published. Your earlier review stays on our Reviews page.', 'System');
                 }
                 Cache::forget(self::PUBLIC_CACHE);
-                $this->auditLogs->record($admin->id, 'servora_reviews', $review->id, $status === 'Published' ? 'Approve' : 'Reject', null, ['status' => $review->status], $request);
+                $this->auditLogs->record($admin->id, 'servora_reviews', $review->id, $status === ServoraReviewStatus::Published->value ? 'Approve' : 'Reject', null, ['status' => $review->status], $request);
 
-                return response()->json(['message' => $status === 'Published' ? 'Edit published.' : 'Edit declined. The earlier review stays up.']);
+                return response()->json(['message' => $status === ServoraReviewStatus::Published->value ? 'Edit published.' : 'Edit declined. The earlier review stays up.']);
             }
 
             $before = $review->status;
@@ -219,16 +223,16 @@ class ServoraReviewService
                 'status' => $status,
                 'reviewed_by' => $admin->id,
                 'reviewed_at' => now(),
-                'published_at' => $status === 'Published' ? ($review->published_at ?? now()) : $review->published_at,
+                'published_at' => $status === ServoraReviewStatus::Published->value ? ($review->published_at ?? now()) : $review->published_at,
             ]);
             Cache::forget(self::PUBLIC_CACHE);
-            $this->auditLogs->record($admin->id, 'servora_reviews', $review->id, $status === 'Published' ? 'Approve' : 'Deactivate', ['status' => $before], ['status' => $status], $request);
+            $this->auditLogs->record($admin->id, 'servora_reviews', $review->id, $status === ServoraReviewStatus::Published->value ? 'Approve' : 'Deactivate', ['status' => $before], ['status' => $status], $request);
 
-            if ($status === 'Published' && $before !== 'Published') {
+            if ($status === ServoraReviewStatus::Published->value && $before !== ServoraReviewStatus::Published->value) {
                 $this->notifications->create($review->user_id, 'Your Review Is Live', 'Thank you for rating SERVORA. Your review is now on our Reviews page.', 'System');
             }
 
-            return response()->json(['message' => $status === 'Published' ? 'Published.' : 'Hidden from the Reviews page.']);
+            return response()->json(['message' => $status === ServoraReviewStatus::Published->value ? 'Published.' : 'Hidden from the Reviews page.']);
         });
     }
 
@@ -243,7 +247,7 @@ class ServoraReviewService
 
     private function verifiedBusiness(User $owner): ?SpaBusiness
     {
-        return SpaBusiness::where('owner_id', $owner->id)->where('verification_status', 'Verified')->first();
+        return SpaBusiness::where('owner_id', $owner->id)->where('verification_status', VerificationStatus::Verified->value)->first();
     }
 
     private function shortName(?User $u): string

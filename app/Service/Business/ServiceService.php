@@ -5,7 +5,7 @@ namespace App\Service\Business;
 use App\Models\BranchService;
 use App\Models\Service;
 use App\Models\User;
-use App\Support\ServiceKind;
+use App\Support\Catalog\ServiceKind;
 use App\Repository\Business\BranchServiceRepository;
 use App\Repository\Business\ServiceRepository;
 use App\Repository\Business\ServiceVariantRepository;
@@ -13,33 +13,19 @@ use App\Repository\Business\SpaBranchRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Http\Resources\ServiceResource;
 use App\Http\Resources\ServiceVariantResource;
-use App\Services\ImageUploadService;
+use App\Service\Uploads\ImageUploadService;
 
 class ServiceService
 {
-    private ServiceRepository $serviceRepository;
-    private SpaBusinessRepository $spaBusinessRepository;
-    private SpaBranchRepository $spaBranchRepository;
-    private BranchServiceRepository $branchServiceRepository;
-    private ServiceVariantRepository $serviceVariantRepository;
-    private ImageUploadService $imageUploadService;
-
     public function __construct(
-        ServiceRepository $serviceRepository,
-        SpaBusinessRepository $spaBusinessRepository,
-        SpaBranchRepository $spaBranchRepository,
-        BranchServiceRepository $branchServiceRepository,
-        ServiceVariantRepository $serviceVariantRepository,
-        ImageUploadService $imageUploadService,
+        private ServiceRepository $serviceRepository,
+        private SpaBusinessRepository $spaBusinessRepository,
+        private SpaBranchRepository $spaBranchRepository,
+        private BranchServiceRepository $branchServiceRepository,
+        private ServiceVariantRepository $serviceVariantRepository,
+        private ImageUploadService $imageUploadService,
         private ManagerChangeNotifier $managerChanges,
-    ) {
-        $this->serviceRepository = $serviceRepository;
-        $this->spaBusinessRepository = $spaBusinessRepository;
-        $this->spaBranchRepository = $spaBranchRepository;
-        $this->branchServiceRepository = $branchServiceRepository;
-        $this->serviceVariantRepository = $serviceVariantRepository;
-        $this->imageUploadService = $imageUploadService;
-    }
+    ) {}
 
     // business_owner's branch ids cover the whole business; manager's cover
     // only their own staff record's branch — see

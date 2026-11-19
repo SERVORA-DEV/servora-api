@@ -10,12 +10,9 @@ use Illuminate\Http\Request;
 
 class AttendanceController extends Controller
 {
-    private AttendanceService $attendanceService;
-
-    public function __construct(AttendanceService $attendanceService)
-    {
-        $this->attendanceService = $attendanceService;
-    }
+    public function __construct(
+        private AttendanceService $attendanceService,
+    ) {}
 
     public function index(Request $request)
     {

@@ -21,7 +21,7 @@ class AppointmentPackage extends Model
         'uuid',
         'appointment_id',
         'package_id',
-        // Its own copy of the package's name (App\Support\History).
+        // Its own copy of the package's name (App\Support\Activity\History).
         'package_name',
         'quantity',
         'unit_price',
@@ -62,7 +62,7 @@ class AppointmentPackage extends Model
     protected static function booted(): void
     {
         static::saving(function (self $row) {
-            if (\App\Support\History::ready() && ($row->isDirty('package_id') || $row->package_name === null)) {
+            if (\App\Support\Activity\History::ready() && ($row->isDirty('package_id') || $row->package_name === null)) {
                 $row->package_name = Package::withTrashed()->whereKey($row->package_id)->value('name');
             }
         });
@@ -71,12 +71,7 @@ class AppointmentPackage extends Model
     /** The package's name when it was sold — its own copy first. */
     public function displayName(): ?string
     {
-        return \App\Support\History::own($this->package_name, fn () => $this->package?->name);
-    }
-
-    public function explodedServices()
-    {
-        return $this->hasMany(AppointmentServiceItem::class, 'source_appointment_package_id');
+        return \App\Support\Activity\History::own($this->package_name, fn () => $this->package?->name);
     }
 
     /** On Client B's appointment: the package Client A bought (and paid for). */

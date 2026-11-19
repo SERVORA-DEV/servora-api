@@ -2,6 +2,8 @@
 
 namespace App\Service\Business;
 
+use App\Enums\ScheduleChangeStatus;
+use App\Enums\StaffStatus;
 use App\Http\Resources\StaffScheduleResource;
 use App\Models\BranchSchedule;
 use App\Models\SpaBusiness;
@@ -11,27 +13,20 @@ use App\Models\User;
 use App\Repository\Business\StaffRepository;
 use App\Repository\Business\StaffScheduleRepository;
 use App\Repository\SpaBusinessRepository;
-use App\Service\NotificationService;
-use App\Support\BranchHours;
+use App\Service\Notifications\NotificationService;
+use App\Support\Branches\BranchHours;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 class StaffScheduleService
 {
-    private StaffScheduleRepository $staffScheduleRepository;
-    private StaffRepository $staffRepository;
-    private SpaBusinessRepository $spaBusinessRepository;
-
     public function __construct(
-        StaffScheduleRepository $staffScheduleRepository,
-        StaffRepository $staffRepository,
-        SpaBusinessRepository $spaBusinessRepository,
+        private StaffScheduleRepository $staffScheduleRepository,
+        private StaffRepository $staffRepository,
+        private SpaBusinessRepository $spaBusinessRepository,
         private NotificationService $notificationService,
         private ManagerChangeNotifier $managerChanges,
-    ) {
-        $this->staffScheduleRepository = $staffScheduleRepository;
-        $this->staffRepository = $staffRepository;
-        $this->spaBusinessRepository = $spaBusinessRepository;
-    }
+    ) {}
 
     // Same branch-scoping convention as StaffService::branchIds — a manager
     // only ever reaches their own branch's staff.
@@ -61,7 +56,7 @@ class StaffScheduleService
     public function branchWeek(User $user)
     {
         $staff = Staff::whereIn('spa_branch_id', $this->branchIds($user))
-            ->whereIn('status', ['active', 'on-leave'])
+            ->whereIn('status', [StaffStatus::Active->value, StaffStatus::OnLeave->value])
             ->orderBy('first_name')
             ->orderBy('last_name')
             ->get();
@@ -69,7 +64,7 @@ class StaffScheduleService
         $days = \App\Models\StaffSchedule::whereIn('staff_id', $staff->pluck('id'))
             ->whereNull('effective_from')
             ->whereNull('effective_until')
-            ->orderByRaw(\App\Support\DayOfWeek::calendarOrder(), \App\Support\DayOfWeek::ORDER)
+            ->orderByRaw(\App\Support\Branches\DayOfWeek::calendarOrder(), \App\Support\Branches\DayOfWeek::ORDER)
             ->get()
             ->groupBy('staff_id');
 
@@ -128,7 +123,7 @@ class StaffScheduleService
         if ($this->needsApproval($business, $user)) {
             $request = DB::transaction(function () use ($business, $staff, $user, $rows) {
                 // One open request per person: a newer one replaces it.
-                $this->closePending($staff->id, StaffScheduleChangeRequest::SUPERSEDED);
+                $this->closePending($staff->id, ScheduleChangeStatus::Superseded->value);
 
                 return StaffScheduleChangeRequest::create([
                     'staff_id' => $staff->id,
@@ -136,7 +131,7 @@ class StaffScheduleService
                     'spa_branch_id' => $staff->spa_branch_id,
                     'requested_by_user_id' => $user->id,
                     'days' => $rows,
-                    'status' => StaffScheduleChangeRequest::PENDING,
+                    'status' => ScheduleChangeStatus::Pending->value,
                 ]);
             });
 
@@ -157,7 +152,7 @@ class StaffScheduleService
         DB::transaction(function () use ($staff, $rows) {
             $this->staffScheduleRepository->replaceCurrentForStaff($staff->id, $rows);
             // Whatever was waiting was written against the old schedule.
-            $this->closePending($staff->id, StaffScheduleChangeRequest::SUPERSEDED);
+            $this->closePending($staff->id, ScheduleChangeStatus::Superseded->value);
         });
 
         // Applied at once (no approval needed): an owner who asked to hear
@@ -179,7 +174,7 @@ class StaffScheduleService
     {
         $requests = StaffScheduleChangeRequest::with(['staff', 'branch', 'requester.staff'])
             ->whereIn('spa_branch_id', $this->branchIds($user))
-            ->where('status', StaffScheduleChangeRequest::PENDING)
+            ->where('status', ScheduleChangeStatus::Pending->value)
             ->latest()
             ->get();
 
@@ -188,9 +183,7 @@ class StaffScheduleService
 
     public function approve(User $user, string $uuid)
     {
-        if ($user->role !== 'business_owner') {
-            return response()->json(['message' => 'Only the owner can approve a schedule change.'], 403);
-        }
+        Gate::forUser($user)->authorize('approve', StaffScheduleChangeRequest::class);
 
         $request = $this->findPending($user, $uuid);
         if (! $request) {
@@ -200,7 +193,7 @@ class StaffScheduleService
         DB::transaction(function () use ($request, $user) {
             $this->staffScheduleRepository->replaceCurrentForStaff($request->staff_id, $request->days ?? []);
             $request->update([
-                'status' => StaffScheduleChangeRequest::APPROVED,
+                'status' => ScheduleChangeStatus::Approved->value,
                 'decided_by_user_id' => $user->id,
                 'decided_at' => now(),
             ]);
@@ -216,9 +209,7 @@ class StaffScheduleService
 
     public function reject(User $user, string $uuid, ?string $reason)
     {
-        if ($user->role !== 'business_owner') {
-            return response()->json(['message' => 'Only the owner can reject a schedule change.'], 403);
-        }
+        Gate::forUser($user)->authorize('reject', StaffScheduleChangeRequest::class);
 
         $request = $this->findPending($user, $uuid);
         if (! $request) {
@@ -226,7 +217,7 @@ class StaffScheduleService
         }
 
         $request->update([
-            'status' => StaffScheduleChangeRequest::REJECTED,
+            'status' => ScheduleChangeStatus::Rejected->value,
             'decided_by_user_id' => $user->id,
             'decided_at' => now(),
             'decision_note' => $reason ?: null,
@@ -247,11 +238,9 @@ class StaffScheduleService
             return response()->json(['message' => 'This request has already been decided or withdrawn.'], 422);
         }
 
-        if ($user->role !== 'business_owner' && $request->requested_by_user_id !== $user->id) {
-            return response()->json(['message' => 'Only the person who made this request can withdraw it.'], 403);
-        }
+        Gate::forUser($user)->authorize('withdraw', $request);
 
-        $request->update(['status' => StaffScheduleChangeRequest::WITHDRAWN]);
+        $request->update(['status' => ScheduleChangeStatus::Withdrawn->value]);
 
         return response()->json(['message' => 'Request withdrawn.', 'pending_request' => null]);
     }
@@ -273,7 +262,7 @@ class StaffScheduleService
     {
         return StaffScheduleChangeRequest::with(['staff', 'branch', 'requester.staff'])
             ->where('staff_id', $staffId)
-            ->where('status', StaffScheduleChangeRequest::PENDING)
+            ->where('status', ScheduleChangeStatus::Pending->value)
             ->latest()
             ->first();
     }
@@ -283,14 +272,14 @@ class StaffScheduleService
         return StaffScheduleChangeRequest::with(['staff', 'branch', 'requester.staff'])
             ->where('uuid', $uuid)
             ->whereIn('spa_branch_id', $this->branchIds($user))
-            ->where('status', StaffScheduleChangeRequest::PENDING)
+            ->where('status', ScheduleChangeStatus::Pending->value)
             ->first();
     }
 
     private function closePending(int $staffId, string $status): void
     {
         StaffScheduleChangeRequest::where('staff_id', $staffId)
-            ->where('status', StaffScheduleChangeRequest::PENDING)
+            ->where('status', ScheduleChangeStatus::Pending->value)
             ->update(['status' => $status, 'updated_at' => now()]);
     }
 

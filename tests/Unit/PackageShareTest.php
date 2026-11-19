@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\PackageShare;
+use App\Support\Catalog\PackageShare;
 use PHPUnit\Framework\TestCase;
 
 // How much of a package's price goes with one of its services.

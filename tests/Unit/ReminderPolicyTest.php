@@ -5,7 +5,7 @@ namespace Tests\Unit;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
 use App\Models\SpaBusinessSetting;
-use App\Support\ReminderPolicy;
+use App\Support\Visits\ReminderPolicy;
 use PHPUnit\Framework\TestCase;
 
 // What a branch tells its clients and when: its own rules, else the

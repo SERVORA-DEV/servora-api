@@ -62,6 +62,9 @@ class DatabaseSeeder extends Seeder
             array_fill_keys(config('permission.system_administrator'), true),
         );
 
+        // The subscription plans (Basic, Premium, Enterprise) and the free trial's plan.
+        $this->call(SubscriptionPlanSeeder::class);
+
         // The platform's starter catalog of service templates.
         $this->call(ServiceTemplateSeeder::class);
     }

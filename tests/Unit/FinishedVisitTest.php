@@ -2,8 +2,8 @@
 
 namespace Tests\Unit;
 
-use App\Support\FinishedVisit;
-use App\Support\ServiceVoidRules;
+use App\Support\Visits\FinishedVisit;
+use App\Support\Visits\ServiceVoidRules;
 use PHPUnit\Framework\TestCase;
 
 // A finished, paid visit can't be voided or refunded.

@@ -5,6 +5,7 @@ namespace App\Http\Requests\Business;
 use App\Rules\NoEmoji;
 use App\Models\Addon;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Validation\Rule;
 
 // An add-on on the owner's menu: its name, price, the time it adds, and where
@@ -23,7 +24,7 @@ class AddonRequest extends FormRequest
     protected function prepareForValidation(): void
     {
         if (! Addon::ready()) {
-            abort(response()->json(['message' => 'Add-ons are not set up on this server yet.'], 422));
+            throw new HttpResponseException(response()->json(['message' => 'Add-ons are not set up on this server yet.'], 422));
         }
     }
 
@@ -74,6 +75,6 @@ class AddonRequest extends FormRequest
             return \App\Models\SpaBusiness::where('owner_id', $user->id)->value('id');
         }
 
-        return \App\Support\AccountScope::business($user)?->id;
+        return \App\Support\Access\AccountScope::business($user)?->id;
     }
 }

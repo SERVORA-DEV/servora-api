@@ -2,7 +2,7 @@
 
 namespace App\Http\Resources;
 
-use App\Services\ImageUploadService;
+use App\Service\Uploads\ImageUploadService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -20,11 +20,11 @@ class ServiceResource extends JsonResource
             'name' => $this->name,
             'code' => $this->code,
             'category' => $this->category,
-            // time | procedure | facility (App\Support\ServiceKind).
-            'service_type' => \App\Support\ServiceKind::of($this->service_type),
+            // time | procedure | facility (App\Support\Catalog\ServiceKind).
+            'service_type' => \App\Support\Catalog\ServiceKind::of($this->service_type),
             // A facility has to be chosen before the front desk may start it.
             'facility_required' => \App\Models\Service::hasFacilityRequirement()
-                && \App\Support\ServiceKind::needsFacility($this->service_type, (bool) $this->facility_required),
+                && \App\Support\Catalog\ServiceKind::needsFacility($this->service_type, (bool) $this->facility_required),
             'description' => $this->description,
 
             // source_template_id is deliberately not exposed: it's provenance

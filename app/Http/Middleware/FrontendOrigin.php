@@ -2,7 +2,7 @@
 
 namespace App\Http\Middleware;
 
-use App\Support\AllowedOrigin;
+use App\Support\Access\AllowedOrigin;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -11,7 +11,7 @@ use Symfony\Component\HttpFoundation\Response;
 //
 // FRONTEND_URL is one address, but the site is reached at several: localhost,
 // a LAN IP, a forwarded port, the hosted domain. For the length of a request
-// that comes from a trusted front end (App\Support\AllowedOrigin — the CORS
+// that comes from a trusted front end (App\Support\Access\AllowedOrigin — the CORS
 // allow-list), config('app.frontend_url') is that front end's own origin, so
 // the checkout return page, the subscription redirect and the like go back to
 // where the person actually is. Everything without such a header — the phone

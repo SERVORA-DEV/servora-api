@@ -2,11 +2,12 @@
 
 namespace App\Service\System;
 
+use App\Enums\VerificationStatus;
 use App\Http\Resources\SpaBranchResource;
 use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\System\BranchRepository;
-use App\Service\NotificationService;
+use App\Service\Notifications\NotificationService;
 use Illuminate\Http\Request;
 
 class BranchService
@@ -21,21 +22,25 @@ class BranchService
     // actually shows) — 'pending' is informational, surfaced here so the
     // page's stat row can link out to /system/pending without a second
     // request, not because pending branches are part of this list.
-    public function listBranches(int $perPage = 100)
+    /** One page of branches, filtered by the API, with the stat cards and the filters' options. */
+    public function listBranches(int $perPage = 100, array $filters = [])
     {
-        $paginator = $this->branchRepository->paginateAll($perPage);
+        $paginator = $this->branchRepository->paginateAll($perPage, $filters);
 
-        $active = $this->branchRepository->countByVerificationStatus('Verified');
-        $disabled = $this->branchRepository->countByVerificationStatus('Suspended');
-        $pending = $this->branchRepository->countByVerificationStatus('Pending');
+        $active = $this->branchRepository->countByVerificationStatus(VerificationStatus::Verified->value);
+        $disabled = $this->branchRepository->countByVerificationStatus(VerificationStatus::Suspended->value);
+        $pending = $this->branchRepository->countByVerificationStatus(VerificationStatus::Pending->value);
 
-        return SpaBranchResource::collection($paginator)->additional([
+        // Slim rows: what the table and the map show (the detail reads the rest).
+        return \App\Http\Resources\System\BranchListResource::collection($paginator)->additional([
             'stats' => [
                 'total' => $active + $disabled,
                 'active' => $active,
                 'disabled' => $disabled,
                 'pending' => $pending,
             ],
+            'operating_counts' => $this->branchRepository->operatingCounts(),
+            'business_options' => $this->branchRepository->businessOptions(),
         ]);
     }
 
@@ -51,21 +56,21 @@ class BranchService
     {
         $branch = $this->branchRepository->findForList($uuid);
 
-        return ['data' => \App\Support\Suspension::impact([$branch->id])];
+        return ['data' => \App\Support\Platform\Suspension::impact([$branch->id])];
     }
 
     public function suspend(User $admin, string $uuid, string $reason, ?Request $request = null)
     {
         $branch = $this->branchRepository->findForList($uuid);
 
-        if ($branch->verification_status !== 'Verified') {
+        if ($branch->verification_status !== VerificationStatus::Verified->value) {
             return response()->json(['message' => 'Only a verified branch can be suspended.'], 422);
         }
 
         $oldValues = $branch->only(['verification_status', 'verified_by', 'verified_at', 'suspension_reason']);
 
         $branch = $this->branchRepository->update($branch, [
-            'verification_status' => 'Suspended',
+            'verification_status' => VerificationStatus::Suspended->value,
             'verified_by' => $admin->id,
             'verified_at' => now(),
             'suspension_reason' => $reason,
@@ -86,7 +91,7 @@ class BranchService
             $this->notificationService->branchSuspended($branch, $owner, $reason);
         }
         // The clients booked for later are told it is on hold.
-        \App\Support\Suspension::tellClients([$branch->id]);
+        \App\Support\Platform\Suspension::tellClients([$branch->id]);
 
         return new SpaBranchResource($this->branchRepository->findForList($uuid));
     }
@@ -95,14 +100,14 @@ class BranchService
     {
         $branch = $this->branchRepository->findForList($uuid);
 
-        if ($branch->verification_status !== 'Suspended') {
+        if ($branch->verification_status !== VerificationStatus::Suspended->value) {
             return response()->json(['message' => 'Only a suspended branch can be reactivated.'], 422);
         }
 
         $oldValues = $branch->only(['verification_status', 'verified_by', 'verified_at', 'suspension_reason']);
 
         $branch = $this->branchRepository->update($branch, [
-            'verification_status' => 'Verified',
+            'verification_status' => VerificationStatus::Verified->value,
             'verified_by' => $admin->id,
             'verified_at' => now(),
             'suspension_reason' => null,
@@ -123,7 +128,7 @@ class BranchService
             $this->notificationService->branchReactivated($branch, $owner);
         }
         // The clients who were told their booking was on hold are told it is on.
-        \App\Support\Suspension::tellClientsBack([$branch->id]);
+        \App\Support\Platform\Suspension::tellClientsBack([$branch->id]);
 
         return new SpaBranchResource($this->branchRepository->findForList($uuid));
     }

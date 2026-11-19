@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Enums\VerificationStatus;
 use App\Models\SpaBusinessSetting;
 use App\Models\Subscription;
 use App\Models\SystemSetting;
@@ -186,7 +187,7 @@ final class AppCache
     public static function identityStatus(int $userId): string
     {
         return self::remember("user:{$userId}:idv", self::IDENTITY_TTL,
-            fn () => DB::table('owner_identity_verifications')->where('user_id', $userId)->value('status') ?? 'Unregistered');
+            fn () => DB::table('owner_identity_verifications')->where('user_id', $userId)->value('status') ?? VerificationStatus::Unregistered->value);
     }
 
     // ── Versions (for whole-response caches) ──────────────────────────────

@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\BookingBoard;
+use App\Support\Visits\BookingBoard;
 use PHPUnit\Framework\TestCase;
 
 // The front desk's booking board: who can take a visit at each start time.

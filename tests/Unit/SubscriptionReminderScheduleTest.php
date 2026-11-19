@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\SubscriptionReminderSchedule as Schedule;
+use App\Support\Platform\SubscriptionReminderSchedule as Schedule;
 use Carbon\Carbon;
 use Tests\TestCase;
 

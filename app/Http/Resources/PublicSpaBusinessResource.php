@@ -2,7 +2,7 @@
 
 namespace App\Http\Resources;
 
-use App\Services\ImageUploadService;
+use App\Service\Uploads\ImageUploadService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 

@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Business;
 use App\Http\Controllers\Controller;
 use App\Service\Business\DayCloser;
 use App\Service\Business\ServiceEndNotifier;
-use App\Service\NotificationService;
+use App\Service\Notifications\NotificationService;
 use Illuminate\Http\Request;
 
 // The signed-in business owner's OWN notification feed — mirrors

@@ -9,19 +9,23 @@ use Illuminate\Support\Facades\DB;
 
 class AuditLogService
 {
-    private AuditLogRepository $auditLogRepository;
+    public function __construct(
+        private AuditLogRepository $auditLogRepository,
+    ) {}
 
-    public function __construct(AuditLogRepository $auditLogRepository)
+    /** One page of the administrators' audit trail, filtered by the API (AuditLogRepository::adminPage). */
+    public function listAuditLogs(int $perPage = 100, array $filters = [])
     {
-        $this->auditLogRepository = $auditLogRepository;
-    }
-
-    public function listAuditLogs(int $perPage = 100)
-    {
-        $collection = $this->auditLogRepository->paginate($perPage);
+        $collection = $this->auditLogRepository->adminPage($filters, $perPage);
         $this->attachSubjects($collection->getCollection());
 
         return AuditLogResource::collection($collection);
+    }
+
+    /** The stat cards, category counts and filter options. */
+    public function summary(): array
+    {
+        return $this->auditLogRepository->adminSummary();
     }
 
     // The name of the record each row acted on ("Wellness Spa", "Premium") —

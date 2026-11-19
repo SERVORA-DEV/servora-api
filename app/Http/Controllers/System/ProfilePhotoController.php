@@ -3,7 +3,8 @@
 namespace App\Http\Controllers\System;
 
 use App\Http\Controllers\Controller;
-use App\Services\ImageUploadService;
+use App\Http\Requests\System\ProfilePhotoRequest;
+use App\Service\Uploads\ImageUploadService;
 use App\Support\ProfilePhoto;
 use Illuminate\Http\Request;
 
@@ -11,13 +12,8 @@ class ProfilePhotoController extends Controller
 {
     public function __construct(private ImageUploadService $images) {}
 
-    public function store(Request $request)
+    public function store(ProfilePhotoRequest $request)
     {
-        $request->validate(['photo' => [
-            'required', 'file', 'image',
-            'mimes:'.implode(',', config('uploads.allowed_extensions')),
-            'max:'.config('uploads.max_size_kb'),
-        ]]);
         // Only the authenticated account; no target user identifier is accepted.
         $user = $request->user();
         $old = $user->profile_photo;

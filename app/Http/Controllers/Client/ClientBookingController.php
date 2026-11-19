@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Client;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Client\BookingListRequest;
 use App\Http\Requests\Client\ClientCancelRequest;
 use App\Http\Requests\Client\ClientRescheduleRequest;
 use App\Http\Requests\Client\ClientReviewRequest;
@@ -15,13 +16,8 @@ class ClientBookingController extends Controller
     {
     }
 
-    public function index(Request $request)
+    public function index(BookingListRequest $request)
     {
-        $request->validate([
-            'scope' => ['nullable', 'in:upcoming,past,cancelled,all'],
-            'per_page' => ['nullable', 'integer', 'between:1,50'],
-        ]);
-
         return $this->bookings->list($request->user(), $request->query('scope'), (int) $request->query('per_page', 20));
     }
 

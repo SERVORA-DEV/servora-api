@@ -7,7 +7,7 @@ use Illuminate\Mail\Mailable;
 use Illuminate\Queue\SerializesModels;
 
 // "Confirm your email" for someone signing up: the button creates the account
-// (App\Support\PendingRegistration). Deliberately NOT ShouldQueue, like the
+// (App\Support\Access\PendingRegistration). Deliberately NOT ShouldQueue, like the
 // other mails: there is no queue worker, and sending directly keeps an SMTP
 // failure where the sender can catch it.
 class RegistrationLinkMail extends Mailable

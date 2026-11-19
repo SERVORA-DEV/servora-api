@@ -18,7 +18,7 @@ use Illuminate\Http\JsonResponse;
 // A plan's rate is in the kind Staff Policies sets, so it is held to the same
 // limits (a percentage is at most 100). Changing a rate applies to services
 // completed afterwards: what was earned stays as it was worked out
-// (App\Support\History, CommissionCalculator::freeze).
+// (App\Support\Activity\History, CommissionCalculator::freeze).
 class CommissionPlanService
 {
     public const MAX_PLANS = 20;

@@ -5,7 +5,6 @@ namespace App\Http\Requests\Business;
 use App\Rules\NoEmoji;
 use App\Repository\SpaBusinessRepository;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 
 class OwnerBusinessDetailsRequest extends FormRequest
 {

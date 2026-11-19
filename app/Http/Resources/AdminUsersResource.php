@@ -2,7 +2,7 @@
 
 namespace App\Http\Resources;
 
-use App\Support\AdminPermissions;
+use App\Support\Access\AdminPermissions;
 use App\Support\ProfilePhoto;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;

@@ -2,6 +2,9 @@
 
 namespace App\Service\System;
 
+use App\Enums\AccountStatus;
+use App\Enums\SubscriptionStatus;
+use App\Enums\VerificationStatus;
 use App\Models\AccountBranch;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
@@ -31,10 +34,10 @@ class AnnouncementAudience
     public function businesses(): Builder
     {
         return SpaBusiness::query()
-            ->where('verification_status', 'Verified')
-            ->whereHas('owner', fn ($q) => $q->where('account_status', 'Active'))
+            ->where('verification_status', VerificationStatus::Verified->value)
+            ->whereHas('owner', fn ($q) => $q->where('account_status', AccountStatus::Active->value))
             ->whereHas('subscriptions', fn ($q) => $q
-                ->where('status', 'Active')
+                ->where('status', SubscriptionStatus::Active->value)
                 ->where(fn ($w) => $w->whereNull('expires_at')->orWhere('expires_at', '>', now())));
     }
 
@@ -42,13 +45,13 @@ class AnnouncementAudience
     public function branches(): Builder
     {
         return SpaBranch::query()
-            ->where('verification_status', 'Verified')
-            ->whereHas('business', fn ($q) => $q->where('verification_status', 'Verified'));
+            ->where('verification_status', VerificationStatus::Verified->value)
+            ->whereHas('business', fn ($q) => $q->where('verification_status', VerificationStatus::Verified->value));
     }
 
     public function clients(): Builder
     {
-        return User::query()->where('role', 'client')->where('account_status', 'Active');
+        return User::query()->where('role', 'client')->where('account_status', AccountStatus::Active->value);
     }
 
     /**
@@ -67,7 +70,7 @@ class AnnouncementAudience
         $users = match ($audience) {
             'admins' => User::query()
                 ->where('role', 'system_administrator')
-                ->where('account_status', 'Active')
+                ->where('account_status', AccountStatus::Active->value)
                 ->where('id', '!=', $actor->id)
                 ->get(),
             'businesses' => $this->businessOwners($selected ? $targets : null),
@@ -133,7 +136,7 @@ class AnnouncementAudience
             $query->whereIn('uuid', $uuids);
         }
 
-        return User::query()->whereIn('id', $query->pluck('owner_id'))->where('account_status', 'Active')->get();
+        return User::query()->whereIn('id', $query->pluck('owner_id'))->where('account_status', AccountStatus::Active->value)->get();
     }
 
     private function branchPeople(?array $uuids): Collection
@@ -157,7 +160,7 @@ class AnnouncementAudience
             $ids = array_merge($ids, $managers);
         }
 
-        return User::query()->whereIn('id', array_unique($ids))->where('account_status', 'Active')->get();
+        return User::query()->whereIn('id', array_unique($ids))->where('account_status', AccountStatus::Active->value)->get();
     }
 
     private function clientUsers(?array $uuids): Collection

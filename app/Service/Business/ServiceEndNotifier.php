@@ -2,16 +2,17 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AssignmentStatus;
 use App\Models\Addon;
 use App\Models\AppointmentServiceItem;
 use App\Models\Notification;
 use App\Models\Service;
 use App\Models\User;
 use App\Repository\SpaBusinessRepository;
-use App\Support\History;
-use App\Support\ServiceEndNotice;
-use App\Support\ServiceKind;
-use App\Support\StaleVisit;
+use App\Support\Activity\History;
+use App\Support\Visits\ServiceEndNotice;
+use App\Support\Catalog\ServiceKind;
+use App\Support\Visits\StaleVisit;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -22,7 +23,7 @@ use Illuminate\Support\Facades\DB;
 // "Run its time" is the service's own start plus its own length; a visit's
 // other services don't come into it — except its add-ons, which ride with it:
 // their lengths are added to it, and they get no notice of their own
-// (App\Support\ServiceAddon). Procedure-based services, whose time is
+// (App\Support\Catalog\ServiceAddon). Procedure-based services, whose time is
 // an estimate, are left out. Nothing is changed on the visit: this
 // only says so. Switched by Settings → Notifications (on_service_end).
 //
@@ -74,7 +75,7 @@ class ServiceEndNotifier
         $now = now();
 
         // The length (and kind) are the line's own copy of what was booked
-        // (App\Support\History) — editing the menu mid-service moves nothing.
+        // (App\Support\Activity\History) — editing the menu mid-service moves nothing.
         $own = History::ready();
         $length = $own ? 'coalesce(s.duration_minutes, v.duration_minutes)' : 'v.duration_minutes';
 
@@ -90,9 +91,9 @@ class ServiceEndNotifier
             ->join('appointment_services as s', 's.id', '=', 'ta.appointment_service_id')
             ->join('service_variants as v', 'v.id', '=', 's.service_variant_id')
             ->join('appointments as a', 'a.id', '=', 's.appointment_id')
-            ->where('ta.assignment_status', 'In Progress')
+            ->where('ta.assignment_status', AssignmentStatus::InProgress->value)
             ->whereNotNull('ta.started_at')
-            ->where('s.status', 'In Progress')
+            ->where('s.status', AssignmentStatus::InProgress->value)
             ->whereNull('a.deleted_at')
             // Not one left running from a day that is over: DayCloser finishes those, there is nothing to check on.
             ->where('a.appointment_date', '>=', StaleVisit::today())
@@ -100,7 +101,7 @@ class ServiceEndNotifier
             // An add-on's time is counted on its main service, above.
             ->when($addons, fn ($q) => $q->whereNull('s.parent_appointment_service_id'))
             // A procedure-based service's time is only an estimate: there
-            // is no moment it is "up" (App\Support\ServiceKind).
+            // is no moment it is "up" (App\Support\Catalog\ServiceKind).
             ->when(Service::hasTypes(), fn ($q) => $q
                 ->join('services as sv', 'sv.id', '=', 'v.service_id')
                 ->whereRaw(($own ? 'coalesce(s.service_type, sv.service_type)' : 'sv.service_type') . ' != ?', [ServiceKind::PROCEDURE]))
@@ -151,7 +152,7 @@ class ServiceEndNotifier
             $service->load([
                 'appointment.client',
                 'appointment.branch.business.settings',
-                'therapistAssignments' => fn ($q) => $q->where('assignment_status', 'In Progress')->with('staff:id,first_name,last_name', 'facility:id,name'),
+                'therapistAssignments' => fn ($q) => $q->where('assignment_status', AssignmentStatus::InProgress->value)->with('staff:id,first_name,last_name', 'facility:id,name'),
             ]);
             $appointment = $service->appointment;
             if (! $appointment?->branch) {

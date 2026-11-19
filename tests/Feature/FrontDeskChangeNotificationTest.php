@@ -12,6 +12,7 @@ use App\Models\SubscriptionPlan;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
+use Tests\Concerns\MakesStaffLogins;
 use Tests\TestCase;
 
 // A change at a branch — the owner's or a manager's — reaches that branch's
@@ -23,6 +24,7 @@ use Tests\TestCase;
 //   DB_PASSWORD=... php artisan test --filter=FrontDeskChangeNotificationTest
 class FrontDeskChangeNotificationTest extends TestCase
 {
+    use MakesStaffLogins;
     use RefreshDatabase;
 
     private User $owner;
@@ -60,14 +62,7 @@ class FrontDeskChangeNotificationTest extends TestCase
     {
         $staff = Staff::factory()->create(['spa_branch_id' => $this->branch->id, 'role' => $staffRole]);
         Sanctum::actingAs($this->owner);
-        $this->postJson('/api/business/account', [
-            'staff_uuid' => $staff->uuid,
-            'username' => $username,
-            'email' => $email,
-            'password' => 'secret-password',
-        ])->assertSuccessful();
-
-        return User::where('username', $username)->firstOrFail();
+        return $this->makeStaffLogin($staff, $username, $email);
     }
 
     private function saveHours(User $as, ?SpaBranch $branch = null)

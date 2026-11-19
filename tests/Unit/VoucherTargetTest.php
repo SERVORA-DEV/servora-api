@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\VoucherTarget;
+use App\Support\Programs\VoucherTarget;
 use PHPUnit\Framework\TestCase;
 
 // The rules behind "every 5th massage, 50% off a massage": which services a

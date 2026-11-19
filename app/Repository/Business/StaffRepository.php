@@ -2,19 +2,11 @@
 
 namespace App\Repository\Business;
 
+use App\Enums\StaffStatus;
 use App\Models\Staff;
 
 class StaffRepository
 {
-    // Scoped listing for the owner's own staff roster — paginate() has no
-    // business filter, so every owner would see every business's staff.
-    public function paginateForBusiness(int $spaBusinessId, int $perPage = 15)
-    {
-        return Staff::with(['branch', 'user'])
-            ->whereHas('branch', fn ($query) => $query->where('spa_business_id', $spaBusinessId))
-            ->latest()
-            ->paginate($perPage);
-    }
 
     // Scoped to a specific set of branch ids — what listStaff() actually
     // uses now (via SpaBusinessRepository::branchesForUser), since a manager
@@ -40,7 +32,7 @@ class StaffRepository
     {
         return Staff::whereIn('spa_branch_id', $spaBranchIds)
             ->where('role', 'therapist')
-            ->where('status', 'active')
+            ->where('status', StaffStatus::Active->value)
             // LookupTherapistResource exposes qualified_service_uuids for the
             // appointment modal's eligibility filter — eager-loaded so a
             // roster of N therapists stays one extra query, not N.
@@ -106,12 +98,5 @@ class StaffRepository
     {
         $model = $this->findByUuid($uuid);
         return $model->delete();
-    }
-
-    public function restore(string $uuid)
-    {
-        $model = Staff::withTrashed()->where('uuid', $uuid)->firstOrFail();
-        $model->restore();
-        return $model;
     }
 }

@@ -83,8 +83,9 @@ class ClientProfile
         if (trim((string) ($client['phone_number'] ?? '')) === '') {
             $missing[] = 'phone number';
         }
-        // Any of the three answers will do, "Prefer not to say" too (App\Support\Gender).
-        if (Gender::clean($client['gender'] ?? null) === null) {
+        // Male or Female: "Prefer not to say" is no longer a choice, so a client
+        // who gave it is asked again before a home visit.
+        if (self::gender($client['gender'] ?? null) === null) {
             $missing[] = 'gender';
         }
 

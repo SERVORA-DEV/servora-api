@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Schema;
 //                   login signs in to Management and switches to Operation,
 //                   like the owner). It is the level a Manager login has
 //                   always had, so existing accounts keep working as before.
-// The owner gives these in Settings → Staff Accounts; see App\Support\AccountScope.
+// The owner gives these in Settings → Staff Accounts; see App\Support\Access\AccountScope.
 class AccountBranch extends Model
 {
     public const MANAGEMENT = 'management';

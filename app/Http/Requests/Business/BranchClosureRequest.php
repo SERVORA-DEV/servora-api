@@ -2,7 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
-use App\Support\BranchClosures;
+use App\Support\Branches\BranchClosures;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 

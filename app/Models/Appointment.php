@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Enums\AppointmentServiceStatus;
+use App\Enums\AppointmentStatus;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -14,47 +16,18 @@ class Appointment extends Model
 
     protected $table = 'appointments';
 
-    public const STATUS_SCHEDULED = 'scheduled';
-    public const STATUS_CHECKED_IN = 'checked_in';
-    public const STATUS_IN_SERVICE = 'in_service';
-    public const STATUS_COMPLETED = 'completed';
-    public const STATUS_CANCELLED = 'cancelled';
-    public const STATUS_NO_SHOW = 'no_show';
-
-    public const STATUSES = [
-        self::STATUS_SCHEDULED,
-        self::STATUS_CHECKED_IN,
-        self::STATUS_IN_SERVICE,
-        self::STATUS_COMPLETED,
-        self::STATUS_CANCELLED,
-        self::STATUS_NO_SHOW,
-    ];
-
-    // Single source of truth for "what can this appointment become next" —
-    // mirrors the required workflow exactly: Scheduled -> Checked In -> In
-    // Service -> Completed, with Cancelled/No Show as the only alternate
-    // branches off Scheduled (Cancelled also reachable from Checked In, so
-    // a client who leaves before service starts can still be cancelled).
-    // Terminal states have no outgoing transitions. No client-confirmation
-    // status exists in this workflow at all.
-    public const ALLOWED_TRANSITIONS = [
-        self::STATUS_SCHEDULED => [self::STATUS_CHECKED_IN, self::STATUS_CANCELLED, self::STATUS_NO_SHOW],
-        self::STATUS_CHECKED_IN => [self::STATUS_IN_SERVICE, self::STATUS_CANCELLED],
-        self::STATUS_IN_SERVICE => [self::STATUS_COMPLETED],
-        self::STATUS_COMPLETED => [],
-        self::STATUS_CANCELLED => [],
-        self::STATUS_NO_SHOW => [],
-    ];
-
+    // Whether the visit may move to $next from where it is now (AppointmentStatus::next()).
     public function canTransitionTo(string $next): bool
     {
-        return in_array($next, self::ALLOWED_TRANSITIONS[$this->status] ?? [], true);
+        $now = AppointmentStatus::tryFrom((string) $this->status);
+
+        return $now !== null && in_array(AppointmentStatus::tryFrom($next), $now->next(), true);
     }
 
     // True once every service on the visit is done (Completed or
     // Cancelled) — the appointment's own `status` column stays 'in_service'
-    // through this point and only becomes STATUS_COMPLETED after payment
-    // (see AppointmentService::recordPayment()), so this is the actual
+    // through this point and only becomes Completed after payment
+    // (see VisitBillingService::recordPayment()), so this is the actual
     // signal for "nothing left to do here but bill it." Mirrors the
     // frontend's own `allServicesResolved` computed
     // (app/pages/frontoffice/appointments/[uuid].vue) exactly — both sides
@@ -62,7 +35,7 @@ class Appointment extends Model
     public function allServicesResolved(): bool
     {
         return $this->services->isNotEmpty()
-            && $this->services->every(fn (AppointmentServiceItem $s) => in_array($s->status, ['Completed', 'Cancelled'], true));
+            && $this->services->every(fn (AppointmentServiceItem $s) => in_array($s->status, [AppointmentServiceStatus::Completed->value, AppointmentServiceStatus::Cancelled->value], true));
     }
 
     protected $fillable = [
@@ -82,7 +55,7 @@ class Appointment extends Model
         'home_longitude',
         'home_distance_km',
         'home_service_fee',
-        // Starting a home visit by scanning (App\Support\HomeVisitStart):
+        // Starting a home visit by scanning (App\Support\Visits\HomeVisitStart):
         // the code in the client's QR, and when a scan started the visit.
         'home_start_code',
         'home_scanned_at',
@@ -132,8 +105,8 @@ class Appointment extends Model
         // Client A's booking cancelled: the package they bought for several clients goes too, on
         // the others' appointments (they were covered by it). However it was cancelled.
         static::updated(function (self $appointment) {
-            if ($appointment->wasChanged('status') && $appointment->status === self::STATUS_CANCELLED) {
-                \App\Support\SharedPackages::cancelJoined($appointment);
+            if ($appointment->wasChanged('status') && $appointment->status === AppointmentStatus::Cancelled->value) {
+                \App\Support\Catalog\SharedPackages::cancelJoined($appointment);
             }
         });
     }
@@ -165,7 +138,7 @@ class Appointment extends Model
     public static function newHomeStartCode(): string
     {
         do {
-            $code = \App\Support\HomeVisitStart::newCode();
+            $code = \App\Support\Visits\HomeVisitStart::newCode();
         } while (self::withTrashed()->where('home_start_code', $code)->exists());
 
         return $code;
@@ -243,8 +216,8 @@ class Appointment extends Model
      */
     public function scopeMissedSinceLastVisit($query)
     {
-        return $query->where('appointments.status', self::STATUS_NO_SHOW)
-            ->whereRaw("appointments.appointment_date > COALESCE((select max(visit.appointment_date) from appointments visit where visit.client_id = appointments.client_id and visit.status = ?), '1900-01-01')", [self::STATUS_COMPLETED]);
+        return $query->where('appointments.status', AppointmentStatus::NoShow->value)
+            ->whereRaw("appointments.appointment_date > COALESCE((select max(visit.appointment_date) from appointments visit where visit.client_id = appointments.client_id and visit.status = ?), '1900-01-01')", [AppointmentStatus::Completed->value]);
     }
 
     // The voucher the client booked with (Appointment::holdsVouchers).
@@ -275,7 +248,7 @@ class Appointment extends Model
 
     // Loose-in-spirit but FK'd (billings.appointment_id -> appointments.id) —
     // one billing per appointment, created once by
-    // AppointmentService::proceedToBilling().
+    // VisitBillingService::proceedToBilling().
     public function billing()
     {
         return $this->hasOne(Billing::class, 'appointment_id');

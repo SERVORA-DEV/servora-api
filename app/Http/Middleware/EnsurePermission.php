@@ -2,9 +2,10 @@
 
 namespace App\Http\Middleware;
 
-use App\Support\AdminPermissions;
+use App\Exceptions\NotPermitted;
+use App\Support\Access\AdminPermissions;
 use App\Support\AppCache;
-use App\Support\PermissionGrants;
+use App\Support\Access\PermissionGrants;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -36,7 +37,7 @@ class EnsurePermission
         }
 
         if (! in_array($key, $allowed, true)) {
-            abort(403, 'You do not have permission to perform this action.');
+            throw new NotPermitted('You do not have permission to perform this action.');
         }
 
         // Owner-created accounts also carry their own flags (the owner's
@@ -45,16 +46,16 @@ class EnsurePermission
         // account's own row can only narrow it. An account with no row keeps
         // the role bundle as before.
         // System administrators work the same way — their own row is set in
-        // Settings → Administrators (see App\Support\AdminPermissions).
+        // Settings → Administrators (see App\Support\Access\AdminPermissions).
         if ($user->role === 'system_administrator' && ! AdminPermissions::allows($user, $key)) {
-            abort(403, 'You do not have permission to perform this action.');
+            throw new NotPermitted('You do not have permission to perform this action.');
         }
 
         if (in_array($user->role, self::ACCOUNT_ROLES, true)) {
             $permission = $user->permission;
 
             if ($permission && $permission->getAttribute($key) !== true && ! PermissionGrants::stillPending($user->role, $key)) {
-                abort(403, 'You do not have permission to perform this action.');
+                throw new NotPermitted('You do not have permission to perform this action.');
             }
         }
 

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\AppointmentStatus;
 use App\Models\Appointment;
 use App\Models\Billing;
 use App\Models\BranchSchedule;
@@ -97,7 +98,7 @@ class ClientBookingTest extends TestCase
             'appointment_date' => self::DATE,
             'appointment_time' => '10:00',
             'services' => [['service_variant_uuid' => $this->variant->uuid]],
-            'client' => ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => '0917' . random_int(1000000, 9999999)],
+            'client' => ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => '0917' . random_int(1000000, 9999999), 'gender' => 'Female'],
         ], $overrides));
 
         $response->assertSuccessful();
@@ -108,7 +109,7 @@ class ClientBookingTest extends TestCase
     private function complete(string $uuid, float $amount = 700): Appointment
     {
         $appointment = Appointment::where('uuid', $uuid)->firstOrFail();
-        $appointment->update(['status' => Appointment::STATUS_COMPLETED, 'completed_at' => now()]);
+        $appointment->update(['status' => AppointmentStatus::Completed->value, 'completed_at' => now()]);
 
         $billing = Billing::create([
             'appointment_id' => $appointment->id,
@@ -140,7 +141,8 @@ class ClientBookingTest extends TestCase
     {
         $me = $this->client();
         $mine = $this->book($me);
-        $this->book($this->client());
+        // Later the same day: the branch's one therapist is taken at 10:00.
+        $this->book($this->client(), ['appointment_time' => '14:00']);
 
         Sanctum::actingAs($me);
         $this->getJson('/api/client/appointments?scope=upcoming')
@@ -185,7 +187,7 @@ class ClientBookingTest extends TestCase
     {
         $me = $this->client();
         $uuid = $this->book($me);
-        Appointment::where('uuid', $uuid)->update(['status' => Appointment::STATUS_CHECKED_IN, 'check_in_at' => now()]);
+        Appointment::where('uuid', $uuid)->update(['status' => AppointmentStatus::CheckedIn->value, 'check_in_at' => now()]);
 
         $this->postJson("/api/client/appointments/{$uuid}/cancel")->assertStatus(422);
         $this->patchJson("/api/client/appointments/{$uuid}/reschedule", ['appointment_date' => self::DATE, 'appointment_time' => '14:00'])->assertStatus(422);
@@ -206,7 +208,7 @@ class ClientBookingTest extends TestCase
 
         $this->patchJson("/api/client/appointments/{$uuid}/reschedule", ['appointment_date' => '2027-03-04', 'appointment_time' => '10:00'])
             ->assertStatus(422)
-            ->assertJsonPath('message', 'The branch is closed on this day.');
+            ->assertJsonPath('message', 'The spa is closed on this day.');
 
         $this->patchJson("/api/client/appointments/{$uuid}/reschedule", ['appointment_date' => '2027-03-03', 'appointment_time' => '15:30'])
             ->assertOk()
@@ -220,6 +222,8 @@ class ClientBookingTest extends TestCase
 
     public function test_reschedule_is_refused_when_the_chosen_therapist_is_off(): void
     {
+        // Only the shifts below (not the every-day ones makeBookable gives).
+        StaffSchedule::where('staff_id', $this->therapist->id)->delete();
         StaffSchedule::create(['staff_id' => $this->therapist->id, 'day_of_week' => self::DAY, 'start_time' => '09:00:00', 'end_time' => '18:00:00']);
         StaffSchedule::create(['staff_id' => $this->therapist->id, 'day_of_week' => 'Wednesday', 'is_day_off' => true]);
 
@@ -238,6 +242,12 @@ class ClientBookingTest extends TestCase
 
     public function test_queue_position_counts_waiting_clients_ahead(): void
     {
+        // The 10:30 visit overlaps both others: three therapists working that day.
+        foreach (range(1, 2) as $i) {
+            $colleague = Staff::factory()->create(['spa_branch_id' => $this->branch->id, 'role' => 'therapist', 'status' => 'active']);
+            StaffSchedule::create(['staff_id' => $colleague->id, 'day_of_week' => self::DAY, 'start_time' => '09:00:00', 'end_time' => '21:00:00']);
+        }
+
         $me = $this->client();
         $mine = $this->book($me, ['appointment_time' => '11:00']);
 
@@ -245,14 +255,15 @@ class ClientBookingTest extends TestCase
         $first = $this->book($this->client(), ['appointment_time' => '10:00']);
         $second = $this->book($this->client(), ['appointment_time' => '10:30']);
 
-        $this->travelTo(now()); // keeps created_at ordering deterministic below
-        $service->checkIn($this->owner, $first);
+        // The morning of the visits: a booking is checked in on its own day.
+        $this->travelTo(\Carbon\Carbon::parse(self::DATE . ' 09:50'));
+        $service->checkIn($this->owner, $first, place: 'booked');
         $this->travel(1)->seconds();
-        $service->checkIn($this->owner, $second);
+        $service->checkIn($this->owner, $second, place: 'booked');
         $this->travel(1)->seconds();
-        $service->checkIn($this->owner, $mine);
-        // (a ticket already Called, from before calling was for clients not yet here)
-        Queue::whereHas('appointment', fn ($q) => $q->where('uuid', $first))->update(['queue_status' => 'Called']);
+        $service->checkIn($this->owner, $mine, place: 'booked');
+        // The first is being served (a Called ticket is still in the line: QueueRepository::aheadOf).
+        Queue::whereHas('appointment', fn ($q) => $q->where('uuid', $first))->update(['queue_status' => 'Serving', 'called_at' => now()]);
 
         Sanctum::actingAs($me);
         $response = $this->getJson("/api/client/appointments/{$mine}/queue")->assertOk();
@@ -260,7 +271,8 @@ class ClientBookingTest extends TestCase
             ->assertJsonPath('data.ahead', 1)
             ->assertJsonPath('data.queue_status', 'Waiting')
             ->assertJsonPath('data.now_serving', Queue::whereHas('appointment', fn ($q) => $q->where('uuid', $first))->value('queue_number'))
-            ->assertJsonPath('data.estimated_wait_minutes', 60);
+            // One 60-minute visit ahead, shared by the three therapists on the roster.
+            ->assertJsonPath('data.estimated_wait_minutes', 20);
     }
 
     public function test_a_booking_not_yet_checked_in_has_no_queue_ticket(): void
@@ -368,8 +380,11 @@ class ClientBookingTest extends TestCase
         // Booking confirmation.
         $this->assertSame(1, Notification::where('user_id', $me->id)->count());
 
-        app(AppointmentService::class)->checkIn($this->owner, $uuid);
+        // The morning of the visit: a booking is checked in on its own day.
+        $this->travelTo(\Carbon\Carbon::parse(self::DATE . ' 09:55'));
+        app(AppointmentService::class)->checkIn($this->owner, $uuid, place: 'booked');
         app(AppointmentService::class)->cancelAppointment($this->owner, $uuid, 'Therapist unwell');
+        $this->travelBack();
 
         $titles = Notification::where('user_id', $me->id)->orderBy('id')->pluck('title')->all();
         $this->assertSame(['Booking confirmed', "You're checked in", 'Booking cancelled'], $titles);
@@ -403,17 +418,17 @@ class ClientBookingTest extends TestCase
 
         $this->postJson('/api/client/change-password', [
             'current_password' => 'wrong',
-            'password' => 'new-secret-1',
-            'password_confirmation' => 'new-secret-1',
+            'password' => 'New-secret-1',
+            'password_confirmation' => 'New-secret-1',
         ])->assertStatus(422)->assertJsonValidationErrors('current_password');
 
         $this->postJson('/api/client/change-password', [
             'current_password' => 'secret-pass',
-            'password' => 'new-secret-1',
-            'password_confirmation' => 'new-secret-1',
+            'password' => 'New-secret-1',
+            'password_confirmation' => 'New-secret-1',
         ])->assertOk();
 
-        $this->assertTrue(Hash::check('new-secret-1', $me->fresh()->password));
+        $this->assertTrue(Hash::check('New-secret-1', $me->fresh()->password));
     }
 
     public function test_client_routes_need_a_client_account(): void

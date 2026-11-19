@@ -2,8 +2,9 @@
 
 namespace App\Http\Resources;
 
-use App\Services\DocumentUploadService;
-use App\Support\OwnerVerificationStatus;
+use App\Enums\VerificationStatus;
+use App\Service\Uploads\DocumentUploadService;
+use App\Support\Platform\OwnerVerificationStatus;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -38,7 +39,7 @@ class OwnerVerificationResource extends JsonResource
                 'registration_number' => $business->registration_number,
                 'registration_document_url' => app(DocumentUploadService::class)->signedUrl($business->registration_document_path),
                 'verification_status' => $business->verification_status,
-                'rejection_reason' => $business->verification_status === 'Rejected' ? $business->rejection_reason : null,
+                'rejection_reason' => $business->verification_status === VerificationStatus::Rejected->value ? $business->rejection_reason : null,
                 'verified_at' => $business->verified_at,
                 'updated_at' => $business->updated_at,
             ] : [
@@ -54,7 +55,7 @@ class OwnerVerificationResource extends JsonResource
                 'authorized_representative_name' => null,
                 'registration_number' => null,
                 'registration_document_url' => null,
-                'verification_status' => 'Unregistered',
+                'verification_status' => VerificationStatus::Unregistered->value,
                 'rejection_reason' => null,
                 'verified_at' => null,
                 'updated_at' => null,
@@ -65,7 +66,7 @@ class OwnerVerificationResource extends JsonResource
                 'name' => trim("{$owner->first_name} {$owner->last_name}"),
                 'email' => $owner->email,
             ] : null,
-            'overall_status' => OwnerVerificationStatus::compute($identity->status, $business->verification_status ?? 'Unregistered'),
+            'overall_status' => OwnerVerificationStatus::compute($identity->status, $business->verification_status ?? VerificationStatus::Unregistered->value),
         ];
     }
 }

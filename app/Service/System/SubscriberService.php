@@ -2,15 +2,17 @@
 
 namespace App\Service\System;
 
+use App\Enums\BillingStatus;
+use App\Enums\SubscriptionStatus;
 use App\Models\Billing;
 use App\Models\Subscription;
 use App\Models\SystemSetting;
-use App\Support\SubscriberState;
+use App\Support\Platform\SubscriberState;
 use Illuminate\Support\Carbon;
 
 // The administrator's Subscribers list: every business that has ever had a
 // subscription, one row each, with where it stands right now (active, on
-// trial, renewing soon, overdue, did not renew — App\Support\SubscriberState).
+// trial, renewing soon, overdue, did not renew — App\Support\Platform\SubscriberState).
 class SubscriberService
 {
     public function list(): array
@@ -21,7 +23,7 @@ class SubscriberService
         // renewal adds a row and old rows keep their status (the same rule as
         // SubscriptionRepository::countOverdue). A row still waiting for its
         // payment has not started, so it never stands in for the last real one.
-        $latestIds = Subscription::where('status', '!=', 'Pending')
+        $latestIds = Subscription::where('status', '!=', SubscriptionStatus::Pending->value)
             ->selectRaw('MAX(id) as id')
             ->groupBy('spa_business_id')
             ->pluck('id');
@@ -32,11 +34,11 @@ class SubscriberService
             ->filter(fn (Subscription $s) => $s->business !== null);
 
         // Two grouped reads for the whole list, not one per row.
-        $since = Subscription::where('is_trial', false)->where('status', '!=', 'Pending')
+        $since = Subscription::where('is_trial', false)->where('status', '!=', SubscriptionStatus::Pending->value)
             ->selectRaw('spa_business_id, MIN(starts_at) as since')
             ->groupBy('spa_business_id')
             ->pluck('since', 'spa_business_id');
-        $paid = Billing::where('billing_type', 'Subscription')->where('status', 'Paid')
+        $paid = Billing::where('billing_type', 'Subscription')->where('status', BillingStatus::Paid->value)
             ->selectRaw('spa_business_id, COALESCE(SUM(amount), 0) as total, COUNT(*) as payments')
             ->groupBy('spa_business_id')
             ->get()

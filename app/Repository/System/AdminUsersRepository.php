@@ -5,7 +5,6 @@ namespace App\Repository\System;
 use App\Models\User;
 use App\Models\UserPermission;
 use Illuminate\Support\Arr;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 class AdminUsersRepository
 {
@@ -45,13 +44,6 @@ class AdminUsersRepository
         ->firstOrFail();
     }
 
-    public function findByField(string $field, $value)
-    {
-        return User::with('permission')
-        ->where($field, $value)
-        ->firstOrFail();
-    }
-
     public function update(string $uuid, array $payload)
     {
         $model = User::where('role', 'system_administrator')->where('uuid', $uuid)->firstOrFail();
@@ -84,17 +76,4 @@ class AdminUsersRepository
 
         return $model->load('permission');
     }
-
-    // public function delete(string $uuid)
-    // {
-    //     $model = $this->findByUuid($uuid);
-    //     return $model->delete();
-    // }
-
-    // public function restore(string $uuid)
-    // {
-    //     $model = AdminUsers::withTrashed()->where('uuid', $uuid)->firstOrFail();
-    //     $model->restore();
-    //     return $model;
-    // }
 }

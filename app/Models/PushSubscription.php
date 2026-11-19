@@ -5,7 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 
 // A browser or phone that gets a pop-up for each new notification of its
-// user (push_subscriptions; sent by App\Service\PushSender).
+// user (push_subscriptions; sent by App\Service\Notifications\PushSender).
 class PushSubscription extends Model
 {
     public const KIND_WEB = 'web';

@@ -2,6 +2,7 @@
 
 namespace App\Repository\Business;
 
+use App\Enums\AppointmentServiceStatus;
 use App\Models\Appointment;
 use App\Models\AppointmentServiceItem;
 
@@ -10,13 +11,6 @@ class AppointmentServiceRepository
     public function create(array $payload)
     {
         return AppointmentServiceItem::create($payload);
-    }
-
-    public function findByUuidForAppointment(string $uuid, int $appointmentId)
-    {
-        return AppointmentServiceItem::where('uuid', $uuid)
-            ->where('appointment_id', $appointmentId)
-            ->firstOrFail();
     }
 
     // Ownership-scoped lookup for controller actions that only have the
@@ -35,7 +29,7 @@ class AppointmentServiceRepository
     // preserved (rule: preserve assignment/service history).
     public function cancel(AppointmentServiceItem $service): AppointmentServiceItem
     {
-        $service->update(['status' => 'Cancelled']);
+        $service->update(['status' => AppointmentServiceStatus::Cancelled->value]);
         return $service;
     }
 
@@ -45,8 +39,8 @@ class AppointmentServiceRepository
     // was selected at creation.
     public function recalculateAppointmentTotals(Appointment $appointment): void
     {
-        $services = $appointment->services()->where('status', '!=', 'Cancelled')->get();
-        $packages = $appointment->packages()->where('status', '!=', 'Cancelled')->get();
+        $services = $appointment->services()->where('status', '!=', AppointmentServiceStatus::Cancelled->value)->get();
+        $packages = $appointment->packages()->where('status', '!=', AppointmentServiceStatus::Cancelled->value)->get();
 
         // Package-exploded lines exist for execution (therapist/room per
         // component) — the package row's own price is what's charged, so

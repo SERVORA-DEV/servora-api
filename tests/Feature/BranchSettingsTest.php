@@ -2,18 +2,20 @@
 
 namespace Tests\Feature;
 
+use App\Enums\AppointmentStatus;
 use App\Models\Appointment;
 use App\Models\Client;
 use App\Models\Review;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
 use App\Models\User;
-use App\Services\ImageUploadService;
+use App\Service\Uploads\ImageUploadService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Laravel\Sanctum\Sanctum;
 use Mockery;
 use Tests\Concerns\MakesBranchesBookable;
+use Tests\Concerns\FakesImages;
 use Tests\TestCase;
 
 // Covers the owner's Branch Settings endpoints (web /business/settings/branch/*)
@@ -23,6 +25,7 @@ use Tests\TestCase;
 //   DB_PASSWORD=... php artisan test --filter=BranchSettingsTest
 class BranchSettingsTest extends TestCase
 {
+    use FakesImages;
     use MakesBranchesBookable, RefreshDatabase;
 
     private User $owner;
@@ -115,7 +118,7 @@ class BranchSettingsTest extends TestCase
         $this->fakeImages();
 
         $response = $this->post($this->url('/photos'), [
-            'photos' => [UploadedFile::fake()->image('a.jpg'), UploadedFile::fake()->image('b.jpg')],
+            'photos' => [$this->fakeImage('a.png'), $this->fakeImage('b.png')],
         ], ['Accept' => 'application/json'])->assertOk();
 
         $photos = $response->json('data.photos');
@@ -139,7 +142,7 @@ class BranchSettingsTest extends TestCase
     {
         $this->fakeImages();
         $photos = $this->post($this->url('/photos'), [
-            'photos' => [UploadedFile::fake()->image('a.jpg'), UploadedFile::fake()->image('b.jpg'), UploadedFile::fake()->image('c.jpg')],
+            'photos' => [$this->fakeImage('a.png'), $this->fakeImage('b.png'), $this->fakeImage('c.png')],
         ], ['Accept' => 'application/json'])->assertOk()->json('data.photos');
         [$a, $b, $c] = array_column($photos, 'uuid');
 
@@ -158,7 +161,7 @@ class BranchSettingsTest extends TestCase
     {
         $this->fakeImages();
         $photos = $this->post($this->url('/photos'), [
-            'photos' => [UploadedFile::fake()->image('a.jpg'), UploadedFile::fake()->image('b.jpg')],
+            'photos' => [$this->fakeImage('a.png'), $this->fakeImage('b.png')],
         ], ['Accept' => 'application/json'])->assertOk()->json('data.photos');
 
         $this->patchJson($this->url('/photos/order'), ['photos' => [$photos[0]['uuid']]])->assertStatus(422);
@@ -184,7 +187,7 @@ class BranchSettingsTest extends TestCase
     public function test_the_registration_photo_does_not_replace_a_chosen_cover(): void
     {
         $this->fakeImages();
-        $this->post($this->url('/photos'), ['photos' => [UploadedFile::fake()->image('a.jpg')]], ['Accept' => 'application/json'])->assertOk();
+        $this->post($this->url('/photos'), ['photos' => [$this->fakeImage('a.png')]], ['Accept' => 'application/json'])->assertOk();
         $this->branch->update(['cover_photo' => 'branches/b/registration']);
 
         $photos = $this->getJson($this->url('/marketplace'))->assertOk()->json('data.photos');
@@ -208,7 +211,7 @@ class BranchSettingsTest extends TestCase
     public function test_gallery_is_capped_at_eight_photos(): void
     {
         $this->fakeImages();
-        $files = fn ($n) => array_map(fn ($i) => UploadedFile::fake()->image("p{$i}.jpg"), range(1, $n));
+        $files = fn ($n) => array_map(fn ($i) => $this->fakeImage("p{$i}.png"), range(1, $n));
 
         $this->post($this->url('/photos'), ['photos' => $files(6)], ['Accept' => 'application/json'])->assertOk();
         $this->post($this->url('/photos'), ['photos' => $files(3)], ['Accept' => 'application/json'])
@@ -218,7 +221,7 @@ class BranchSettingsTest extends TestCase
     public function test_the_gallery_cover_is_the_public_cover_photo(): void
     {
         $this->fakeImages();
-        $this->post($this->url('/photos'), ['photos' => [UploadedFile::fake()->image('a.jpg')]], ['Accept' => 'application/json'])->assertOk();
+        $this->post($this->url('/photos'), ['photos' => [$this->fakeImage('a.png')]], ['Accept' => 'application/json'])->assertOk();
 
         $this->branch->refresh();
         $this->assertSame('gallery/p1', $this->branch->coverPhoto->path);
@@ -270,7 +273,7 @@ class BranchSettingsTest extends TestCase
                 'appointment_time' => '10:00',
                 'appointment_type' => 'Reservation',
                 'source' => 'Mobile',
-                'status' => Appointment::STATUS_SCHEDULED,
+                'status' => AppointmentStatus::Scheduled->value,
             ]);
             Review::create(['appointment_id' => $appointment->id, 'client_id' => $client->id, 'rating' => $rating, 'status' => $status, 'is_anonymous' => $anonymous]);
         };

@@ -3,8 +3,9 @@
 namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Business\ManagerNotificationPrefsRequest;
 use App\Models\User;
-use App\Support\ManagerNotificationPrefs;
+use App\Support\Staff\ManagerNotificationPrefs;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 
@@ -19,9 +20,9 @@ class ManagerNotificationPrefsController extends Controller
         return $this->answer($request->user());
     }
 
-    public function update(Request $request)
+    public function update(ManagerNotificationPrefsRequest $request)
     {
-        $changes = $request->validate(array_fill_keys(array_keys(ManagerNotificationPrefs::DEFAULTS), 'sometimes|boolean'));
+        $changes = $request->validated();
 
         $user = $request->user();
         // The manager's own choices are kept as they made them, including
@@ -56,6 +57,6 @@ class ManagerNotificationPrefsController extends Controller
     /** @return string[] */
     private function locked(User $user): array
     {
-        return ManagerNotificationPrefs::lockedFor(\App\Support\AccountScope::business($user)?->id);
+        return ManagerNotificationPrefs::lockedFor(\App\Support\Access\AccountScope::business($user)?->id);
     }
 }

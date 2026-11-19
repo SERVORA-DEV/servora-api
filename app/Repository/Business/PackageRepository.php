@@ -25,7 +25,7 @@ class PackageRepository
     {
         // The code is given automatically (PKG-0001…), never taken from the request.
         if (! empty($payload['spa_business_id'])) {
-            $payload['code'] = \App\Support\CatalogCode::next(Package::class, (int) $payload['spa_business_id'], \App\Support\CatalogCode::PACKAGE);
+            $payload['code'] = \App\Support\Catalog\CatalogCode::next(Package::class, (int) $payload['spa_business_id'], \App\Support\Catalog\CatalogCode::PACKAGE);
         }
 
         return Package::create($payload);

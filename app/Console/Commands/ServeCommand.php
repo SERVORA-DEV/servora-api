@@ -18,7 +18,7 @@ use Symfony\Component\Console\Attribute\AsCommand;
 // for changes on every request (revalidate_freq=0), so editing code works as
 // before.
 //
-// Also on Windows XAMPP: browser pop-ups (Web Push, App\Service\PushSender) need
+// Also on Windows XAMPP: browser pop-ups (Web Push, App\Service\Notifications\PushSender) need
 // PHP to find openssl.cnf, which stock XAMPP only does when OPENSSL_CONF points
 // at it BEFORE the server process starts (setting it later has no effect). So the
 // server this starts is given it, when the file is there and nothing set it already.

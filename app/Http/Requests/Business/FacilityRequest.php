@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Enums\FacilityStatus;
 use App\Rules\NoEmoji;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -37,7 +38,7 @@ class FacilityRequest extends FormRequest
             ])],
             // 'Occupied' is computed live from active appointment
             // assignments (see FacilityResource) — never accepted here.
-            'status' => ['sometimes', Rule::in(['Available', 'Maintenance'])],
+            'status' => ['sometimes', Rule::in([FacilityStatus::Available->value, FacilityStatus::Maintenance->value])],
             'is_available' => 'sometimes|boolean',
 
             // Not saved until the column exists (Facility::hasClientLimit).

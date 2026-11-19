@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Enums\ReviewStatus;
 use App\Http\Requests\Business\BranchSettings\BranchBookingPolicyRequest;
 use App\Http\Resources\SpaBranchResource;
 use App\Models\Review;
@@ -11,7 +12,7 @@ use App\Models\SpaBusinessSetting;
 use App\Models\User;
 use App\Repository\Business\SpaBranchRepository;
 use App\Repository\SpaBusinessRepository;
-use App\Services\ImageUploadService;
+use App\Service\Uploads\ImageUploadService;
 use App\Support\AppCache;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -222,7 +223,7 @@ class BranchSettingsService
         }
 
         // The reminder rules' types come from the notification settings.
-        $defaults = SpaBusinessSetting::DEFAULTS['booking_defaults'] + \Illuminate\Support\Arr::only(SpaBusinessSetting::DEFAULTS['notifications'], \App\Support\ReminderPolicy::KEYS);
+        $defaults = SpaBusinessSetting::DEFAULTS['booking_defaults'] + \Illuminate\Support\Arr::only(SpaBusinessSetting::DEFAULTS['notifications'], \App\Support\Visits\ReminderPolicy::KEYS);
         $clean = [];
         foreach (BranchBookingPolicyRequest::KEYS as $key) {
             if (! array_key_exists($key, $overrides)) {
@@ -256,7 +257,7 @@ class BranchSettingsService
         }
 
         $query = Review::query()
-            ->where('status', 'Published')
+            ->where('status', ReviewStatus::Published->value)
             ->whereHas('appointment', fn ($q) => $q->where('spa_branch_id', $branch->id));
 
         $counts = (clone $query)->selectRaw('rating, count(*) as total')->groupBy('rating')->pluck('total', 'rating');

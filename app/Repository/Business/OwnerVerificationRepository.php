@@ -2,6 +2,7 @@
 
 namespace App\Repository\Business;
 
+use App\Enums\VerificationStatus;
 use App\Models\OwnerIdentityVerification;
 use App\Models\User;
 
@@ -18,7 +19,7 @@ class OwnerVerificationRepository
         // ->default(...) alone.
         return OwnerIdentityVerification::firstOrCreate(
             ['user_id' => $user->id],
-            ['status' => 'Unregistered', 'liveness_result' => 'Pending']
+            ['status' => VerificationStatus::Unregistered->value, 'liveness_result' => 'Pending']
         );
     }
 

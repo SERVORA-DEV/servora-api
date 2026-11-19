@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Business\IdentityChangeDetailsRequest;
+use App\Http\Requests\Business\IdentityChangeEmailCodeRequest;
 use App\Http\Requests\Business\OwnerFaceScanRequest;
 use App\Http\Requests\Business\OwnerIdentityDocumentRequest;
 use App\Service\Business\OwnerIdentityChangeService;
@@ -19,15 +21,9 @@ class OwnerIdentityChangeController extends Controller
         return $this->changes->show($request->user());
     }
 
-    public function details(Request $request)
+    public function details(IdentityChangeDetailsRequest $request)
     {
-        $data = $request->validate([
-            'first_name' => 'required|string|max:60',
-            'middle_name' => 'nullable|string|max:60',
-            'last_name' => 'required|string|max:60',
-            'suffix' => 'nullable|string|max:10',
-            'email' => 'required|email:rfc|max:120',
-        ]);
+        $data = $request->validated();
 
         return $this->changes->saveDetails($request->user(), $data);
     }
@@ -37,9 +33,9 @@ class OwnerIdentityChangeController extends Controller
         return $this->changes->resendCode($request->user());
     }
 
-    public function confirmEmail(Request $request)
+    public function confirmEmail(IdentityChangeEmailCodeRequest $request)
     {
-        $data = $request->validate(['code' => 'required|digits:6']);
+        $data = $request->validated();
 
         return $this->changes->confirmEmail($request->user(), $data['code']);
     }

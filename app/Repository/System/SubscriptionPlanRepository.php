@@ -2,9 +2,9 @@
 
 namespace App\Repository\System;
 
+use App\Enums\SubscriptionStatus;
 use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 
 class SubscriptionPlanRepository
@@ -21,7 +21,7 @@ class SubscriptionPlanRepository
     // Most Popular.
     public static function live($query)
     {
-        return $query->where('status', 'Active')
+        return $query->where('status', SubscriptionStatus::Active->value)
             ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()));
     }
 
@@ -87,13 +87,6 @@ class SubscriptionPlanRepository
         ->firstOrFail();
     }
 
-    public function findByField(string $field, $value)
-    {
-        return SubscriptionPlan::withCount('subscriptions')
-        ->where($field, $value)
-        ->firstOrFail();
-    }
-
     public function findActiveByCategory(string $category)
     {
         return SubscriptionPlan::where('category', $category)
@@ -145,12 +138,5 @@ class SubscriptionPlanRepository
     {
         $model = $this->findByUuid($uuid);
         return $model->delete();
-    }
-
-    public function restore(string $uuid)
-    {
-        $model = SubscriptionPlan::withTrashed()->where('uuid', $uuid)->firstOrFail();
-        $model->restore();
-        return $model;
     }
 }

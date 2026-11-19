@@ -2,15 +2,15 @@
 
 namespace App\Models;
 
-use App\Support\RefundCharge;
-use App\Support\RefundPolicyRule;
+use App\Support\Billing\RefundCharge;
+use App\Support\Billing\RefundPolicyRule;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 
-// One of the owner's refund policies — see App\Support\RefundPolicyRule and
+// One of the owner's refund policies — see App\Support\Billing\RefundPolicyRule and
 // App\Service\Business\RefundPolicyService. Removing one keeps it (soft
 // delete) so refunds given under it still read as they were; they also keep
 // their own copy of its name and rule.
@@ -28,7 +28,7 @@ class RefundPolicy extends Model
         'allow_less',
         'needs_approval',
         'sort_order',
-        // Who it comes out of (App\Support\RefundCharge); columns from the
+        // Who it comes out of (App\Support\Billing\RefundCharge); columns from the
         // refund-charges migration (StaffRefundCharge::ready).
         'charge_to',
         'staff_share',

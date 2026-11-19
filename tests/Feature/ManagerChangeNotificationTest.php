@@ -12,6 +12,7 @@ use App\Models\SubscriptionPlan;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
+use Tests\Concerns\MakesStaffLogins;
 use Tests\TestCase;
 
 // Settings > Notifications > "When a manager changes something": the owner
@@ -22,6 +23,7 @@ use Tests\TestCase;
 //   DB_PASSWORD=... php artisan test --filter=ManagerChangeNotificationTest
 class ManagerChangeNotificationTest extends TestCase
 {
+    use MakesStaffLogins;
     use RefreshDatabase;
 
     private User $owner;
@@ -50,13 +52,7 @@ class ManagerChangeNotificationTest extends TestCase
         // A manager account, made the way the owner makes one.
         $managerStaff = Staff::factory()->create(['spa_branch_id' => $this->branch->id, 'role' => 'manager']);
         Sanctum::actingAs($this->owner);
-        $this->postJson('/api/business/account', [
-            'staff_uuid' => $managerStaff->uuid,
-            'username' => 'branchmanager',
-            'email' => 'manager@lotus.test',
-            'password' => 'secret-password',
-        ])->assertSuccessful();
-        $this->manager = User::where('username', 'branchmanager')->firstOrFail();
+        $this->manager = $this->makeStaffLogin($managerStaff, 'branchmanager', 'manager@lotus.test');
     }
 
     private function switchOn(array $keys): void

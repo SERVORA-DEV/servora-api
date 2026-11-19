@@ -3,8 +3,8 @@
 namespace App\Http\Resources;
 
 use App\Models\Package;
-use App\Support\PackagePlan;
-use App\Support\ServiceKind;
+use App\Support\Catalog\PackagePlan;
+use App\Support\Catalog\ServiceKind;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 

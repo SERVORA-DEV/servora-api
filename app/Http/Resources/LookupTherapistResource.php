@@ -15,7 +15,7 @@ class LookupTherapistResource extends JsonResource
         return [
             'uuid' => $this->uuid,
             'name' => trim("{$this->first_name} {$this->last_name}"),
-            // What they do, main one first (App\Support\StaffSpecialty).
+            // What they do, main one first (App\Support\Staff\StaffSpecialty).
             'specialties' => $this->resource->specialtyList(),
             // Whether they can be sent to a client's home (HomeServiceRules), for the home-visit pickers.
             'home_service_available' => $this->resource->takesHomeService(),

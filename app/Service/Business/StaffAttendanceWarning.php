@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AttendanceStatus;
 use App\Models\Attendance;
 use App\Models\BranchSchedule;
 use App\Models\Staff;
@@ -42,10 +43,10 @@ class StaffAttendanceWarning
         $status = $result['status'] ?? null;
 
         // Marked by the desk for today: leave or absence says more than a day off does.
-        if ($isToday && in_array($status, ['On Leave', 'Holiday'], true)) {
+        if ($isToday && in_array($status, [AttendanceStatus::OnLeave->value, AttendanceStatus::Holiday->value], true)) {
             return ['kind' => 'on_leave', 'message' => "{$name} is on leave today.", 'minutes' => null];
         }
-        if ($isToday && $status === 'Absent') {
+        if ($isToday && $status === AttendanceStatus::Absent->value) {
             return ['kind' => 'absent', 'message' => "{$name} is marked absent today.", 'minutes' => null];
         }
         if (! empty($result['is_day_off']) && ! $attendance?->check_in_at) {
@@ -54,7 +55,7 @@ class StaffAttendanceWarning
         if (! $isToday) {
             return null;
         }
-        if ($status === 'Late') {
+        if ($status === AttendanceStatus::Late->value) {
             $minutes = isset($result['late_minutes']) ? (int) $result['late_minutes'] : null;
 
             return ['kind' => 'late', 'message' => "{$name} came in" . ($minutes ? " {$minutes} min" : '') . ' late today.', 'minutes' => $minutes];

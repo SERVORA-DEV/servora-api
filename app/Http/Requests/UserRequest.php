@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Enums\AccountStatus;
 use App\Rules\ValidEmail;
 use App\Rules\PersonName;
 use App\Rules\NoEmoji;
@@ -83,7 +84,7 @@ class UserRequest extends FormRequest
 
             'account_status' => [
                 'sometimes',
-                Rule::in(['Pending', 'Active', 'Inactive', 'Suspended']),
+                Rule::in([AccountStatus::Pending->value, AccountStatus::Active->value, AccountStatus::Inactive->value, AccountStatus::Suspended->value]),
             ],
 
             ...$permissionRules,

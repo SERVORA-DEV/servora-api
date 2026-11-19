@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Enums\AccountStatus;
 use App\Rules\ValidEmail;
 use App\Rules\PersonName;
 use Illuminate\Validation\Rules\Password;
@@ -60,7 +61,7 @@ class AccountRequest extends FormRequest
 
             'password' => [$isCreate ? 'required' : 'nullable', 'string', Password::defaults(), new NoEmoji()],
 
-            'account_status' => ['sometimes', Rule::in(['Active', 'Inactive', 'Suspended'])],
+            'account_status' => ['sometimes', Rule::in([AccountStatus::Active->value, AccountStatus::Inactive->value, AccountStatus::Suspended->value])],
 
             // Module-level access toggles — see
             // AccountRepository::updateAccount, which filters this down to

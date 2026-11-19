@@ -2,10 +2,14 @@
 
 namespace App\Http\Resources\Client;
 
+use App\Enums\AppointmentServiceStatus;
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
+use App\Enums\PaymentStatus;
 use App\Models\Appointment;
 use App\Service\Business\AppointmentAvailabilityService;
 use App\Service\Client\BookingPolicy;
-use App\Services\ImageUploadService;
+use App\Service\Uploads\ImageUploadService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -21,7 +25,7 @@ class ClientAppointmentResource extends JsonResource
     // desk owns it from there) and not after its start time has passed.
     public static function clientCanChange(Appointment $appointment): bool
     {
-        if ($appointment->status !== Appointment::STATUS_SCHEDULED) {
+        if ($appointment->status !== AppointmentStatus::Scheduled->value) {
             return false;
         }
 
@@ -98,13 +102,13 @@ class ClientAppointmentResource extends JsonResource
         $billing = $this->billing;
         // Net of refunds, the same as the spa's own billing screens.
         $paid = $billing
-            ? (float) $billing->payments->where('payment_status', 'Paid')->sum(fn ($p) => (float) $p->amount - (float) ($p->refunded_amount ?? 0))
+            ? (float) $billing->payments->where('payment_status', PaymentStatus::Paid->value)->sum(fn ($p) => (float) $p->amount - (float) ($p->refunded_amount ?? 0))
             : 0.0;
 
         // Each therapist once, with the part they do of a service done by several at once
         // ("Upper body"); part is null otherwise.
         $therapists = $this->services
-            ->flatMap(fn ($s) => $s->therapistAssignments->whereNotIn('assignment_status', ['Cancelled'])->filter(fn ($a) => $a->staff)->map(fn ($a) => ['staff' => $a->staff, 'part' => $a->part_name]))
+            ->flatMap(fn ($s) => $s->therapistAssignments->whereNotIn('assignment_status', [AssignmentStatus::Cancelled->value])->filter(fn ($a) => $a->staff)->map(fn ($a) => ['staff' => $a->staff, 'part' => $a->part_name]))
             ->unique(fn ($row) => $row['staff']->id)
             ->map(fn ($row) => ['uuid' => $row['staff']->uuid, 'name' => trim("{$row['staff']->first_name} {$row['staff']->last_name}"), 'part' => $row['part']])
             ->values();
@@ -128,11 +132,11 @@ class ClientAppointmentResource extends JsonResource
             'home_distance_km' => $this->home_distance_km,
             'home_service_fee' => (float) $this->home_service_fee,
             // What the client shows their staff to start a home visit
-            // (App\Support\HomeVisitStart): the code, and the text its QR is
+            // (App\Support\Visits\HomeVisitStart): the code, and the text its QR is
             // drawn from. Null for a visit to the spa.
             'home_start_code' => Appointment::hasHomeStart() && $this->isHomeService() ? $this->home_start_code : null,
             'home_start_qr' => Appointment::hasHomeStart() && $this->isHomeService() && $this->home_start_code
-                ? \App\Support\HomeVisitStart::qrText($this->home_start_code)
+                ? \App\Support\Visits\HomeVisitStart::qrText($this->home_start_code)
                 : null,
             'source' => $this->source,
             'status' => $this->status,
@@ -165,9 +169,9 @@ class ClientAppointmentResource extends JsonResource
 
             // A cancelled or missed booking still lists what was booked;
             // otherwise services the front desk removed are left out.
-            'services' => (in_array($this->status, [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW], true)
+            'services' => (in_array($this->status, [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value], true)
                     ? $this->services
-                    : $this->services->where('status', '!=', 'Cancelled'))
+                    : $this->services->where('status', '!=', AppointmentServiceStatus::Cancelled->value))
                 ->values()
                 ->map(fn ($s) => [
                     'uuid' => $s->uuid,
@@ -183,7 +187,7 @@ class ClientAppointmentResource extends JsonResource
                 // So the app leaves out one the front desk took off the booking.
                 'status' => $p->status,
                 // A package for several clients: who else is booked with it, and who paid.
-                'shared' => \App\Support\SharedPackages::summary($p),
+                'shared' => \App\Support\Catalog\SharedPackages::summary($p),
             ])->values(),
             'therapists' => $therapists,
 
@@ -199,7 +203,7 @@ class ClientAppointmentResource extends JsonResource
                 'paid' => $paid,
                 'balance' => max((float) $billing->amount - $paid, 0),
                 'status' => $billing->status,
-                'methods' => $billing->payments->where('payment_status', 'Paid')->pluck('payment_method')->unique()->values(),
+                'methods' => $billing->payments->where('payment_status', PaymentStatus::Paid->value)->pluck('payment_method')->unique()->values(),
                 'paid_at' => optional($billing->paid_at)->toIso8601String(),
             ] : null,
 
@@ -209,12 +213,12 @@ class ClientAppointmentResource extends JsonResource
             'can_reschedule' => ($rescheduleProblem = self::changeProblem($this->resource, 'reschedule')) === null,
             // Why not, for a still-upcoming booking the app shows the buttons
             // for (e.g. inside the spa's cancellation window).
-            'cancel_blocked_reason' => $this->status === Appointment::STATUS_SCHEDULED ? $cancelProblem : null,
-            'reschedule_blocked_reason' => $this->status === Appointment::STATUS_SCHEDULED ? $rescheduleProblem : null,
+            'cancel_blocked_reason' => $this->status === AppointmentStatus::Scheduled->value ? $cancelProblem : null,
+            'reschedule_blocked_reason' => $this->status === AppointmentStatus::Scheduled->value ? $rescheduleProblem : null,
             // A spa is rated once (Review::ratedBranch): `spa_rated` when the
             // client already has, on this visit or another one there.
             'spa_rated' => $spaRated = $this->review !== null || (bool) $this->resource->getAttribute('spa_rated'),
-            'can_review' => $this->status === Appointment::STATUS_COMPLETED && ! $spaRated,
+            'can_review' => $this->status === AppointmentStatus::Completed->value && ! $spaRated,
             // Their review of this spa (this visit's, or one from another visit
             // there): a finished visit offers to update it instead of a new one.
             'spa_review' => $spaRated && ($this->review?->uuid ?? $this->resource->getAttribute('spa_review_uuid')) ? [

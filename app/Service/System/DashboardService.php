@@ -2,6 +2,9 @@
 
 namespace App\Service\System;
 
+use App\Enums\PaymentStatus;
+use App\Enums\SubscriptionStatus;
+use App\Enums\VerificationStatus;
 use App\Http\Resources\TransactionResource;
 use App\Models\OwnerIdentityVerification;
 use App\Models\Payment;
@@ -18,18 +21,11 @@ use Illuminate\Support\Facades\Cache;
 
 class DashboardService
 {
-    private BillingRepository $billingRepository;
-
-    private AuditLogRepository $auditLogRepository;
-
-    private SubscriptionRepository $subscriptionRepository;
-
-    public function __construct(BillingRepository $billingRepository, AuditLogRepository $auditLogRepository, SubscriptionRepository $subscriptionRepository)
-    {
-        $this->billingRepository = $billingRepository;
-        $this->auditLogRepository = $auditLogRepository;
-        $this->subscriptionRepository = $subscriptionRepository;
-    }
+    public function __construct(
+        private BillingRepository $billingRepository,
+        private AuditLogRepository $auditLogRepository,
+        private SubscriptionRepository $subscriptionRepository,
+    ) {}
 
     // How far ahead "ending soon" looks, and how close a trial's end has to
     // be to count as needing a look.
@@ -71,7 +67,7 @@ class DashboardService
         $revenueTrend = $this->revenueSeries($months);
 
         // Total plus the two month-end snapshots used for the trend, in one query.
-        $branchCounts = SpaBranch::whereIn('verification_status', ['Verified', 'Suspended'])
+        $branchCounts = SpaBranch::whereIn('verification_status', [VerificationStatus::Verified->value, VerificationStatus::Suspended->value])
             ->selectRaw(
                 'count(*) as total,
                  sum(case when verified_at <= ? then 1 else 0 end) as this_month,
@@ -95,12 +91,12 @@ class DashboardService
             ->selectRaw('count(*) as total, sum(case when created_at >= ? then 1 else 0 end) as this_month', [$now->copy()->startOfMonth()])
             ->first();
 
-        $pendingBranches = SpaBranch::where('verification_status', 'Pending')->count();
+        $pendingBranches = SpaBranch::where('verification_status', VerificationStatus::Pending->value)->count();
 
         return [
             // What is waiting for an administrator to do something.
             'attention' => [
-                'owner_verifications' => OwnerIdentityVerification::where('status', 'Pending')->count(),
+                'owner_verifications' => OwnerIdentityVerification::where('status', VerificationStatus::Pending->value)->count(),
                 'branch_registrations' => $pendingBranches,
                 // Past its due date, not renewed, and still inside the grace
                 // period: the same businesses the Subscribers list shows as
@@ -113,8 +109,8 @@ class DashboardService
                 // time it was last changed to Pending (a row is made Unregistered
                 // and moves to Pending when the owner submits it). Null when
                 // nothing is waiting.
-                'oldest_owner_verification_at' => $this->isoOrNull(OwnerIdentityVerification::where('status', 'Pending')->min('updated_at')),
-                'oldest_branch_registration_at' => $this->isoOrNull(SpaBranch::where('verification_status', 'Pending')->min('updated_at')),
+                'oldest_owner_verification_at' => $this->isoOrNull(OwnerIdentityVerification::where('status', VerificationStatus::Pending->value)->min('updated_at')),
+                'oldest_branch_registration_at' => $this->isoOrNull(SpaBranch::where('verification_status', VerificationStatus::Pending->value)->min('updated_at')),
             ],
             'kpis' => [
                 'total_businesses' => [
@@ -191,7 +187,7 @@ class DashboardService
                     ? trim("{$log->user->first_name} {$log->user->last_name}")
                     : 'System',
                 'action' => $log->action,
-                'summary' => \App\Support\AuditLogDescriber::summary($log),
+                'summary' => \App\Support\Activity\AuditLogDescriber::summary($log),
                 'table_name' => $log->table_name,
                 'record_id' => $log->record_id,
                 'created_at' => optional($log->created_at)->toIso8601String(),
@@ -253,7 +249,7 @@ class DashboardService
     // Transactions" below it and the Subscribers list.
     private function revenueSeries(array $months): array
     {
-        $sums = Payment::where('payment_status', 'Paid')
+        $sums = Payment::where('payment_status', PaymentStatus::Paid->value)
             ->whereHas('billing', fn ($q) => $q->where('billing_type', 'Subscription'))
             ->whereBetween('paid_at', [$months[0]['start'], $months[5]['end']])
             ->selectRaw("to_char(paid_at, 'YYYY-MM') as month, sum(amount - coalesce(refunded_amount, 0)) as total")
@@ -298,7 +294,7 @@ class DashboardService
     // guarded by expires_at, for the same staleness reason as above.
     private function currentlyActiveSubscriptions()
     {
-        return Subscription::where('status', 'Active')
+        return Subscription::where('status', SubscriptionStatus::Active->value)
             ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', Carbon::now()));
     }
 

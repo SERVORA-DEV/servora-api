@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\BusinessDay;
+use App\Support\Branches\BusinessDay;
 use Carbon\Carbon;
 use Tests\TestCase;
 

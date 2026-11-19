@@ -2,9 +2,10 @@
 
 namespace App\Models;
 
+use App\Enums\AppointmentServiceStatus;
 use App\Repository\Business\AppointmentServiceRepository;
-use App\Support\History;
-use App\Support\ServiceKind;
+use App\Support\Activity\History;
+use App\Support\Catalog\ServiceKind;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
@@ -31,13 +32,13 @@ class AppointmentServiceItem extends Model
         'uuid',
         'appointment_id',
         'source_appointment_package_id',
-        // An add-on line (App\Support\ServiceAddon): the main line it rides
+        // An add-on line (App\Support\Catalog\ServiceAddon): the main line it rides
         // with, and which add-on it is. It has no service_variant_id — its
         // name, minutes and price are its own copy.
         'parent_appointment_service_id',
         'addon_id',
         'service_variant_id',
-        // Its own copy of what was booked (App\Support\History): the menu
+        // Its own copy of what was booked (App\Support\Activity\History): the menu
         // can be edited or removed afterwards without rewriting the visit.
         'service_name',
         'duration_minutes',
@@ -52,13 +53,13 @@ class AppointmentServiceItem extends Model
         'discount_amount',
         'subtotal',
         // A package service extended to a longer length: the difference,
-        // charged on top of the package (App\Support\ServiceExtension).
+        // charged on top of the package (App\Support\Visits\ServiceExtension).
         'extra_charge',
         // How far it has been extended, against the owner's longest
-        // extension (App\Support\FrontDeskPolicy::extension).
+        // extension (App\Support\Visits\FrontDeskPolicy::extension).
         'extended_minutes',
         'points_earned',
-        // Money handed back for this service at checkout (App\Support\ServiceRefunds).
+        // Money handed back for this service at checkout (App\Support\Billing\ServiceRefunds).
         'refunded_amount',
         'status',
         'notes',
@@ -99,7 +100,7 @@ class AppointmentServiceItem extends Model
     // drift from its actual services again, regardless of which method (or
     // a future one) touches a row — only individual model save()/delete()
     // calls fire these events, not bulk query-builder ->update() (see
-    // AppointmentService::cancelAppointment(), which still needs its own
+    // AppointmentBookingService::cancelAppointment(), which still needs its own
     // explicit call for exactly that reason).
     protected static function booted(): void
     {
@@ -115,7 +116,7 @@ class AppointmentServiceItem extends Model
         // another length (Extend) — never because the menu changed.
         static::saving(function (self $item) {
             // (An add-on line is not a length of a service: its copy is
-            // written when it is added — AppointmentService::addAddon.)
+            // written when it is added — VisitItemsService::addAddon.)
             if (History::ready() && $item->addon_id === null && ($item->isDirty('service_variant_id') || $item->service_name === null)) {
                 $item->copyFromMenu();
             }
@@ -141,7 +142,7 @@ class AppointmentServiceItem extends Model
     }
 
     // ── What it was when it was booked — its own copy first, the menu only
-    //    for a line that has none (App\Support\History::own) ────────────────
+    //    for a line that has none (App\Support\Activity\History::own) ────────────────
 
     public function displayName(): ?string
     {
@@ -156,13 +157,13 @@ class AppointmentServiceItem extends Model
         return $minutes !== null ? (int) $minutes : null;
     }
 
-    /** time | procedure | facility (App\Support\ServiceKind). */
+    /** time | procedure | facility (App\Support\Catalog\ServiceKind). */
     public function kind(): string
     {
         return ServiceKind::of(History::own($this->service_type, fn () => $this->serviceVariant?->service?->service_type));
     }
 
-    /** A facility has to be chosen before it can start (App\Support\ServiceKind::needsFacility). */
+    /** A facility has to be chosen before it can start (App\Support\Catalog\ServiceKind::needsFacility). */
     public function needsFacility(): bool
     {
         if (! Service::hasFacilityRequirement()) {
@@ -206,7 +207,7 @@ class AppointmentServiceItem extends Model
         return $this->belongsTo(AppointmentPackage::class, 'source_appointment_package_id');
     }
 
-    // ── Add-ons (App\Support\ServiceAddon) ─────────────────────────────────
+    // ── Add-ons (App\Support\Catalog\ServiceAddon) ─────────────────────────────────
 
     /** This line is an add-on on another line of the same visit. */
     public function isAddon(): bool
@@ -234,7 +235,7 @@ class AppointmentServiceItem extends Model
     public function liveAddons()
     {
         return Addon::ready()
-            ? $this->addons()->where('status', '!=', 'Cancelled')->orderBy('sort_order')->get()
+            ? $this->addons()->where('status', '!=', AppointmentServiceStatus::Cancelled->value)->orderBy('sort_order')->get()
             : collect();
     }
 

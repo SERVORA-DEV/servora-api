@@ -17,6 +17,7 @@ use App\Service\Business\MarketplaceReadiness;
 use App\Service\Client\BookingPolicy;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
+use Tests\Concerns\MakesBranchesBookable;
 use Tests\TestCase;
 
 // A branch only shows in the client app (browse + favorites) and only takes
@@ -28,7 +29,7 @@ use Tests\TestCase;
 //   php artisan test --filter=MarketplaceReadinessTest
 class MarketplaceReadinessTest extends TestCase
 {
-    use RefreshDatabase;
+    use MakesBranchesBookable, RefreshDatabase;
 
     private const NEARBY = '/api/spas/nearby?lat=7.07&lng=125.61';
     private const DATE = '2027-03-07'; // a Sunday, the day with hours below
@@ -72,6 +73,8 @@ class MarketplaceReadinessTest extends TestCase
         ]);
         BranchService::factory()->create(['spa_branch_id' => $this->branch->id, 'service_variant_id' => $this->variant->id]);
 
+        // The rest a ready branch needs now: a plan with client-app listing, and the therapist's shifts.
+        $this->makeBookable($this->branch);
         $this->setPolicy(['max_advance_booking_days' => 0]);
     }
 
@@ -122,6 +125,7 @@ class MarketplaceReadinessTest extends TestCase
 
     public function test_a_therapist_who_never_works_hides_it(): void
     {
+        StaffSchedule::where('staff_id', $this->therapist->id)->delete();
         StaffSchedule::create(['staff_id' => $this->therapist->id, 'day_of_week' => 'Sunday', 'is_day_off' => true]);
         $this->assertListed(false);
 
@@ -195,7 +199,7 @@ class MarketplaceReadinessTest extends TestCase
             'appointment_date' => self::DATE,
             'appointment_time' => '10:00',
             'services' => [['service_variant_uuid' => $this->variant->uuid]],
-            'client' => ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => '09171234567'],
+            'client' => ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => '09171234567', 'gender' => 'Female'],
         ])->assertStatus(422)->assertJsonPath('message', MarketplaceReadiness::NOT_BOOKABLE);
     }
 

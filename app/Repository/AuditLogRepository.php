@@ -4,7 +4,8 @@ namespace App\Repository;
 
 use App\Models\AuditLog;
 use App\Models\User;
-use App\Support\ActivityRecorder;
+use App\Support\Activity\ActivityRecorder;
+use App\Support\Activity\AuditLogDescriber;
 use Illuminate\Http\Request;
 use Laravel\Sanctum\PersonalAccessToken;
 
@@ -106,7 +107,7 @@ class AuditLogRepository
             // A login's highest level anywhere (a sign-in is at no one branch).
             'actor_level' => $user->role === 'business_owner'
                 ? 'owner'
-                : (\App\Models\AccountBranch::runsBranch(\App\Support\AccountScope::levels($user)) ? 'management' : 'operation'),
+                : (\App\Models\AccountBranch::runsBranch(\App\Support\Access\AccountScope::levels($user)) ? 'management' : 'operation'),
         ];
     }
 
@@ -194,6 +195,97 @@ class AuditLogRepository
     public function paginate(int $perPage = 15)
     {
         return $this->administratorLogs()->latest()->paginate($perPage);
+    }
+
+    /**
+     * One page of the administrators' audit trail, filtered by the API:
+     *   search     the administrator's name or email, the action, the module, the IP or device
+     *   category   account (their own account), moderation, configuration (AuditLogDescriber)
+     *   actor_id   one administrator
+     *   action     one action, however it was written ("login", "Login")
+     *   module     one table
+     *   date_from, date_to, sort (newest | oldest)
+     */
+    public function adminPage(array $filters, int $perPage)
+    {
+        $q = $this->administratorLogs();
+        $search = is_string($filters['search'] ?? null) ? trim($filters['search']) : '';
+        if ($search !== '') {
+            $like = '%' . mb_strtolower(addcslashes($search, '%_\\')) . '%';
+            $q->where(fn ($w) => $w->whereRaw('LOWER(action) LIKE ?', [$like])
+                ->orWhereRaw('LOWER(table_name) LIKE ?', [$like])
+                ->orWhereRaw("LOWER(COALESCE(ip_address, '')) LIKE ?", [$like])
+                ->orWhereRaw("LOWER(COALESCE(user_agent, '')) LIKE ?", [$like])
+                ->orWhereHas('user', fn ($u) => $u->whereRaw("LOWER(COALESCE(first_name, '') || ' ' || COALESCE(last_name, '') || ' ' || COALESCE(email, '')) LIKE ?", [$like])));
+        }
+
+        return $q
+            ->when($filters['category'] ?? null, fn ($w, $c) => $this->inCategory($w, $c))
+            ->when($filters['actor_id'] ?? null, fn ($w, $id) => $w->where('user_id', (int) $id))
+            ->when($filters['action'] ?? null, fn ($w, $a) => $w->whereRaw(self::CANONICAL_ACTION . ' = ?', [self::canonical($a)]))
+            ->when($filters['module'] ?? null, fn ($w, $m) => $w->where('table_name', $m))
+            ->when($filters['date_from'] ?? null, fn ($w, $d) => $w->where('created_at', '>=', \Illuminate\Support\Carbon::parse($d)->startOfDay()))
+            ->when($filters['date_to'] ?? null, fn ($w, $d) => $w->where('created_at', '<=', \Illuminate\Support\Carbon::parse($d)->endOfDay()))
+            ->when(($filters['sort'] ?? null) === 'oldest', fn ($w) => $w->oldest()->orderBy('id'), fn ($w) => $w->latest()->orderByDesc('id'))
+            ->paginate($perPage);
+    }
+
+    /**
+     * The audit trail's stat cards and category counts (over all of it), and what its filters can
+     * offer: the administrators, actions and modules that appear in it.
+     */
+    public function adminSummary(): array
+    {
+        $base = fn () => $this->administratorLogs()->toBase();
+        $moderation = "'" . implode("', '", AuditLogDescriber::MODERATION_TABLES) . "'";
+        $row = $base()->selectRaw(
+            'count(*) as total,'
+            . ' sum(case when created_at >= ? then 1 else 0 end) as today,'
+            . ' sum(case when ' . self::CANONICAL_ACTION . " = 'login' then 1 else 0 end) as sign_ins,"
+            . ' sum(case when ' . self::CANONICAL_ACTION . " = 'login failed' then 1 else 0 end) as failed,"
+            . " sum(case when table_name = 'users' and record_id = user_id then 1 else 0 end) as account,"
+            . " sum(case when not (table_name = 'users' and record_id is not null and record_id = user_id) and table_name in ($moderation) then 1 else 0 end) as moderation",
+            [now()->startOfDay()],
+        )->first();
+        $total = (int) $row->total;
+
+        $actors = User::whereIn('id', $base()->whereNotNull('user_id')->distinct()->pluck('user_id'))
+            ->get(['id', 'first_name', 'last_name', 'email'])
+            ->map(fn ($u) => ['id' => $u->id, 'name' => trim("{$u->first_name} {$u->last_name}") ?: $u->email])
+            ->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)->values()->all();
+
+        return [
+            'total' => $total,
+            'today' => (int) $row->today,
+            'sign_ins' => (int) $row->sign_ins,
+            'failed_sign_ins' => (int) $row->failed,
+            'categories' => ['all' => $total, 'account' => (int) $row->account, 'moderation' => (int) $row->moderation, 'configuration' => $total - (int) $row->account - (int) $row->moderation],
+            'options' => [
+                'actors' => $actors,
+                'actions' => $base()->distinct()->orderBy('action')->pluck('action')->unique(fn ($a) => self::canonical($a))->values()->all(),
+                'modules' => $base()->distinct()->orderBy('table_name')->pluck('table_name')->all(),
+            ],
+        ];
+    }
+
+    // "login_failed", "Login Failed" and "login-failed" are one action (the web's auditCanonicalAction).
+    private const CANONICAL_ACTION = "LOWER(REPLACE(REPLACE(TRIM(action), '_', ' '), '-', ' '))";
+
+    private static function canonical(string $action): string
+    {
+        return strtolower(str_replace(['_', '-'], ' ', trim($action)));
+    }
+
+    private function inCategory($q, string $category)
+    {
+        $own = fn ($w) => $w->where('table_name', 'users')->whereNotNull('record_id')->whereColumn('record_id', 'user_id');
+
+        return match ($category) {
+            'account' => $q->where($own),
+            'moderation' => $q->whereNot($own)->whereIn('table_name', AuditLogDescriber::MODERATION_TABLES),
+            'configuration' => $q->whereNot($own)->whereNotIn('table_name', AuditLogDescriber::MODERATION_TABLES),
+            default => $q,
+        };
     }
 
     // Top-N for the system dashboard's "Audit Logs" card — a plain

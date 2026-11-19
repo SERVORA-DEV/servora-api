@@ -5,22 +5,17 @@ namespace App\Service\Client;
 use App\Http\Resources\UserResource;
 use App\Models\User;
 use App\Repository\UserRepository;
-use App\Services\ImageUploadService;
+use App\Service\Uploads\ImageUploadService;
 use App\Support\ProfilePhoto;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\UploadedFile;
 
 class ClientProfileService
 {
-    private UserRepository $userRepository;
-
-    private ImageUploadService $images;
-
-    public function __construct(UserRepository $userRepository, ImageUploadService $images)
-    {
-        $this->userRepository = $userRepository;
-        $this->images = $images;
-    }
+    public function __construct(
+        private UserRepository $userRepository,
+        private ImageUploadService $images,
+    ) {}
 
     /**
      * Fills in the profile fields client registration never asks for. Returns

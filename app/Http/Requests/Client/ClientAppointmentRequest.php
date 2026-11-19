@@ -12,7 +12,7 @@ use App\Rules\NoEmoji;
 // Validates POST /client/appointments (mobile self-booking). Deliberately
 // narrower than the front-desk AppointmentRequest: no discount, quantity,
 // type, source or status fields — those are fixed server-side in
-// AppointmentService::createClientAppointment. At least one service or a
+// AppointmentBookingService::createClientAppointment. At least one service or a
 // package is required so a client can't create an empty booking.
 class ClientAppointmentRequest extends FormRequest
 {

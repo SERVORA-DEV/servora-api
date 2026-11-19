@@ -7,7 +7,7 @@ use App\Rules\ValidEmail;
 use App\Repository\SpaBusinessRepository;
 use App\Rules\PhMobile;
 use App\Rules\SocialLink;
-use App\Support\SocialLinks;
+use App\Support\Branches\SocialLinks;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -48,7 +48,7 @@ class BusinessIdentityRequest extends FormRequest
             'business_phone' => ['nullable', 'string', 'max:20', new PhMobile()],
             'head_office_address' => 'nullable|string|max:255',
             // Company-wide links; a branch shows these for any it hasn't set
-            // itself (App\Support\SocialLinks).
+            // itself (App\Support\Branches\SocialLinks).
             'facebook_url' => ['nullable', 'string', 'max:255', new SocialLink(SocialLinks::FACEBOOK)],
             'instagram_handle' => ['nullable', 'string', 'max:100', new SocialLink(SocialLinks::INSTAGRAM)],
             'website_url' => ['nullable', 'string', 'max:255', new SocialLink(SocialLinks::WEBSITE)],

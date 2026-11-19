@@ -2,19 +2,20 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AssignmentStatus;
 use App\Models\AppointmentServiceItem;
 use App\Models\SpaBusiness;
 use App\Models\SpaBusinessSetting;
 use App\Models\Staff;
-use App\Support\CommissionShare;
-use App\Support\History;
+use App\Support\Staff\CommissionShare;
+use App\Support\Activity\History;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
 // What each therapist has earned in commission. The amount for a service is
 // worked out ONCE, when it is completed, under the Staff Policies in force
 // then, and kept on the therapist's assignment (commission_amount — see
-// freeze() and App\Support\History): changing the rate later never rewrites
+// freeze() and App\Support\Activity\History): changing the rate later never rewrites
 // what was already earned. An assignment with nothing kept (completed before
 // that existed) is worked out from today's rules, as it always was.
 // The rules come from the owner's Settings → Staff Policies:
@@ -68,7 +69,7 @@ class CommissionCalculator
     /**
      * Keeps what each therapist earned for a service, at the moment it is
      * completed — under the policy in force right now. Called once from
-     * AppointmentService::completeService; the one-off backfill
+     * ServiceExecutionService::completeService; the one-off backfill
      * (HistoryBackfill) passes $onlyMissing so nothing kept is overwritten.
      *
      * @return int how many assignments it was kept on
@@ -79,7 +80,7 @@ class CommissionCalculator
             return 0;
         }
 
-        $done = $line->therapistAssignments()->where('assignment_status', 'Completed')->get();
+        $done = $line->therapistAssignments()->where('assignment_status', AssignmentStatus::Completed->value)->get();
         if ($done->isEmpty()) {
             return 0;
         }
@@ -91,12 +92,12 @@ class CommissionCalculator
         if (Staff::hasCommissionPlans()) {
             // The rate of the plan they are on.
             $ownRates = Staff::whereIn('staff.id', $done->pluck('staff_id')->filter()->all())
-                ->where('staff.role', \App\Support\StaffSpecialty::ROLE)
+                ->where('staff.role', \App\Support\Staff\StaffSpecialty::ROLE)
                 ->join('commission_plans as p', 'p.id', '=', 'staff.commission_plan_id')
                 ->pluck('p.rate', 'staff.id');
         } elseif ($custom) {
             $ownRates = Staff::whereIn('id', $done->pluck('staff_id')->filter()->all())
-                ->where('role', \App\Support\StaffSpecialty::ROLE)
+                ->where('role', \App\Support\Staff\StaffSpecialty::ROLE)
                 ->whereNotNull('commission_rate')
                 ->pluck('commission_rate', 'id');
         }
@@ -461,7 +462,7 @@ class CommissionCalculator
             ->join('appointment_services as s', 's.id', '=', 'ta.appointment_service_id')
             ->join('appointments as a', 'a.id', '=', 's.appointment_id')
             ->whereIn('ta.staff_id', $staffIds)
-            ->where('ta.assignment_status', 'Completed')
+            ->where('ta.assignment_status', AssignmentStatus::Completed->value)
             ->where('a.home_service_fee', '>', 0)
             ->groupBy('ta.staff_id', 'a.id', 'a.home_service_fee')
             ->havingRaw('max(ta.completed_at) <= ?', [$to])
@@ -492,7 +493,7 @@ class CommissionCalculator
         return DB::table('therapist_assignments as ta')
             ->join('appointment_services as s', 's.id', '=', 'ta.appointment_service_id')
             ->when($assignmentIds !== null, fn ($q) => $q->whereIn('ta.id', $assignmentIds), fn ($q) => $q->whereIn('ta.staff_id', $staffIds))
-            ->where('ta.assignment_status', 'Completed')
+            ->where('ta.assignment_status', AssignmentStatus::Completed->value)
             ->when($from && $to, fn ($q) => $q
                 ->where('ta.completed_at', '<=', $to)
                 ->whereRaw($this->creditedAt('ta.completed_at', 's.appointment_id') . ' between ? and ?', [$from, $to]))
@@ -501,7 +502,7 @@ class CommissionCalculator
                 ->leftJoin('clients as c', 'c.id', '=', 'a.client_id')
                 ->leftJoin('service_variants as v', 'v.id', '=', 's.service_variant_id')
                 ->leftJoin('services as sv', 'sv.id', '=', 'v.service_id')
-                ->addSelect(['a.uuid as appointment_uuid', 'a.appointment_number', 'c.first_name as client_first_name', 'c.last_name as client_last_name', DB::raw((\App\Support\History::ready() ? 'coalesce(s.service_name, sv.name)' : 'sv.name') . ' as service_name')]))
+                ->addSelect(['a.uuid as appointment_uuid', 'a.appointment_number', 'c.first_name as client_first_name', 'c.last_name as client_last_name', DB::raw((\App\Support\Activity\History::ready() ? 'coalesce(s.service_name, sv.name)' : 'sv.name') . ' as service_name')]))
             ->addSelect([
                 'ta.id as assignment_id',
                 'ta.staff_id',

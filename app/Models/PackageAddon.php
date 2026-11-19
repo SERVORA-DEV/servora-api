@@ -4,7 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-// An add-on that comes with a package (App\Support\PackagePlan): which
+// An add-on that comes with a package (App\Support\Catalog\PackagePlan): which
 // add-on, and which of the package's services it goes on. Included in the
 // package's price — when the package is booked it becomes an add-on line
 // under that service, not charged on top.

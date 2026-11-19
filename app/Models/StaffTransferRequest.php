@@ -13,13 +13,6 @@ class StaffTransferRequest extends Model
 {
     use HasUuids;
 
-    public const PENDING = 'pending';
-    public const APPROVED = 'approved';
-    public const DECLINED = 'declined';
-    public const WITHDRAWN = 'withdrawn';
-    // Replaced by a newer request, or overtaken by the owner's own move.
-    public const SUPERSEDED = 'superseded';
-
     protected $fillable = [
         'uuid',
         'staff_id',
@@ -50,11 +43,6 @@ class StaffTransferRequest extends Model
     public function staff()
     {
         return $this->belongsTo(Staff::class, 'staff_id');
-    }
-
-    public function fromBranch()
-    {
-        return $this->belongsTo(SpaBranch::class, 'from_branch_id');
     }
 
     public function toBranch()

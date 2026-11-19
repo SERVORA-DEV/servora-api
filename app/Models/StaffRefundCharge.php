@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 
 // One staff member's part of a refund, under a policy that charges staff
-// (App\Support\RefundCharge). Comes off their earnings for the day it was
+// (App\Support\Billing\RefundCharge). Comes off their earnings for the day it was
 // refunded, like a penalty — see App\Service\Business\StaffRefundChargeReader.
 class StaffRefundCharge extends Model
 {

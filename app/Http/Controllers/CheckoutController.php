@@ -2,10 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\Business\AutoRenewRequest;
+use App\Http\Requests\Business\CheckoutQuoteRequest;
+use App\Http\Requests\Business\GcashNumberRequest;
 use App\Http\Requests\CheckoutRequest;
-use App\Service\BusinessPaymentMethodService;
-use App\Service\CheckoutService;
-use App\Service\SubscriptionRenewalService;
+use App\Service\Subscription\BusinessPaymentMethodService;
+use App\Service\Subscription\CheckoutService;
+use App\Service\Subscription\SubscriptionRenewalService;
 use Illuminate\Http\Request;
 
 // Owner-only: Servora's subscription checkout, auto-renew and saved payment
@@ -19,18 +22,9 @@ class CheckoutController extends Controller
         private BusinessPaymentMethodService $methods,
     ) {}
 
-    public function quote(Request $request)
+    public function quote(CheckoutQuoteRequest $request)
     {
-        $data = $request->validate([
-            'extra_branches' => 'sometimes|integer|min:0|max:1000',
-            'extra_accounts' => 'sometimes|integer|min:0|max:1000',
-            // add_slots: how many extra slots to add to the live plan now.
-            'add_branches' => 'sometimes|integer|min:0|max:1000',
-            'add_accounts' => 'sometimes|integer|min:0|max:1000',
-            'purpose' => 'required|in:subscribe,renew,upgrade,save_method,add_slots',
-            'plan_uuid' => 'nullable|uuid',
-            'billing_cycle' => 'nullable|in:Monthly,Yearly',
-        ]);
+        $data = $request->validated();
 
         return response()->json(['data' => $this->checkout->quote(
             $request->user(), $data['purpose'], $data['plan_uuid'] ?? null, $data['billing_cycle'] ?? null, $data,
@@ -49,14 +43,14 @@ class CheckoutController extends Controller
         return response()->json(['data' => $this->checkout->status($request->user(), $uuid)]);
     }
 
-    public function setAutoRenew(Request $request)
+    public function setAutoRenew(AutoRenewRequest $request)
     {
-        return $this->renewals->setAutoRenew($request->user(), $request->validate(['enabled' => 'required|boolean'])['enabled']);
+        return $this->renewals->setAutoRenew($request->user(), $request->validated()['enabled']);
     }
 
-    public function addGcash(Request $request)
+    public function addGcash(GcashNumberRequest $request)
     {
-        $data = $request->validate(['mobile_number' => ['required', 'string', 'max:20', new \App\Rules\PhMobile()]]);
+        $data = $request->validated();
 
         return $this->methods->addGcash($request->user(), $data['mobile_number']);
     }

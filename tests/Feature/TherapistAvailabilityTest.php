@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\AppointmentStatus;
 use App\Models\Appointment;
 use App\Models\AppointmentServiceItem;
 use App\Models\BranchService;
@@ -82,7 +83,8 @@ class TherapistAvailabilityTest extends TestCase
             'spa_branch_id' => $this->branch->id,
             'service_variant_id' => $this->variant->id,
         ]);
-        $this->makeBookable($this->branch);
+        // This test is about schedules, so it enters the shifts itself.
+        $this->makeBookable($this->branch, scheduleTherapists: false);
     }
 
     /** @return array{available: bool, reason: ?string} the therapist's row */
@@ -112,6 +114,16 @@ class TherapistAvailabilityTest extends TestCase
         ], $attributes));
     }
 
+    /** Shifts (9 AM – 6 PM) every day of the week except $except. */
+    private function workWeekExcept(?string $except = null, array $attributes = []): void
+    {
+        foreach (['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as $day) {
+            if ($day !== $except) {
+                $this->schedule(array_merge(['day_of_week' => $day, 'start_time' => '09:00:00', 'end_time' => '18:00:00'], $attributes));
+            }
+        }
+    }
+
     /** An existing booking that occupies the therapist for the given window. */
     private function existingBooking(string $time): void
     {
@@ -125,7 +137,7 @@ class TherapistAvailabilityTest extends TestCase
             'appointment_time' => $time,
             'appointment_type' => 'Reservation',
             'source' => 'Front Desk',
-            'status' => Appointment::STATUS_SCHEDULED,
+            'status' => AppointmentStatus::Scheduled->value,
         ]);
 
         $item = AppointmentServiceItem::create([
@@ -147,12 +159,39 @@ class TherapistAvailabilityTest extends TestCase
 
     // ── The public lookup ────────────────────────────────────────────────
 
-    // The documented opt-in-if-configured stance: most branches won't have
-    // shift data entered when this ships, and treating that as "nobody is
-    // available" would empty the picker for all of them.
-    public function test_therapist_with_no_schedule_rows_is_available(): void
+    // A therapist with no shift entered can't be booked (BookingSlotService), so
+    // the picker doesn't offer them either.
+    public function test_therapist_with_no_schedule_rows_is_unavailable(): void
     {
-        $this->assertTrue($this->lookup()['available']);
+        $result = $this->lookup();
+
+        $this->assertFalse($result['available']);
+        $this->assertStringContainsString('not scheduled', $result['reason']);
+    }
+
+    // Working another day only: not offered on this one, and booking them is refused too.
+    public function test_the_picker_and_the_booking_agree_on_a_day_without_a_shift(): void
+    {
+        $this->schedule(['day_of_week' => 'Monday', 'start_time' => '09:00:00', 'end_time' => '18:00:00']);
+
+        $this->assertFalse($this->lookup('10:00')['available']);
+
+        try {
+            $this->appointmentService->createClientAppointment($this->client(), $this->bookingPayload($this->therapist->uuid));
+            $this->fail('Expected the booking to be refused as well.');
+        } catch (HttpException $e) {
+            $this->assertSame(422, $e->getStatusCode());
+        }
+        $this->assertSame(0, Appointment::count());
+    }
+
+    // Last night's shift running past midnight covers the early hours, as for a booking.
+    public function test_a_shift_from_the_night_before_covers_the_early_hours(): void
+    {
+        $this->schedule(['day_of_week' => 'Monday', 'start_time' => '22:00:00', 'end_time' => '03:00:00']);
+
+        $this->assertTrue($this->lookup('01:00')['available']);
+        $this->assertFalse($this->lookup('03:00')['available']);
     }
 
     public function test_therapist_inside_their_shift_is_available(): void
@@ -198,6 +237,7 @@ class TherapistAvailabilityTest extends TestCase
 
     public function test_overlapping_assignment_makes_the_therapist_unavailable(): void
     {
+        $this->schedule(['start_time' => '09:00:00', 'end_time' => '18:00:00']);
         $this->existingBooking('10:00');
 
         $result = $this->lookup('10:30');
@@ -208,6 +248,7 @@ class TherapistAvailabilityTest extends TestCase
 
     public function test_a_non_overlapping_booking_leaves_the_therapist_available(): void
     {
+        $this->schedule(['start_time' => '09:00:00', 'end_time' => '18:00:00']);
         $this->existingBooking('10:00');
 
         // The 10:00 booking runs 60 minutes, so 11:00 is clear.
@@ -239,6 +280,7 @@ class TherapistAvailabilityTest extends TestCase
         ]);
 
         // lookup() asserts a single row — the two above must not appear.
+        $this->schedule(['start_time' => '09:00:00', 'end_time' => '18:00:00']);
         $this->assertTrue($this->lookup()['available']);
     }
 
@@ -280,7 +322,8 @@ class TherapistAvailabilityTest extends TestCase
             $this->fail('Expected a 422 for a therapist on their day off.');
         } catch (HttpException $e) {
             $this->assertSame(422, $e->getStatusCode());
-            $this->assertStringContainsString('day off', $e->getMessage());
+            // The time-slot check answers first now (BookingSlotService::bookingProblem).
+            $this->assertStringContainsString("isn't free at that time", $e->getMessage());
         }
 
         // The abort happens inside the transaction, after the appointment row
@@ -291,6 +334,7 @@ class TherapistAvailabilityTest extends TestCase
 
     public function test_client_booking_is_rejected_when_the_therapist_is_already_booked(): void
     {
+        $this->schedule(['start_time' => '09:00:00', 'end_time' => '18:00:00']);
         $this->existingBooking('10:00');
 
         try {
@@ -301,7 +345,7 @@ class TherapistAvailabilityTest extends TestCase
             $this->fail('Expected a 422 for a double-booked therapist.');
         } catch (HttpException $e) {
             $this->assertSame(422, $e->getStatusCode());
-            $this->assertStringContainsString('already booked', $e->getMessage());
+            $this->assertStringContainsString("isn't free at that time", $e->getMessage());
         }
 
         // Only the pre-existing booking remains.
@@ -311,6 +355,9 @@ class TherapistAvailabilityTest extends TestCase
     public function test_the_same_booking_succeeds_without_a_requested_therapist(): void
     {
         $this->schedule(['is_day_off' => true]);
+        // Someone else works that day, so "any therapist" can be served.
+        $colleague = Staff::factory()->create(['spa_branch_id' => $this->branch->id, 'role' => 'therapist', 'status' => 'active']);
+        StaffSchedule::create(['staff_id' => $colleague->id, 'day_of_week' => self::DAY, 'start_time' => '09:00:00', 'end_time' => '18:00:00']);
 
         $result = $this->appointmentService->createClientAppointment(
             $this->client(),
@@ -340,6 +387,7 @@ class TherapistAvailabilityTest extends TestCase
     // has always been rather than becoming a 422.
     public function test_an_unknown_therapist_is_still_only_a_warning(): void
     {
+        $this->schedule(['start_time' => '09:00:00', 'end_time' => '18:00:00']);
         $result = $this->appointmentService->createClientAppointment(
             $this->client(),
             $this->bookingPayload((string) \Illuminate\Support\Str::uuid()),
@@ -352,8 +400,9 @@ class TherapistAvailabilityTest extends TestCase
     // ── The days-off lookup ──────────────────────────────────────────────
     //
     // Feeds the booking calendar once a therapist is picked. It must agree
-    // with staffMatchesSchedule(): a date it lists is one on which no start
-    // time at all would be accepted.
+    // with the booking check (BookingSlotService::bookingProblem): a date it
+    // lists is one on which no start time at all would be accepted. A day
+    // with no shift entered is off.
 
     /** @return list<string> */
     private function daysOff(string $from = '2027-03-01', string $to = '2027-03-21'): array
@@ -365,15 +414,18 @@ class TherapistAvailabilityTest extends TestCase
         )['data']['days_off'];
     }
 
-    public function test_no_schedule_rows_means_no_days_off(): void
+    public function test_no_schedule_rows_means_every_day_is_off(): void
     {
+        $this->assertCount(21, $this->daysOff());
+
+        $this->workWeekExcept();
         $this->assertSame([], $this->daysOff());
     }
 
     public function test_a_weekly_day_off_lists_every_such_date_in_range(): void
     {
         $this->schedule(['day_of_week' => 'Sunday', 'is_day_off' => true]);
-        $this->schedule(['start_time' => '09:00:00', 'end_time' => '18:00:00']);
+        $this->workWeekExcept('Sunday');
 
         $this->assertSame(['2027-03-07', '2027-03-14', '2027-03-21'], $this->daysOff());
     }
@@ -383,9 +435,9 @@ class TherapistAvailabilityTest extends TestCase
         $this->schedule(['day_of_week' => 'Sunday', 'is_day_off' => true]);
 
         foreach ($this->daysOff() as $date) {
-            $this->assertFalse(
-                app(\App\Service\Business\AppointmentAvailabilityService::class)
-                    ->staffMatchesSchedule($this->therapist->id, $date, '10:00', 60)['ok'],
+            $this->assertNotNull(
+                app(\App\Service\Client\BookingSlotService::class)
+                    ->bookingProblem($this->branch, $date, '10:00', 60, $this->therapist),
                 "{$date} was listed as a day off but would be bookable",
             );
         }
@@ -393,17 +445,21 @@ class TherapistAvailabilityTest extends TestCase
 
     public function test_effective_until_ends_the_day_off_partway_through_the_range(): void
     {
+        $this->workWeekExcept('Sunday');
         $this->schedule([
             'day_of_week' => 'Sunday',
             'is_day_off' => true,
             'effective_until' => '2027-03-10',
         ]);
+        // Works Sundays once the day off ends.
+        $this->schedule(['day_of_week' => 'Sunday', 'start_time' => '09:00:00', 'end_time' => '18:00:00', 'effective_from' => '2027-03-11']);
 
         $this->assertSame(['2027-03-07'], $this->daysOff());
     }
 
     public function test_a_working_shift_on_the_same_weekday_means_the_day_is_not_off(): void
     {
+        $this->workWeekExcept('Sunday');
         $this->schedule(['day_of_week' => 'Sunday', 'is_day_off' => true]);
         $this->schedule([
             'day_of_week' => 'Sunday',
@@ -438,6 +494,8 @@ class TherapistAvailabilityTest extends TestCase
 
     public function test_days_off_rejects_an_over_long_range(): void
     {
+        $this->workWeekExcept();
+
         $this->getJson("/api/spas/{$this->branch->uuid}/therapists/{$this->therapist->uuid}/days-off"
             . '?from=2027-03-01&to=2027-12-31')
             ->assertUnprocessable()

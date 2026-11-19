@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\CapitalizeNames;
+use App\Http\Middleware\CapPerPage;
 use App\Http\Middleware\EnsureBusinessSubscribed;
 use App\Http\Middleware\EnsureBusinessUsable;
 use App\Http\Middleware\EnsurePermission;
@@ -46,6 +47,8 @@ return Application::configure(basePath: dirname(__DIR__))
         // Links handed to the browser follow the address the site was opened
         // at (localhost, LAN, a forwarded port, the hosted domain).
         $middleware->append(FrontendOrigin::class);
+        // At most 100 rows a page, whatever per_page asks for (App\Support\PerPage).
+        $middleware->append(CapPerPage::class);
 
         $middleware->alias([
             'role' => RoleMiddleware::class,

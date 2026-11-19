@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AttendanceStatus;
 use App\Http\Resources\AttendanceDetailResource;
 use App\Http\Resources\AttendanceResource;
 use App\Models\Attendance;
@@ -14,42 +15,26 @@ use App\Repository\Business\AttendanceRepository;
 use App\Repository\Business\StaffRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Service\Business\StaffNotifier;
-use App\Support\AttendanceNotice;
-use App\Support\BranchHours;
-use App\Support\CheckOutRules;
+use App\Support\Staff\AttendanceNotice;
+use App\Support\Branches\BranchHours;
+use App\Support\Staff\CheckOutRules;
 use Carbon\Carbon;
 use Carbon\CarbonPeriod;
 use Illuminate\Http\Request;
 
 class AttendanceService
 {
-    private AttendanceRepository $attendanceRepository;
-    private StaffRepository $staffRepository;
-    private SpaBusinessRepository $spaBusinessRepository;
-    private AttendanceStatusCalculator $statusCalculator;
-    private AuditLogRepository $auditLogRepository;
-    private ServingNow $servingNow;
-    private StaffNotifier $staffNotifier;
-
     private const AUDIT_FIELDS = ['status', 'check_in_at', 'check_out_at', 'remarks'];
 
     public function __construct(
-        AttendanceRepository $attendanceRepository,
-        StaffRepository $staffRepository,
-        SpaBusinessRepository $spaBusinessRepository,
-        AttendanceStatusCalculator $statusCalculator,
-        AuditLogRepository $auditLogRepository,
-        ServingNow $servingNow,
-        StaffNotifier $staffNotifier,
-    ) {
-        $this->attendanceRepository = $attendanceRepository;
-        $this->staffRepository = $staffRepository;
-        $this->spaBusinessRepository = $spaBusinessRepository;
-        $this->statusCalculator = $statusCalculator;
-        $this->auditLogRepository = $auditLogRepository;
-        $this->servingNow = $servingNow;
-        $this->staffNotifier = $staffNotifier;
-    }
+        private AttendanceRepository $attendanceRepository,
+        private StaffRepository $staffRepository,
+        private SpaBusinessRepository $spaBusinessRepository,
+        private AttendanceStatusCalculator $statusCalculator,
+        private AuditLogRepository $auditLogRepository,
+        private ServingNow $servingNow,
+        private StaffNotifier $staffNotifier,
+    ) {}
 
     // A therapist performing a service right now stays checked in
     // (CheckOutRules): today's record can't be given a check-out time or be
@@ -96,7 +81,7 @@ class AttendanceService
                 'role' => $staff->role,
                 'branch_uuid' => $staff->branch?->uuid,
                 // Name and area ("Spa · Manila"): branches of one business may share a name.
-                'branch_name' => $staff->branch ? \App\Support\BranchIdentity::title($staff->branch->branch_name, $staff->branch->code) : null,
+                'branch_name' => $staff->branch ? \App\Support\Branches\BranchIdentity::title($staff->branch->branch_name, $staff->branch->code) : null,
                 'status' => $attendance?->status,
                 'check_in_at' => $attendance?->check_in_at?->format('H:i'),
                 'check_out_at' => $attendance?->check_out_at?->format('H:i'),
@@ -204,7 +189,7 @@ class AttendanceService
             $model = new Attendance([
                 'staff_id' => $staff->id,
                 'attendance_date' => $date,
-                'status' => 'Present',
+                'status' => AttendanceStatus::Present->value,
                 'created_by' => $user->id,
                 'updated_by' => $user->id,
             ] + $times);
@@ -230,7 +215,7 @@ class AttendanceService
 
             $this->auditLogRepository->record(
                 $user->id, 'attendances', null, 'Create', null,
-                ['date' => $date, 'status' => 'Present', 'marked_all_present' => true, 'staff' => $marked],
+                ['date' => $date, 'status' => AttendanceStatus::Present->value, 'marked_all_present' => true, 'staff' => $marked],
                 $request
             );
         }
@@ -264,7 +249,7 @@ class AttendanceService
             ->groupBy('spa_branch_id')
             ->map(fn ($staff) => [
                 'branch_uuid' => $staff->first()->branch?->uuid,
-                'branch_name' => $staff->first()->branch ? \App\Support\BranchIdentity::title($staff->first()->branch->branch_name, $staff->first()->branch->code) : null,
+                'branch_name' => $staff->first()->branch ? \App\Support\Branches\BranchIdentity::title($staff->first()->branch->branch_name, $staff->first()->branch->code) : null,
                 'active_staff_count' => $staff->count(),
             ])
             ->values();
@@ -306,7 +291,7 @@ class AttendanceService
                 'role' => $a->staff?->role,
                 // Where it was recorded, not where they are now.
                 'branch_uuid' => $a->ownBranch()?->uuid,
-                'branch_name' => $a->ownBranch() ? \App\Support\BranchIdentity::title($a->ownBranch()->branch_name, $a->ownBranch()->code) : null,
+                'branch_name' => $a->ownBranch() ? \App\Support\Branches\BranchIdentity::title($a->ownBranch()->branch_name, $a->ownBranch()->code) : null,
                 'attendance_date' => $a->attendance_date->format('Y-m-d'),
                 'status' => $a->status,
                 'check_in_at' => $a->check_in_at?->format('H:i'),
@@ -351,7 +336,7 @@ class AttendanceService
     // Statuses that take someone out of the count of people due to work a
     // day: excused (leave, a holiday) or never scheduled (a fill-in). The web
     // app counts the same way (utils/attendanceMath.ts) — keep the two in step.
-    private const NOT_SCHEDULED = ['On Leave', 'Holiday', 'Fill In'];
+    private const NOT_SCHEDULED = [AttendanceStatus::OnLeave->value, AttendanceStatus::Holiday->value, AttendanceStatus::FillIn->value];
 
     /**
      * Where each branch stands right now: how many are due in today, and how
@@ -371,10 +356,10 @@ class AttendanceService
                     // Checked in, whether or not they have left again.
                     'checked_in' => $due->filter(fn ($e) => $e['check_in_at'] !== null)->count(),
                     'on_shift' => $rows->filter(fn ($e) => $e['check_in_at'] !== null && $e['check_out_at'] === null && $e['status'] !== 'Incomplete')->count(),
-                    'late' => $rows->where('status', 'Late')->count(),
+                    'late' => $rows->where('status', AttendanceStatus::Late->value)->count(),
                     'not_in_yet' => $due->filter(fn ($e) => $e['check_in_at'] === null && $e['status'] === null)->count(),
-                    'absent' => $rows->where('status', 'Absent')->count(),
-                    'on_leave' => $rows->filter(fn ($e) => in_array($e['status'], ['On Leave', 'Holiday'], true))->count(),
+                    'absent' => $rows->where('status', AttendanceStatus::Absent->value)->count(),
+                    'on_leave' => $rows->filter(fn ($e) => in_array($e['status'], [AttendanceStatus::OnLeave->value, AttendanceStatus::Holiday->value], true))->count(),
                 ];
             })
             ->values()
@@ -390,9 +375,9 @@ class AttendanceService
             ->map(fn ($rows) => [
                 'branch_uuid' => $rows->first()['branch_uuid'],
                 'scheduled' => $rows->count(),
-                'came_in' => $rows->where('status', '!=', 'Absent')->count(),
-                'late' => $rows->where('status', 'Late')->count(),
-                'absent' => $rows->where('status', 'Absent')->count(),
+                'came_in' => $rows->where('status', '!=', AttendanceStatus::Absent->value)->count(),
+                'late' => $rows->where('status', AttendanceStatus::Late->value)->count(),
+                'absent' => $rows->where('status', AttendanceStatus::Absent->value)->count(),
             ])
             ->values()
             ->all();
@@ -420,7 +405,7 @@ class AttendanceService
         // on yesterday's day until it opens again.
         $branchIds = $this->branchIds($user);
         $workingDays = \App\Models\SpaBranch::whereIn('id', $branchIds)->get(['id', 'uuid'])
-            ->mapWithKeys(fn ($b) => [$b->uuid => \App\Support\BusinessDay::forBranch($b->id)])->all();
+            ->mapWithKeys(fn ($b) => [$b->uuid => \App\Support\Branches\BusinessDay::forBranch($b->id)])->all();
 
         return [
             'date_from' => $dateFrom,
@@ -475,7 +460,7 @@ class AttendanceService
                     'position' => $staff->role,
                     'branch_uuid' => $staff->branch?->uuid,
                     // Name and area ("Spa · Manila"): branches of one business may share a name.
-                'branch_name' => $staff->branch ? \App\Support\BranchIdentity::title($staff->branch->branch_name, $staff->branch->code) : null,
+                'branch_name' => $staff->branch ? \App\Support\Branches\BranchIdentity::title($staff->branch->branch_name, $staff->branch->code) : null,
                     'date' => $date,
                     'scheduled_start' => $resolved['scheduled_start'],
                     'scheduled_end' => $resolved['scheduled_end'],
@@ -578,9 +563,9 @@ class AttendanceService
         // or filled in are not asked again).
         $current = $attendance->resolved_status ?? $attendance->status;
         $chosen = $payload['status'] ?? null;
-        $computedFamily = in_array($current, ['Incomplete', 'Left Early', 'Fill In'], true) && $chosen === 'Present';
-        if (in_array($chosen, ['Absent', 'Present', 'Late'], true) && $chosen !== $current && ! $computedFamily && $attendance->staff) {
-            if ($chosen === 'Absent') {
+        $computedFamily = in_array($current, ['Incomplete', 'Left Early', AttendanceStatus::FillIn->value], true) && $chosen === AttendanceStatus::Present->value;
+        if (in_array($chosen, [AttendanceStatus::Absent->value, AttendanceStatus::Present->value, AttendanceStatus::Late->value], true) && $chosen !== $current && ! $computedFamily && $attendance->staff) {
+            if ($chosen === AttendanceStatus::Absent->value) {
                 // Absent means they did not come in: no times (the audit trail keeps the old ones).
                 $updates['check_in_at'] = null;
                 $updates['check_out_at'] = null;
@@ -594,7 +579,7 @@ class AttendanceService
                 $lateAfter = $start?->copy()->addMinutes(AttendanceStatusCalculator::graceMinutesFor($business));
                 $isLate = $in && $lateAfter && $in->gt($lateAfter);
 
-                if ($chosen === 'Late') {
+                if ($chosen === AttendanceStatus::Late->value) {
                     if (! $start) {
                         return response()->json(['message' => 'They have no shift that day, so they can\'t be late.'], 422);
                     }

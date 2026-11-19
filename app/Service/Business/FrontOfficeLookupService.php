@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Enums\StaffStatus;
 use App\Http\Resources\BranchScheduleResource;
 use App\Http\Resources\LookupFacilityResource;
 use App\Http\Resources\LookupPackageResource;
@@ -20,9 +21,9 @@ use App\Repository\Business\FacilityRepository;
 use App\Repository\Business\StaffRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Service\Client\BookingPolicy;
-use App\Support\ProgramChannel;
-use App\Support\ServicePromotions;
-use App\Support\VoucherTarget;
+use App\Support\Programs\ProgramChannel;
+use App\Support\Programs\ServicePromotions;
+use App\Support\Programs\VoucherTarget;
 
 // Narrow, read-only projections backing the front-office
 // therapist/room/service pickers. front_officer has no
@@ -31,34 +32,16 @@ use App\Support\VoucherTarget;
 // see routes/api.php's front_officer-inclusive group.
 class FrontOfficeLookupService
 {
-    private StaffRepository $staffRepository;
-    private FacilityRepository $facilityRepository;
-    private BranchServiceRepository $branchServiceRepository;
-    private BranchPackageRepository $branchPackageRepository;
-    private SpaBusinessRepository $spaBusinessRepository;
-    private BranchScheduleRepository $branchScheduleRepository;
-    private AppointmentAvailabilityService $availabilityService;
-    private TherapistQueueCalculator $therapistQueueCalculator;
-
     public function __construct(
-        StaffRepository $staffRepository,
-        FacilityRepository $facilityRepository,
-        BranchServiceRepository $branchServiceRepository,
-        BranchPackageRepository $branchPackageRepository,
-        SpaBusinessRepository $spaBusinessRepository,
-        BranchScheduleRepository $branchScheduleRepository,
-        AppointmentAvailabilityService $availabilityService,
-        TherapistQueueCalculator $therapistQueueCalculator,
-    ) {
-        $this->staffRepository = $staffRepository;
-        $this->facilityRepository = $facilityRepository;
-        $this->branchServiceRepository = $branchServiceRepository;
-        $this->branchPackageRepository = $branchPackageRepository;
-        $this->spaBusinessRepository = $spaBusinessRepository;
-        $this->branchScheduleRepository = $branchScheduleRepository;
-        $this->availabilityService = $availabilityService;
-        $this->therapistQueueCalculator = $therapistQueueCalculator;
-    }
+        private StaffRepository $staffRepository,
+        private FacilityRepository $facilityRepository,
+        private BranchServiceRepository $branchServiceRepository,
+        private BranchPackageRepository $branchPackageRepository,
+        private SpaBusinessRepository $spaBusinessRepository,
+        private BranchScheduleRepository $branchScheduleRepository,
+        private AppointmentAvailabilityService $availabilityService,
+        private TherapistQueueCalculator $therapistQueueCalculator,
+    ) {}
 
     private function branchIds(User $user): array
     {
@@ -92,7 +75,7 @@ class FrontOfficeLookupService
         $staff = Staff::where('uuid', $uuid)
             ->whereIn('spa_branch_id', $this->branchIds($user))
             ->where('role', 'therapist')
-            ->where('status', 'active')
+            ->where('status', StaffStatus::Active->value)
             ->with(['branch', 'schedules', 'qualifiedServices'])
             ->firstOrFail();
 
@@ -100,7 +83,7 @@ class FrontOfficeLookupService
             'uuid' => $staff->uuid,
             'name' => trim("{$staff->first_name} {$staff->last_name}"),
             'role' => $staff->role,
-            // What they do, main one first (App\Support\StaffSpecialty).
+            // What they do, main one first (App\Support\Staff\StaffSpecialty).
             'specialties' => $staff->specialtyList(),
             'branch_name' => $staff->branch?->branch_name,
             'schedule' => StaffScheduleResource::collection($staff->schedules),
@@ -113,7 +96,7 @@ class FrontOfficeLookupService
 
     // The branch's therapist rotation for today — who is next in line to take
     // a client. Shares TherapistQueueCalculator with
-    // AppointmentService::therapistOptions(), so the queue board and the
+    // VisitAssignmentService::therapistOptions(), so the queue board and the
     // assignment picker can never disagree about turn order.
     //
     // `is_next_up` here is simply the first free therapist on the floor: with
@@ -181,7 +164,7 @@ class FrontOfficeLookupService
     /**
      * Packages booked for several clients (a Couples Massage) on a day, and at a time when given:
      * each with how many clients have it and who, so the front desk can add the others as their
-     * own appointments at the same time (AppointmentService::createAppointment join_package_uuid).
+     * own appointments at the same time (AppointmentBookingService::createAppointment join_package_uuid).
      */
     public function sharedPackages(User $user, array $query)
     {
@@ -193,10 +176,10 @@ class FrontOfficeLookupService
             return ['data' => []];
         }
 
-        $rows = \App\Support\SharedPackages::onDay((int) $branchId, $query['date'], $query['time'] ?? null);
+        $rows = \App\Support\Catalog\SharedPackages::onDay((int) $branchId, $query['date'], $query['time'] ?? null);
 
         return ['data' => $rows->map(function (\App\Models\AppointmentPackage $row) {
-            $summary = \App\Support\SharedPackages::summary($row);
+            $summary = \App\Support\Catalog\SharedPackages::summary($row);
 
             return [
                 'uuid' => $row->uuid,
@@ -208,7 +191,7 @@ class FrontOfficeLookupService
                 'open' => ($summary['availed'] ?? 1) < ($summary['client_count'] ?? 2),
                 'services' => $row->package?->packageServiceItems
                     ->filter(fn ($item) => $item->theService() !== null)
-                    ->map(fn ($item) => $item->theService()->name . ' · ' . collect($item->client_slots ?: range(1, \App\Support\SharedPackages::clientsOf($row)))->map(fn ($s) => \App\Models\Package::slotName((int) $s))->implode(' & '))
+                    ->map(fn ($item) => $item->theService()->name . ' · ' . collect($item->client_slots ?: range(1, \App\Support\Catalog\SharedPackages::clientsOf($row)))->map(fn ($s) => \App\Models\Package::slotName((int) $s))->implode(' & '))
                     ->values()->all() ?? [],
                 'clients' => $summary['clients'] ?? [],
             ];
@@ -282,7 +265,7 @@ class FrontOfficeLookupService
 
     // The business's add-ons that are switched on — what the visit page
     // offers on a service's card, filtered there to the ones available for
-    // that service (App\Support\ServiceAddon). None until the migration has run.
+    // that service (App\Support\Catalog\ServiceAddon). None until the migration has run.
     public function addons(User $user)
     {
         $business = $this->spaBusinessRepository->findForUser($user);
@@ -311,12 +294,12 @@ class FrontOfficeLookupService
     // no branch_view/branch-schedule permission for the owner-only
     // /business/branch-schedule resource — this returns the caller's own
     // (auto-resolved) branch's week instead, same "exactly one accessible
-    // branch, no picker" assumption AppointmentService::createAppointment
+    // branch, no picker" assumption AppointmentBookingService::createAppointment
     // makes. Only the first branch is used even for an owner account, since
     // this lookup has no per-branch selector.
     // This branch's scanner link — the page a member of staff opens on their
     // own phone to start a home visit by scanning the client's QR
-    // (App\Support\HomeVisitStart, ScannerController). The link carries a
+    // (App\Support\Visits\HomeVisitStart, ScannerController). The link carries a
     // secret of the branch's own, made the first time it is asked for;
     // $replace makes a new one, which cuts the old link off.
     public function scannerLink(User $user, bool $replace = false)
@@ -359,7 +342,7 @@ class FrontOfficeLookupService
             ->additional([
                 // The owner's (or this branch's) rules the desk is held to,
                 // so the screens can say so before asking — the API decides
-                // (App\Support\FrontDeskPolicy, PolicyGate).
+                // (App\Support\Visits\FrontDeskPolicy, PolicyGate).
                 'policy' => $branch ? array_intersect_key(BookingPolicy::for($branch), array_flip([
                     'booking_lead_time_minutes', 'max_advance_booking_days',
                     'max_services_per_booking', 'max_bookings_per_hour', 'max_service_minutes_per_booking', 'allow_booking_overlap', 'cancellation_window_hours',
@@ -381,8 +364,8 @@ class FrontOfficeLookupService
                 ],
                 // Temporary closures still to come, so the modal can warn
                 // about a time inside one before it is submitted.
-                'closures' => \App\Support\BranchClosures::upcoming($branchId)
-                    ->map(fn ($closure) => \App\Support\BranchClosures::present($closure))->values(),
+                'closures' => \App\Support\Branches\BranchClosures::upcoming($branchId)
+                    ->map(fn ($closure) => \App\Support\Branches\BranchClosures::present($closure))->values(),
             ]);
     }
 

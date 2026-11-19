@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\System;
 
+use App\Http\Requests\System\BusinessListRequest;
 use App\Http\Requests\System\SuspendReasonRequest;
 use App\Service\System\BusinessService;
 use App\Http\Controllers\Controller;
@@ -9,16 +10,16 @@ use Illuminate\Http\Request;
 
 class BusinessController extends Controller
 {
-    private BusinessService $businessService;
+    public function __construct(
+        private BusinessService $businessService,
+    ) {}
 
-    public function __construct(BusinessService $businessService)
+    // One page of businesses, filtered by the API (BusinessRepository::paginateAll).
+    public function index(BusinessListRequest $request)
     {
-        $this->businessService = $businessService;
-    }
+        $filters = array_filter($request->only(['search', 'plan', 'status', 'sort']), fn ($v) => $v !== 'all');
 
-    public function index(Request $request)
-    {
-        return $this->businessService->listBusinesses($request->input('per_page', 100));
+        return $this->businessService->listBusinesses(\App\Support\PerPage::from($request), $filters);
     }
 
     public function show(string $uuid)

@@ -2,21 +2,29 @@
 
 namespace App\Http\Controllers\System;
 
-use Illuminate\Http\Request;
-use App\Service\System\AuditLogService;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\System\AuditLogListRequest;
+use App\Service\System\AuditLogService;
+use App\Support\PerPage;
 
 class AuditLogController extends Controller
 {
-    private AuditLogService $auditLogService;
+    public function __construct(
+        private AuditLogService $auditLogService,
+    ) {}
 
-    public function __construct(AuditLogService $auditLogService)
+    // One page of the administrators' audit trail, filtered by the API.
+    public function index(AuditLogListRequest $request)
     {
-        $this->auditLogService = $auditLogService;
+        $filters = $request->only(['search', 'category', 'actor_id', 'action', 'module', 'date_from', 'date_to', 'sort']);
+        if (($filters['category'] ?? null) === 'all') unset($filters['category']);
+
+        return $this->auditLogService->listAuditLogs(PerPage::from($request, 20), $filters);
     }
 
-    public function index(Request $request)
+    // The stat cards and category counts over the whole trail, and the filters' options.
+    public function summary()
     {
-        return $this->auditLogService->listAuditLogs($request->input('per_page', 100));
+        return response()->json(['data' => $this->auditLogService->summary()]);
     }
 }

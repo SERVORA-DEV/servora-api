@@ -11,13 +11,6 @@ class StaffScheduleChangeRequest extends Model
 {
     use HasUuids;
 
-    public const PENDING = 'pending';
-    public const APPROVED = 'approved';
-    public const REJECTED = 'rejected';
-    public const WITHDRAWN = 'withdrawn';
-    // Replaced by a newer request, or overtaken by the owner's own edit.
-    public const SUPERSEDED = 'superseded';
-
     protected $fillable = [
         'uuid',
         'staff_id',

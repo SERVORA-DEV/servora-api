@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\MobileRelease;
+use App\Support\Platform\MobileRelease;
 use Tests\TestCase;
 
 // The mobile app version in .env: what the app is told to offer, and when it must update.

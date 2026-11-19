@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Exceptions\ActionRefused;
 use App\Models\SpaBranch;
 use App\Models\User;
 use App\Repository\Business\BranchScheduleRepository;
@@ -12,20 +13,12 @@ use App\Support\AppCache;
 
 class BranchScheduleService
 {
-    private BranchScheduleRepository $branchScheduleRepository;
-    private SpaBranchRepository $spaBranchRepository;
-    private SpaBusinessRepository $spaBusinessRepository;
-
     public function __construct(
-        BranchScheduleRepository $branchScheduleRepository,
-        SpaBranchRepository $spaBranchRepository,
-        SpaBusinessRepository $spaBusinessRepository,
+        private BranchScheduleRepository $branchScheduleRepository,
+        private SpaBranchRepository $spaBranchRepository,
+        private SpaBusinessRepository $spaBusinessRepository,
         private ManagerChangeNotifier $managerChanges,
-    ) {
-        $this->branchScheduleRepository = $branchScheduleRepository;
-        $this->spaBranchRepository = $spaBranchRepository;
-        $this->spaBusinessRepository = $spaBusinessRepository;
-    }
+    ) {}
 
     // Every entry point below needs "is this branch mine?" before touching
     // schedule rows — centralized here so it can't be skipped. Throws
@@ -43,7 +36,7 @@ class BranchScheduleService
         $business = $this->spaBusinessRepository->findForUser($user);
 
         if (! $business) {
-            abort(422, 'No spa business found for this account.');
+            throw new ActionRefused('No spa business found for this account.');
         }
 
         return $this->spaBranchRepository->findByUuidForBranches($spaBranchUuid, $this->branchIds($user));
@@ -56,7 +49,7 @@ class BranchScheduleService
         $business = $this->spaBusinessRepository->findForUser($user);
 
         if (! $business) {
-            abort(422, 'No spa business found for this account.');
+            throw new ActionRefused('No spa business found for this account.');
         }
 
         return $this->branchScheduleRepository->findByUuidForBranches($uuid, $this->branchIds($user));
@@ -140,12 +133,6 @@ class BranchScheduleService
         return new BranchScheduleResource($model);
     }
 
-    public function getBranchScheduleByField(string $field, $value)
-    {
-        $model = $this->branchScheduleRepository->findByField($field, $value);
-        return new BranchScheduleResource($model);
-    }
-
     // day_of_week is deliberately never part of $payload here (see
     // BranchScheduleUpdateRequest, which has no rule for it) — a day's
     // identity shouldn't shift under an update; register a new row instead.
@@ -165,11 +152,5 @@ class BranchScheduleService
         $this->hoursChanged($user, fn () => $schedule->branch, 10);
         app(\App\Service\Business\ClientBookingNotices::class)->hoursChanged($schedule->branch);
         return true;
-    }
-
-    public function restoreBranchSchedule(string $uuid)
-    {
-        $model = $this->branchScheduleRepository->restore($uuid);
-        return new BranchScheduleResource($model);
     }
 }

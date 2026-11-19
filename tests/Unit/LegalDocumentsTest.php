@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\LegalDocuments;
+use App\Support\Platform\LegalDocuments;
 use Tests\TestCase;
 
 class LegalDocumentsTest extends TestCase
@@ -35,7 +35,8 @@ class LegalDocumentsTest extends TestCase
 
         $this->assertSame('2026-11-08', $content['documents']['terms']['revision_date']);
         $this->assertSame($privacyBefore, $content['documents']['privacy']);
-        $this->assertArrayNotHasKey('revision_date', $content['documents']['privacy']);
+        // The privacy policy has its own revision date, which a terms revision leaves alone.
+        $this->assertNotSame('2026-11-08', $content['documents']['privacy']['revision_date'] ?? null);
         $this->assertSame($versionBefore, $content['version']);
         $this->assertSame($effectiveBefore, $content['effective_date']);
     }

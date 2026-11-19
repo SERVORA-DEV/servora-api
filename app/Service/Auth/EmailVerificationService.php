@@ -2,20 +2,15 @@
 
 namespace App\Service\Auth;
 
-use App\Http\Resources\UserResource;
+use App\Enums\AccountStatus;
 use App\Repository\UserRepository;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 
 class EmailVerificationService
 {
-    private UserRepository $userRepository;
-
-    public function __construct(UserRepository $userRepository)
-    {
-        $this->userRepository = $userRepository;
-    }
+    public function __construct(
+        private UserRepository $userRepository,
+    ) {}
 
     public function verifyEmail(array $payload, $id, $hash)
     {
@@ -37,7 +32,7 @@ class EmailVerificationService
 
         $user->markEmailAsVerified();
 
-        $user->account_status = 'Active';
+        $user->account_status = AccountStatus::Active->value;
         $user->save();
 
         return redirect($frontendUrl . '/verify-email?status=success');
@@ -47,7 +42,7 @@ class EmailVerificationService
     {
         // A sign-up still waiting for its button: send that email again.
         $user = $this->userRepository->findByEmail($payload['email'], 'web');
-        if (! $user && ($again = \App\Support\PendingRegistration::resend($payload['email'])) !== null) {
+        if (! $user && ($again = \App\Support\Access\PendingRegistration::resend($payload['email'])) !== null) {
             return $again
                 ? response()->json(['message' => 'Confirmation email sent. Please check your inbox.'])
                 : response()->json(['message' => 'We could not send the confirmation email right now. Please try again in a moment.'], 503);
@@ -68,7 +63,7 @@ class EmailVerificationService
         }
 
         // An explicit user request for an email, so a failed send is reported
-        // rather than papered over — see UserService::resendRegistrationOtp
+        // rather than papered over — see RegistrationService::resendRegistrationOtp
         // for the same reasoning on the OTP side.
         try {
             $user->sendEmailVerificationNotification();

@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\AutoAssignment;
+use App\Support\Visits\AutoAssignment;
 use PHPUnit\Framework\TestCase;
 
 // Who and what a reservation with "any staff" is given: staff and rooms picked from the facts the

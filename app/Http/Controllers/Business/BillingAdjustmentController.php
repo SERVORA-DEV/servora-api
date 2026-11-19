@@ -3,10 +3,10 @@
 namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Business\BillingAdjustmentDeclineRequest;
+use App\Http\Requests\Business\BillingAdjustmentRequest;
 use App\Service\Business\BillingAdjustmentService;
-use App\Support\BillAdjustment;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
 
 // Changing a bill after it is paid — see BillingAdjustmentService.
 class BillingAdjustmentController extends Controller
@@ -28,18 +28,9 @@ class BillingAdjustmentController extends Controller
     // who it comes out of). Before payment the same with kind credit, and
     // service_uuid for one service. Applied at once or sent for approval, by
     // who is asking.
-    public function store(Request $request, string $uuid)
+    public function store(BillingAdjustmentRequest $request, string $uuid)
     {
-        $data = $request->validate([
-            'kind' => ['required', Rule::in(BillAdjustment::KINDS)],
-            'refund_policy_uuid' => ['nullable', 'uuid'],
-            'amount' => ['nullable', 'required_without_all:refund_policy_uuid,client_voucher_uuid', 'numeric', 'min:0.01', 'max:1000000'],
-            'charge_to' => ['nullable', Rule::in(\App\Support\RefundCharge::WHO)],
-            // Before payment (kind credit): the service it is for; none for the whole bill.
-            'service_uuid' => ['nullable', 'uuid'],
-            'client_voucher_uuid' => ['nullable', 'required_if:kind,voucher', 'uuid'],
-            'reason' => ['nullable', 'required_without:refund_policy_uuid', 'string', 'min:' . BillAdjustment::MIN_REASON, 'max:255'],
-        ]);
+        $data = $request->validated();
 
         return $this->adjustments->create($request->user(), $uuid, $data);
     }
@@ -49,9 +40,9 @@ class BillingAdjustmentController extends Controller
         return $this->adjustments->approve($request->user(), $uuid);
     }
 
-    public function decline(Request $request, string $uuid)
+    public function decline(BillingAdjustmentDeclineRequest $request, string $uuid)
     {
-        $note = $request->validate(['reason' => ['nullable', 'string', 'max:500']])['reason'] ?? null;
+        $note = $request->validated()['reason'] ?? null;
 
         return $this->adjustments->decline($request->user(), $uuid, $note);
     }

@@ -8,12 +8,9 @@ use App\Service\System\SystemSettingService;
 
 class SystemSettingController extends Controller
 {
-    private SystemSettingService $systemSettingService;
-
-    public function __construct(SystemSettingService $systemSettingService)
-    {
-        $this->systemSettingService = $systemSettingService;
-    }
+    public function __construct(
+        private SystemSettingService $systemSettingService,
+    ) {}
 
     public function show()
     {

@@ -2,7 +2,8 @@
 
 namespace App\Http\Resources;
 
-use App\Services\DocumentUploadService;
+use App\Enums\VerificationStatus;
+use App\Service\Uploads\DocumentUploadService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -30,8 +31,8 @@ class OwnerIdentityVerificationResource extends JsonResource
             'liveness_sequence' => $this->liveness_sequence,
             'liveness_result' => $this->liveness_result,
             'status' => $this->status,
-            'rejected_field' => $this->status === 'Rejected' ? $this->rejected_field : null,
-            'rejection_reason' => $this->status === 'Rejected' ? $this->rejection_reason : null,
+            'rejected_field' => $this->status === VerificationStatus::Rejected->value ? $this->rejected_field : null,
+            'rejection_reason' => $this->status === VerificationStatus::Rejected->value ? $this->rejection_reason : null,
             'verified_at' => $this->verified_at,
             'updated_at' => $this->updated_at,
         ];

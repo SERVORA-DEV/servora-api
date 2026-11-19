@@ -28,7 +28,7 @@ class ServiceRepository
     {
         // The code is given automatically (SVC-0001…), never taken from the request.
         if (! empty($payload['spa_business_id'])) {
-            $payload['code'] = \App\Support\CatalogCode::next(Service::class, (int) $payload['spa_business_id'], \App\Support\CatalogCode::SERVICE);
+            $payload['code'] = \App\Support\Catalog\CatalogCode::next(Service::class, (int) $payload['spa_business_id'], \App\Support\Catalog\CatalogCode::SERVICE);
         }
 
         return Service::create($payload);

@@ -54,16 +54,6 @@ class BusinessPaymentMethod extends Model
         return $this->belongsTo(SpaBusiness::class, 'spa_business_id');
     }
 
-    // The payments.payment_method value a charge on this method is recorded as.
-    public function paymentsColumnValue(): string
-    {
-        return match ($this->type) {
-            'GCASH' => 'GCash',
-            'MAYA' => 'Maya',
-            default => 'Credit Card',
-        };
-    }
-
     public function isExpired(): bool
     {
         if ($this->type !== 'CARD' || ! $this->expiry_month || ! $this->expiry_year) {

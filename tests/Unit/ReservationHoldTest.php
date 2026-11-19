@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\ReservationHold;
+use App\Support\Visits\ReservationHold;
 use Carbon\Carbon;
 use Tests\TestCase;
 

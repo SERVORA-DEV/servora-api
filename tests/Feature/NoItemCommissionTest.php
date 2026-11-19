@@ -22,7 +22,16 @@ class NoItemCommissionTest extends TestCase
 
         $owner = User::factory()->create(['role' => 'business_owner']);
         OwnerIdentityVerification::create(['user_id' => $owner->id, 'status' => 'Verified']);
-        SpaBusiness::factory()->create(['owner_id' => $owner->id]);
+        $business = SpaBusiness::factory()->create(['owner_id' => $owner->id]);
+        // Packages are a plan feature (plan.feature:package_access).
+        $plan = \App\Models\SubscriptionPlan::create([
+            'category' => 'Premium', 'name' => 'Premium', 'monthly_price' => 500, 'billing_cycle' => 'Monthly',
+            'max_branches' => 5, 'max_user_accounts' => 10, 'is_active' => true, 'package_access' => true,
+        ]);
+        \App\Models\Subscription::create([
+            'spa_business_id' => $business->id, 'subscription_plan_id' => $plan->id, 'billing_cycle' => 'Monthly',
+            'starts_at' => now()->subDay(), 'expires_at' => now()->addMonth(), 'status' => 'Active',
+        ]);
         Sanctum::actingAs($owner);
     }
 

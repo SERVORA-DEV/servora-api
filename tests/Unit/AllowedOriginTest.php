@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\AllowedOrigin;
+use App\Support\Access\AllowedOrigin;
 use PHPUnit\Framework\TestCase;
 
 // Which front end is talking to the API, when it is one the API trusts.

@@ -23,7 +23,7 @@ class UpdateSystemSettingRequest extends FormRequest
             'almost_due_repeat_every_days' => 'sometimes|required|integer|min:1|max:14',
             // Subscription Policy (PlanSwitchService).
             'plan_changes_enabled' => 'sometimes|boolean',
-            // Marketplace Policy (App\Support\ListingPolicy): item => required|optional.
+            // Marketplace Policy (App\Support\Platform\ListingPolicy): item => required|optional.
             'listing_policy' => 'sometimes|array',
             'listing_policy.*' => 'in:required,optional',
         ];

@@ -2,12 +2,13 @@
 
 namespace App\Http\Resources;
 
+use App\Enums\BillingStatus;
+use App\Enums\PaymentStatus;
 use App\Models\Appointment;
 use App\Models\AppointmentServiceItem;
 use App\Service\Business\BillingAdjustmentService;
 use App\Service\Business\BillingService;
-use App\Service\Client\BookingPolicy;
-use App\Support\FinishedVisit;
+use App\Support\Visits\FinishedVisit;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -63,10 +64,10 @@ class BillingResource extends JsonResource
             // Still owed: amount minus what's been paid (voided payments
             // excluded). Nothing is owed on a Paid, Refunded or Cancelled bill —
             // a refund hands money back, it doesn't reopen the balance.
-            'balance' => $this->whenLoaded('payments', fn () => in_array($this->status, ['Paid', 'Refunded', 'Cancelled'], true)
+            'balance' => $this->whenLoaded('payments', fn () => in_array($this->status, [BillingStatus::Paid->value, BillingStatus::Refunded->value, BillingStatus::Cancelled->value], true)
                 ? 0.0
                 : max(0, round((float) $this->amount - $this->payments
-                    ->where('payment_status', 'Paid')
+                    ->where('payment_status', PaymentStatus::Paid->value)
                     ->sum(fn ($p) => (float) $p->amount - (float) $p->refunded_amount), 2))),
             'refunded_total' => $this->whenLoaded('payments', fn () => round((float) $this->payments->sum(fn ($p) => (float) $p->refunded_amount), 2)),
             'status' => $this->status,
@@ -82,13 +83,13 @@ class BillingResource extends JsonResource
             'description' => in_array($this->billing_type, ['Subscription', 'Membership'], true) ? $this->remarks : null,
             'appointment_uuid' => $this->whenLoaded('appointment', fn () => $this->appointment?->uuid),
             // Full appointment context (client, branch, itemized services) —
-            // populated only when AppointmentService::getBilling's eager
+            // populated only when AppointmentLookupService::getBilling's eager
             // loads are present; the appointment-detail page's own nested
             // billing (loaded without these relations) stays lean.
             'appointment' => new AppointmentResource($this->whenLoaded('appointment')),
             'payments' => PaymentResource::collection($this->whenLoaded('payments')),
             // What of the money belongs to each service, and what can still be
-            // handed back for it (App\Support\ServiceRefunds) — for the
+            // handed back for it (App\Support\Billing\ServiceRefunds) — for the
             // checkout, which has the visit's services loaded.
             'service_refunds' => $this->when(
                 $this->relationLoaded('appointment') && $this->appointment?->relationLoaded('services') && $this->relationLoaded('payments'),

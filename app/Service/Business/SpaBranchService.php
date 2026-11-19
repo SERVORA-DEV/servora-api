@@ -2,6 +2,11 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentStatus;
+use App\Enums\BillingStatus;
+use App\Enums\OperatingStatus;
+use App\Enums\VerificationStatus;
+use App\Exceptions\NotFound;
 use App\Http\Resources\BranchDetailResource;
 use App\Http\Resources\Client\PublicReviewResource;
 use App\Http\Resources\NearbySpaResource;
@@ -23,15 +28,15 @@ use App\Repository\SpaBusinessRepository;
 use App\Repository\System\AdminUsersRepository;
 use App\Service\Client\BookingPolicy;
 use App\Service\Client\BookingSlotService;
-use App\Service\NotificationService;
-use App\Service\PlanFitService;
-use App\Services\DocumentUploadService;
-use App\Services\ImageUploadService;
+use App\Service\Notifications\NotificationService;
+use App\Service\Subscription\PlanFitService;
+use App\Service\Uploads\DocumentUploadService;
+use App\Service\Uploads\ImageUploadService;
 use App\Support\AppCache;
-use App\Support\BranchClosures;
-use App\Support\BranchHoursCalculator;
-use App\Support\ContactEmail;
-use App\Support\ServiceKind;
+use App\Support\Branches\BranchClosures;
+use App\Support\Branches\BranchHoursCalculator;
+use App\Support\Branches\ContactEmail;
+use App\Support\Catalog\ServiceKind;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -40,43 +45,18 @@ use Illuminate\Support\Facades\DB;
 
 class SpaBranchService
 {
-    private SpaBranchRepository $spaBranchRepository;
-
-    private SpaBusinessRepository $spaBusinessRepository;
-
-    private AdminUsersRepository $adminUsersRepository;
-
-    private AuditLogRepository $auditLogRepository;
-
-    private NotificationService $notificationService;
-
-    private ImageUploadService $imageUploadService;
-
-    private DocumentUploadService $documentUploadService;
-
-    private AppointmentAvailabilityService $availabilityService;
-
     public function __construct(
-        SpaBranchRepository $spaBranchRepository,
-        SpaBusinessRepository $spaBusinessRepository,
-        AdminUsersRepository $adminUsersRepository,
-        AuditLogRepository $auditLogRepository,
-        NotificationService $notificationService,
-        ImageUploadService $imageUploadService,
-        DocumentUploadService $documentUploadService,
-        AppointmentAvailabilityService $availabilityService,
+        private SpaBranchRepository $spaBranchRepository,
+        private SpaBusinessRepository $spaBusinessRepository,
+        private AdminUsersRepository $adminUsersRepository,
+        private AuditLogRepository $auditLogRepository,
+        private NotificationService $notificationService,
+        private ImageUploadService $imageUploadService,
+        private DocumentUploadService $documentUploadService,
+        private AppointmentAvailabilityService $availabilityService,
         private ManagerChangeNotifier $managerChanges,
         private PlanFitService $planFit,
-    ) {
-        $this->spaBranchRepository = $spaBranchRepository;
-        $this->spaBusinessRepository = $spaBusinessRepository;
-        $this->adminUsersRepository = $adminUsersRepository;
-        $this->auditLogRepository = $auditLogRepository;
-        $this->notificationService = $notificationService;
-        $this->imageUploadService = $imageUploadService;
-        $this->documentUploadService = $documentUploadService;
-        $this->availabilityService = $availabilityService;
-    }
+    ) {}
 
     // Backs GET /spas/nearby — public, no auth. The list is every bookable branch,
     // nearest first and the farthest last: radius_km is still accepted (older app
@@ -194,11 +174,20 @@ class SpaBranchService
         $home = ! empty($query['home_service']);
         [$from, $span] = HomeServiceRules::widen($home, $branch->id, $date, $time, $duration);
 
-        $rows = $therapists->map(function ($staff) use ($date, $time, $duration, $from, $span) {
+        // On shift by the booking's own rule (BookingSlotService::onShift): a therapist
+        // with no shift entered for that time isn't offered, as the booking would refuse
+        // them. staffMatchesSchedule() still runs first for its clearer reasons (a day
+        // off, away on leave).
+        $onShift = app(BookingSlotService::class)->onShiftFor($date, $from, $span, $therapists->pluck('id')->all());
+
+        $rows = $therapists->map(function ($staff) use ($date, $time, $duration, $from, $span, $onShift) {
             $schedule = $this->availabilityService->staffMatchesSchedule($staff->id, $date, $time, $duration);
 
             if (! $schedule['ok']) {
                 return ['staff' => $staff, 'available' => false, 'reason' => $schedule['reason']];
+            }
+            if (! ($onShift[$staff->id] ?? false)) {
+                return ['staff' => $staff, 'available' => false, 'reason' => 'This staff member is not scheduled to work during the requested time.'];
             }
 
             $booked = $this->availabilityService->isStaffAvailable($staff->id, $date, $from, $span);
@@ -329,7 +318,7 @@ class SpaBranchService
         if (! empty($query['therapist_uuid']) && $branch->displaySettings()['show_therapist_profiles']) {
             $therapist = $this->spaBranchRepository->publicTherapistsForBranch($branch->id)
                 ->firstWhere('uuid', $query['therapist_uuid']);
-            abort_if(! $therapist, 404, 'Therapist not found.');
+            throw_if(! $therapist, NotFound::class, 'Therapist not found.');
         }
 
         $excludeId = null;
@@ -352,7 +341,7 @@ class SpaBranchService
             $excludeId,
             $home,
             max(
-                \App\Support\ServiceParts::needOfVariants($query['service_variant_uuids'] ?? []),
+                \App\Support\Catalog\ServiceParts::needOfVariants($query['service_variant_uuids'] ?? []),
                 // A package for several clients holds a staff member for each of them.
                 ! empty($query['package_uuid'])
                     ? (int) (\App\Models\Package::where('uuid', $query['package_uuid'])->where('spa_business_id', $branch->spa_business_id)->first()?->clients() ?? 1)
@@ -375,7 +364,7 @@ class SpaBranchService
             ->publicTherapistsForBranch($branch->id)
             ->firstWhere('uuid', $staffUuid);
 
-        abort_if(! $staff, 404, 'Therapist not found.');
+        throw_if(! $staff, NotFound::class, 'Therapist not found.');
 
         return [
             'data' => [
@@ -446,10 +435,10 @@ class SpaBranchService
         $plan = $this->planFit->currentPlan($business);
         if (! $this->planFit->hasRoomForBranch($business, $plan)) {
             return response()->json([
-                'message' => "Your {$plan->name} plan allows ".((int) $plan->max_branches === 1 ? '1 branch' : "{$plan->max_branches} branches").'. '.(\App\Support\PlanTerms::offers($plan, 'branch') ? 'Add a branch slot or upgrade to add another.' : 'Upgrade to add another.'),
+                'message' => "Your {$plan->name} plan allows ".((int) $plan->max_branches === 1 ? '1 branch' : "{$plan->max_branches} branches").'. '.(\App\Support\Platform\PlanTerms::offers($plan, 'branch') ? 'Add a branch slot or upgrade to add another.' : 'Upgrade to add another.'),
                 'code' => 'PLAN_LIMIT',
                 // The plan sells extra branch slots (SubscriptionAddonService).
-                'can_add_slots' => \App\Support\PlanTerms::offers($plan, 'branch'),
+                'can_add_slots' => \App\Support\Platform\PlanTerms::offers($plan, 'branch'),
                 'slot_kind' => 'branch',
             ], 422);
         }
@@ -468,8 +457,8 @@ class SpaBranchService
         // A newly created branch isn't registered yet — the owner still has
         // to complete Location + Permit and submit() (see below) before it
         // can go to Pending.
-        $payload['verification_status'] = 'Unregistered';
-        $payload['operating_status'] = 'Active';
+        $payload['verification_status'] = VerificationStatus::Unregistered->value;
+        $payload['operating_status'] = OperatingStatus::Active->value;
 
         $model = $this->spaBranchRepository->create($payload);
 
@@ -501,13 +490,6 @@ class SpaBranchService
         return new SpaBranchResource($model);
     }
 
-    public function getSpaBranchByField(string $field, $value)
-    {
-        $model = $this->spaBranchRepository->findByField($field, $value);
-
-        return new SpaBranchResource($model);
-    }
-
     /**
      * Same ownership guard as create — findByUuidForBusiness() 404s before
      * update() ever runs if this uuid isn't one of this owner's branches, so
@@ -528,7 +510,7 @@ class SpaBranchService
 
         // On hold by the plan: it comes back through bringBack() (which
         // checks there is room), not by flipping the ordinary on/off switch.
-        if ($branch->plan_hold_at && ($payload['operating_status'] ?? null) === 'Active') {
+        if ($branch->plan_hold_at && ($payload['operating_status'] ?? null) === OperatingStatus::Active->value) {
             return response()->json([
                 'message' => "{$branch->branch_name} is on hold because your plan has no room for it. Upgrade, or bring it back once there is room.",
                 'code' => 'PLAN_HOLD',
@@ -570,7 +552,7 @@ class SpaBranchService
         if (isset($payload['operating_status']) && $payload['operating_status'] !== $wasStatus) {
             $this->managerChanges->tell(
                 $user, $model, ManagerChangeNotifier::HOURS, 'Branch Status Changed',
-                $payload['operating_status'] === 'Active'
+                $payload['operating_status'] === OperatingStatus::Active->value
                     ? "switched {$model->branch_name} back on. Clients can find and book it again."
                     : "switched {$model->branch_name} off. Clients can't find or book it until it is switched back on.",
             );
@@ -629,10 +611,10 @@ class SpaBranchService
         // Deleting it takes its visits and bills out of reach: an unpaid bill could
         // never be collected. Settle those first, or switch the branch off instead.
         $open = Appointment::where('spa_branch_id', $branch->id)
-            ->whereIn('status', [Appointment::STATUS_SCHEDULED, Appointment::STATUS_CHECKED_IN, Appointment::STATUS_IN_SERVICE])
+            ->whereIn('status', [AppointmentStatus::Scheduled->value, AppointmentStatus::CheckedIn->value, AppointmentStatus::InService->value])
             ->count();
         $unpaid = Billing::where('spa_branch_id', $branch->id)
-            ->whereNotIn('status', ['Paid', 'Cancelled', 'Refunded'])
+            ->whereNotIn('status', [BillingStatus::Paid->value, BillingStatus::Cancelled->value, BillingStatus::Refunded->value])
             ->count();
         if ($open > 0 || $unpaid > 0) {
             $parts = array_filter([
@@ -648,13 +630,6 @@ class SpaBranchService
         $this->spaBranchRepository->delete($uuid);
 
         return true;
-    }
-
-    public function restoreSpaBranch(string $uuid)
-    {
-        $model = $this->spaBranchRepository->restore($uuid);
-
-        return new SpaBranchResource($model);
     }
 
     /**
@@ -684,16 +659,16 @@ class SpaBranchService
 
         $branch = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
 
-        if ($branch->verification_status !== 'Verified') {
+        if ($branch->verification_status !== VerificationStatus::Verified->value) {
             return response()->json([
-                'message' => $branch->verification_status === 'Pending'
+                'message' => $branch->verification_status === VerificationStatus::Pending->value
                     ? 'This branch is being reviewed already. Its documents can change once that is done.'
                     : 'This branch is already open for changes.',
             ], 422);
         }
 
         $branch = $this->spaBranchRepository->update($uuid, [
-            'verification_status' => 'Unregistered',
+            'verification_status' => VerificationStatus::Unregistered->value,
             'verified_by' => null,
             'verified_at' => null,
         ]);
@@ -703,8 +678,8 @@ class SpaBranchService
             'spa_branches',
             $branch->id,
             'Update',
-            ['verification_status' => 'Verified'],
-            ['verification_status' => 'Unregistered'],
+            ['verification_status' => VerificationStatus::Verified->value],
+            ['verification_status' => VerificationStatus::Unregistered->value],
             $request
         );
 
@@ -723,7 +698,7 @@ class SpaBranchService
 
         $branch = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
 
-        if (! in_array($branch->verification_status, ['Unregistered', 'Rejected'], true)) {
+        if (! in_array($branch->verification_status, [VerificationStatus::Unregistered->value, VerificationStatus::Rejected->value], true)) {
             return response()->json([
                 'message' => 'This branch already has a registration request in review or approved.',
             ], 422);
@@ -770,7 +745,7 @@ class SpaBranchService
 
         $branch = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
 
-        if (! in_array($branch->verification_status, ['Unregistered', 'Rejected'], true)) {
+        if (! in_array($branch->verification_status, [VerificationStatus::Unregistered->value, VerificationStatus::Rejected->value], true)) {
             return response()->json([
                 'message' => 'This branch already has a registration request in review or approved.',
             ], 422);
@@ -828,7 +803,7 @@ class SpaBranchService
 
         $branch = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
 
-        if (! in_array($branch->verification_status, ['Unregistered', 'Rejected'], true)) {
+        if (! in_array($branch->verification_status, [VerificationStatus::Unregistered->value, VerificationStatus::Rejected->value], true)) {
             return response()->json([
                 'message' => 'This branch already has a registration request in review or approved.',
             ], 422);
@@ -855,7 +830,7 @@ class SpaBranchService
         $oldValues = $branch->only(['verification_status']);
 
         $branch = $this->spaBranchRepository->update($uuid, [
-            'verification_status' => 'Pending',
+            'verification_status' => VerificationStatus::Pending->value,
             'rejection_reason' => null,
             'verified_by' => null,
             'verified_at' => null,

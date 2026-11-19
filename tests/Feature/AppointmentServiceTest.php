@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\AppointmentStatus;
 use App\Http\Resources\AppointmentResource;
 use App\Models\Appointment;
 use App\Models\AppointmentServiceItem;
@@ -65,9 +66,23 @@ class AppointmentServiceTest extends TestCase
         $this->facilityB = Facility::factory()->create(['spa_branch_id' => $this->branch->id]);
         $this->therapistA = Staff::factory()->create(['spa_branch_id' => $this->branch->id]);
         $this->therapistB = Staff::factory()->create(['spa_branch_id' => $this->branch->id]);
+
+        // Packages are a plan feature.
+        $plan = \App\Models\SubscriptionPlan::create([
+            'category' => 'Premium', 'name' => 'Premium', 'monthly_price' => 500, 'billing_cycle' => 'Monthly',
+            'max_branches' => 5, 'max_user_accounts' => 10, 'is_active' => true, 'package_access' => true,
+        ]);
+        \App\Models\Subscription::create([
+            'spa_business_id' => $this->business->id, 'subscription_plan_id' => $plan->id, 'billing_cycle' => 'Monthly',
+            'starts_at' => now()->subDay(), 'expires_at' => now()->addYears(3), 'status' => 'Active',
+        ]);
+
+        // These book on fixed 2027 dates: lift the "book up to N days ahead" limit (BookingPolicy).
+        \App\Models\SpaBusinessSetting::updateOrCreate(['spa_business_id' => $this->business->id], ['booking_defaults' => ['max_advance_booking_days' => 0]]);
+        \App\Service\Client\BookingPolicy::flush();
     }
 
-    private function createAppointment(string $date = '2026-09-01', string $time = '10:00'): Appointment
+    private function createAppointment(string $date = '2027-03-01', string $time = '10:00'): Appointment
     {
         $result = $this->service->createAppointment($this->owner, [
             'spa_branch_uuid' => $this->branch->uuid,
@@ -89,6 +104,21 @@ class AppointmentServiceTest extends TestCase
         $this->assertNotInstanceOf(JsonResponse::class, $result, 'addService failed: ' . $this->msg($result));
 
         return AppointmentServiceItem::where('appointment_id', $appointment->id)->latest('id')->firstOrFail();
+    }
+
+    // A booking is checked in on its own day (CheckInService asks for "Check in now" otherwise):
+    // the clock moves to its booked time first.
+    private function checkInOnTheDay(Appointment $appointment)
+    {
+        $appointment->refresh();
+        $day = $appointment->appointment_date->format('Y-m-d');
+        $this->travelTo(\Carbon\Carbon::parse($day . ' ' . $appointment->appointment_time));
+        // Both therapists are at work that day: a service starts only with someone timed in.
+        foreach ([$this->therapistA, $this->therapistB] as $staff) {
+            \App\Models\Attendance::firstOrCreate(['staff_id' => $staff->id, 'attendance_date' => $day], ['check_in_at' => "{$day} 08:00:00", 'status' => 'Present']);
+        }
+
+        return $this->service->checkIn($this->owner, $appointment->uuid);
     }
 
     private function msg($result): string
@@ -152,10 +182,10 @@ class AppointmentServiceTest extends TestCase
     public function test_assigning_service_package_and_room_never_flips_status_to_in_service(): void
     {
         $appointment = $this->createAppointment();
-        $this->assertSame(Appointment::STATUS_SCHEDULED, $appointment->status);
+        $this->assertSame(AppointmentStatus::Scheduled->value, $appointment->status);
 
         $service = $this->addService($appointment);
-        $this->assertSame(Appointment::STATUS_SCHEDULED, $appointment->fresh()->status);
+        $this->assertSame(AppointmentStatus::Scheduled->value, $appointment->fresh()->status);
 
         $package = Package::factory()->create(['spa_business_id' => $this->business->id]);
         PackageServiceItem::create([
@@ -168,19 +198,19 @@ class AppointmentServiceTest extends TestCase
 
         $packageResult = $this->service->addPackage($this->owner, $appointment->uuid, ['package_uuid' => $package->uuid]);
         $this->assertNotInstanceOf(JsonResponse::class, $packageResult, $this->msg($packageResult));
-        $this->assertSame(Appointment::STATUS_SCHEDULED, $appointment->fresh()->status);
+        $this->assertSame(AppointmentStatus::Scheduled->value, $appointment->fresh()->status);
 
         $roomResult = $this->service->assignTherapist($this->owner, $service->uuid, ['facility_uuid' => $this->facilityB->uuid]);
         $this->assertNotInstanceOf(JsonResponse::class, $roomResult, $this->msg($roomResult));
-        $this->assertSame(Appointment::STATUS_SCHEDULED, $appointment->fresh()->status);
+        $this->assertSame(AppointmentStatus::Scheduled->value, $appointment->fresh()->status);
 
-        $checkinResult = $this->service->checkIn($this->owner, $appointment->uuid);
+        $checkinResult = $this->checkInOnTheDay($appointment);
         $this->assertNotInstanceOf(JsonResponse::class, $checkinResult, $this->msg($checkinResult));
-        $this->assertSame(Appointment::STATUS_CHECKED_IN, $appointment->fresh()->status);
+        $this->assertSame(AppointmentStatus::CheckedIn->value, $appointment->fresh()->status);
 
         $therapistResult = $this->service->assignTherapist($this->owner, $service->uuid, ['staff_uuid' => $this->therapistA->uuid]);
         $this->assertNotInstanceOf(JsonResponse::class, $therapistResult, $this->msg($therapistResult));
-        $this->assertSame(Appointment::STATUS_CHECKED_IN, $appointment->fresh()->status, 'assigning a therapist must never itself start service');
+        $this->assertSame(AppointmentStatus::CheckedIn->value, $appointment->fresh()->status, 'assigning a therapist must never itself start service');
     }
 
     public function test_same_appointment_can_reuse_the_same_therapist_and_room_across_services(): void
@@ -212,32 +242,35 @@ class AppointmentServiceTest extends TestCase
 
     public function test_reschedule_succeeds_from_scheduled_and_checked_in_but_blocked_once_in_service(): void
     {
-        $appointment = $this->createAppointment('2026-09-01', '10:00');
+        $appointment = $this->createAppointment('2027-03-01', '10:00');
         $service = $this->addService($appointment);
 
         $result = $this->service->rescheduleAppointment($this->owner, $appointment->uuid, [
-            'appointment_date' => '2026-09-02',
+            'appointment_date' => '2027-03-02',
             'appointment_time' => '11:00',
         ]);
         $this->assertNotInstanceOf(JsonResponse::class, $result, $this->msg($result));
         $appointment->refresh();
-        $this->assertSame('2026-09-02', $appointment->appointment_date->format('Y-m-d'));
+        $this->assertSame('2027-03-02', $appointment->appointment_date->format('Y-m-d'));
         $this->assertStringStartsWith('11:00', $appointment->appointment_time);
 
-        $this->service->checkIn($this->owner, $appointment->uuid);
+        $this->checkInOnTheDay($appointment);
         $result = $this->service->rescheduleAppointment($this->owner, $appointment->uuid, [
-            'appointment_date' => '2026-09-02',
+            'appointment_date' => '2027-03-02',
             'appointment_time' => '13:00',
         ]);
         $this->assertNotInstanceOf(JsonResponse::class, $result, $this->msg($result));
+        // Moved, it is no longer checked in (performReschedule): they check in for the new time.
+        $this->assertSame(AppointmentStatus::Scheduled->value, $appointment->fresh()->status);
+        $this->checkInOnTheDay($appointment);
 
         $this->service->assignTherapist($this->owner, $service->uuid, ['staff_uuid' => $this->therapistA->uuid]);
         $startResult = $this->service->startService($this->owner, $service->uuid);
         $this->assertNotInstanceOf(JsonResponse::class, $startResult, $this->msg($startResult));
-        $this->assertSame(Appointment::STATUS_IN_SERVICE, $appointment->fresh()->status);
+        $this->assertSame(AppointmentStatus::InService->value, $appointment->fresh()->status);
 
         $blocked = $this->service->rescheduleAppointment($this->owner, $appointment->uuid, [
-            'appointment_date' => '2026-09-03',
+            'appointment_date' => '2027-03-03',
             'appointment_time' => '09:00',
         ]);
         $this->assertInstanceOf(JsonResponse::class, $blocked);
@@ -252,14 +285,14 @@ class AppointmentServiceTest extends TestCase
         // therapist/room must succeed regardless. The only real conflict
         // check left is the real-time one at startService(), unaffected
         // here since nothing has actually started.
-        $blocker = $this->createAppointment('2026-09-05', '10:00');
+        $blocker = $this->createAppointment('2027-03-05', '10:00');
         $blockerService = $this->addService($blocker);
         $this->service->assignTherapist($this->owner, $blockerService->uuid, [
             'staff_uuid' => $this->therapistA->uuid,
             'facility_uuid' => $this->facilityA->uuid,
         ]);
 
-        $movable = $this->createAppointment('2026-09-05', '14:00');
+        $movable = $this->createAppointment('2027-03-05', '14:00');
         $movableService = $this->addService($movable);
         $this->service->assignTherapist($this->owner, $movableService->uuid, [
             'staff_uuid' => $this->therapistA->uuid,
@@ -268,7 +301,7 @@ class AppointmentServiceTest extends TestCase
 
         // Moving into the blocker's projected 10:00-11:00 window.
         $result = $this->service->rescheduleAppointment($this->owner, $movable->uuid, [
-            'appointment_date' => '2026-09-05',
+            'appointment_date' => '2027-03-05',
             'appointment_time' => '10:30',
         ]);
         $this->assertNotInstanceOf(JsonResponse::class, $result, $this->msg($result));
@@ -281,7 +314,7 @@ class AppointmentServiceTest extends TestCase
         // real per-service time slots) — only rooms became a hard gate; see
         // test_overlapping_room_reservation_is_rejected_across_appointments
         // below for the room-specific behavior this used to also assert.
-        $first = $this->createAppointment('2026-09-05', '10:00');
+        $first = $this->createAppointment('2027-03-05', '10:00');
         $firstService = $this->addService($first);
         $firstResult = $this->service->assignTherapist($this->owner, $firstService->uuid, [
             'staff_uuid' => $this->therapistA->uuid,
@@ -290,7 +323,7 @@ class AppointmentServiceTest extends TestCase
 
         // Second appointment, same day, at a time that would have
         // overlapped the first appointment's projected 60-minute window.
-        $second = $this->createAppointment('2026-09-05', '10:30');
+        $second = $this->createAppointment('2027-03-05', '10:30');
         $secondService = $this->addService($second);
         $secondResult = $this->service->assignTherapist($this->owner, $secondService->uuid, [
             'staff_uuid' => $this->therapistA->uuid,
@@ -302,7 +335,7 @@ class AppointmentServiceTest extends TestCase
     {
         $this->facilityA->update(['max_clients' => 2]);
         $assign = function () {
-            $service = $this->addService($this->createAppointment('2026-09-06', '10:00'));
+            $service = $this->addService($this->createAppointment('2027-03-06', '10:00'));
 
             return $this->service->assignTherapist($this->owner, $service->uuid, ['facility_uuid' => $this->facilityA->uuid]);
         };
@@ -321,14 +354,14 @@ class AppointmentServiceTest extends TestCase
     public function test_a_room_that_holds_several_counts_clients_not_services(): void
     {
         $this->facilityA->update(['max_clients' => 2]);
-        $visit = $this->createAppointment('2026-09-06', '10:00');
+        $visit = $this->createAppointment('2027-03-06', '10:00');
         foreach ([$this->addService($visit), $this->addService($visit)] as $service) {
             $result = $this->service->assignTherapist($this->owner, $service->uuid, ['facility_uuid' => $this->facilityA->uuid]);
             $this->assertNotInstanceOf(JsonResponse::class, $result, $this->msg($result));
         }
 
         // Their two services are one client, so there is still space.
-        $other = $this->addService($this->createAppointment('2026-09-06', '10:00'));
+        $other = $this->addService($this->createAppointment('2027-03-06', '10:00'));
         $result = $this->service->assignTherapist($this->owner, $other->uuid, ['facility_uuid' => $this->facilityA->uuid]);
         $this->assertNotInstanceOf(JsonResponse::class, $result, $this->msg($result));
     }
@@ -338,7 +371,7 @@ class AppointmentServiceTest extends TestCase
         // Unlike therapists, a room IS a hard time-blocked resource now — a
         // physical room genuinely can't hold two appointments at once. See
         // AppointmentAvailabilityService::isFacilityAvailable().
-        $first = $this->createAppointment('2026-09-06', '10:00');
+        $first = $this->createAppointment('2027-03-06', '10:00');
         $firstService = $this->addService($first); // 60-minute variant: occupies 10:00-11:00
         $firstResult = $this->service->assignTherapist($this->owner, $firstService->uuid, [
             'facility_uuid' => $this->facilityA->uuid,
@@ -346,7 +379,7 @@ class AppointmentServiceTest extends TestCase
         $this->assertNotInstanceOf(JsonResponse::class, $firstResult, $this->msg($firstResult));
 
         // Overlaps the first appointment's 10:00-11:00 window.
-        $second = $this->createAppointment('2026-09-06', '10:30');
+        $second = $this->createAppointment('2027-03-06', '10:30');
         $secondService = $this->addService($second);
         $secondResult = $this->service->assignTherapist($this->owner, $secondService->uuid, [
             'facility_uuid' => $this->facilityA->uuid,
@@ -355,7 +388,7 @@ class AppointmentServiceTest extends TestCase
         $this->assertSame(422, $secondResult->getStatusCode());
 
         // A non-overlapping time for the same room succeeds.
-        $third = $this->createAppointment('2026-09-06', '12:00');
+        $third = $this->createAppointment('2027-03-06', '12:00');
         $thirdService = $this->addService($third);
         $thirdResult = $this->service->assignTherapist($this->owner, $thirdService->uuid, [
             'facility_uuid' => $this->facilityA->uuid,
@@ -367,10 +400,10 @@ class AppointmentServiceTest extends TestCase
     {
         $appointment = $this->createAppointment();
         $service = $this->addService($appointment);
-        $this->service->checkIn($this->owner, $appointment->uuid);
+        $this->checkInOnTheDay($appointment);
         $this->service->assignTherapist($this->owner, $service->uuid, ['staff_uuid' => $this->therapistA->uuid]);
         $this->service->startService($this->owner, $service->uuid);
-        $this->assertSame(Appointment::STATUS_IN_SERVICE, $appointment->fresh()->status);
+        $this->assertSame(AppointmentStatus::InService->value, $appointment->fresh()->status);
 
         $result = $this->service->addService($this->owner, $appointment->uuid, [
             'service_variant_uuid' => $this->variant->uuid,
@@ -402,14 +435,14 @@ class AppointmentServiceTest extends TestCase
 
     public function test_check_in_automatically_queues_the_appointment(): void
     {
-        $appointment = $this->createAppointment('2026-09-01', '10:00');
+        $appointment = $this->createAppointment('2027-03-01', '10:00');
         $this->assertNull($appointment->fresh()->queue);
 
-        $result = $this->service->checkIn($this->owner, $appointment->uuid);
+        $result = $this->checkInOnTheDay($appointment);
         $this->assertNotInstanceOf(JsonResponse::class, $result, $this->msg($result));
 
         $fresh = $appointment->fresh();
-        $this->assertSame(Appointment::STATUS_CHECKED_IN, $fresh->status);
+        $this->assertSame(AppointmentStatus::CheckedIn->value, $fresh->status);
         $this->assertNotNull($fresh->queue);
         $this->assertSame('Waiting', $fresh->queue->queue_status);
         $this->assertNotEmpty($fresh->queue->queue_number);
@@ -420,14 +453,14 @@ class AppointmentServiceTest extends TestCase
         $result = $this->service->createAppointment($this->owner, [
             'spa_branch_uuid' => $this->branch->uuid,
             'client_uuid' => $this->client->uuid,
-            'appointment_date' => '2026-09-01',
+            'appointment_date' => '2027-03-01',
             'appointment_time' => '10:00',
             'appointment_type' => 'Walk-in',
         ]);
         $this->assertNotInstanceOf(JsonResponse::class, $result, $this->msg($result));
 
         $appointment = Appointment::where('uuid', $result->resource->uuid)->firstOrFail();
-        $this->assertSame(Appointment::STATUS_CHECKED_IN, $appointment->status);
+        $this->assertSame(AppointmentStatus::CheckedIn->value, $appointment->status);
         $this->assertNotNull($appointment->check_in_at);
         $this->assertNotNull($appointment->queue);
         $this->assertSame('Waiting', $appointment->queue->queue_status);
@@ -435,9 +468,9 @@ class AppointmentServiceTest extends TestCase
 
     public function test_reservation_creation_stays_scheduled_without_a_queue_entry(): void
     {
-        $appointment = $this->createAppointment('2026-09-01', '10:00');
+        $appointment = $this->createAppointment('2027-03-01', '10:00');
 
-        $this->assertSame(Appointment::STATUS_SCHEDULED, $appointment->status);
+        $this->assertSame(AppointmentStatus::Scheduled->value, $appointment->status);
         $this->assertNull($appointment->check_in_at);
         $this->assertNull($appointment->queue);
     }
@@ -457,7 +490,7 @@ class AppointmentServiceTest extends TestCase
     {
         $appointment = $this->createAppointment();
         $line = $this->addService($appointment, $variant);
-        $this->service->checkIn($this->owner, $appointment->uuid);
+        $this->checkInOnTheDay($appointment);
 
         return $line;
     }
@@ -491,16 +524,27 @@ class AppointmentServiceTest extends TestCase
         $this->assertStringContainsString('Check the client in', $this->msg($refused));
         $this->assertSame('Pending', $line->fresh()->status);
 
-        $this->service->checkIn($this->owner, $appointment->uuid);
+        $this->checkInOnTheDay($appointment);
         $started = $this->service->startService($this->owner, $line->uuid);
         $this->assertNotInstanceOf(JsonResponse::class, $started, $this->msg($started));
     }
 
     public function test_a_client_with_a_started_service_cannot_be_skipped(): void
     {
+        // Another client booked after them, so there is someone to let go first.
+        $behind = $this->service->createAppointment($this->owner, [
+            'spa_branch_uuid' => $this->branch->uuid,
+            'client_uuid' => Client::factory()->create(['spa_business_id' => $this->business->id])->uuid,
+            'appointment_date' => '2027-03-01',
+            'appointment_time' => '10:30',
+            'appointment_type' => 'Reservation',
+        ]);
+        $this->assertNotInstanceOf(JsonResponse::class, $behind, $this->msg($behind));
+
         $line = $this->checkedInWith($this->variantOf(['facility_required' => false]));
         $appointment = $line->appointment;
         $this->service->assignTherapist($this->owner, $line->uuid, ['staff_uuid' => $this->therapistA->uuid]);
+        $this->checkInOnTheDay(Appointment::where('uuid', $behind->resource->uuid)->firstOrFail());
 
         // Waiting with nothing started: skipping is allowed...
         $skipped = $this->service->skipQueue($this->owner, $appointment->uuid);

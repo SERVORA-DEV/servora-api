@@ -16,9 +16,9 @@ class AppointmentServiceResource extends JsonResource
             // service, not per length).
             'service_uuid' => $this->serviceVariant?->service?->uuid,
             // Name, type and length are the line's own copy of what was
-            // booked (AppointmentServiceItem / App\Support\History).
+            // booked (AppointmentServiceItem / App\Support\Activity\History).
             'service_name' => $this->resource->displayName(),
-            // time | procedure | facility (App\Support\ServiceKind).
+            // time | procedure | facility (App\Support\Catalog\ServiceKind).
             'service_type' => $this->resource->kind(),
             // A facility has to be chosen before it can start (the booking's
             // own copy — AppointmentServiceItem::needsFacility).

@@ -3,7 +3,7 @@
 namespace Tests\Unit;
 
 use App\Http\Requests\Business\Settings\BusinessIdentityRequest;
-use App\Support\StaffSpecialty;
+use App\Support\Staff\StaffSpecialty;
 use PHPUnit\Framework\TestCase;
 
 // SERVORA covers spa work only: what the lists offer stays one staff member with one client, in one place.

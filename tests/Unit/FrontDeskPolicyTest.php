@@ -2,8 +2,8 @@
 
 namespace Tests\Unit;
 
-use App\Support\FrontDeskPolicy;
-use App\Support\PolicyOverride;
+use App\Support\Visits\FrontDeskPolicy;
+use App\Support\Visits\PolicyOverride;
 use Carbon\Carbon;
 use PHPUnit\Framework\TestCase;
 

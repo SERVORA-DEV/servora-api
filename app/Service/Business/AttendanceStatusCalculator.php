@@ -2,14 +2,15 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AttendanceStatus;
 use App\Models\Attendance;
 use App\Models\BranchSchedule;
 use App\Models\SpaBusiness;
 use App\Models\Staff;
 use App\Models\StaffSchedule;
 use App\Models\StaffTimeOff;
-use App\Support\AttendanceKept;
-use App\Support\History;
+use App\Support\Staff\AttendanceKept;
+use App\Support\Activity\History;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -19,7 +20,7 @@ use Illuminate\Support\Collection;
 // it differently in two places. Safe to call for a date with no Attendance
 // row at all.
 //
-// A day that has happened stays as it was (App\Support\History): the shift
+// A day that has happened stays as it was (App\Support\Activity\History): the shift
 // and how late the person was are kept on the attendance row when they check
 // in, the hours worked and overtime when they check out — keep(), called as
 // the row is saved. resolve() gives those back, so changing the late
@@ -243,7 +244,7 @@ class AttendanceStatusCalculator
 
         // Explicit human decisions pass through untouched — never
         // second-guessed by the calculator.
-        if (in_array($storedStatus, ['On Leave', 'Holiday', 'Half Day'], true)) {
+        if (in_array($storedStatus, [AttendanceStatus::OnLeave->value, AttendanceStatus::Holiday->value, AttendanceStatus::HalfDay->value], true)) {
             return $this->result($storedStatus, null, $workMinutes, $scheduledStart, $scheduledEnd, $isDayOff, false, false, $overtimeMinutes);
         }
 
@@ -251,18 +252,19 @@ class AttendanceStatusCalculator
         // the day is On Leave — never Absent, never missing a time in, so no absent penalty
         // (AttendancePenaltyReader reads these same days). Read only: nothing is written to
         // the attendance row. Someone who came in anyway is worked out from their time in.
-        if (! $checkIn && $this->timeOffOn($staff->id, $date)) {
-            return $this->result('On Leave', null, null, $scheduledStart, $scheduledEnd, $isDayOff, false, false);
+        // (A staff member not saved yet has no leave dates.)
+        if (! $checkIn && $staff->id && $this->timeOffOn((int) $staff->id, $date)) {
+            return $this->result(AttendanceStatus::OnLeave->value, null, null, $scheduledStart, $scheduledEnd, $isDayOff, false, false);
         }
 
-        if ($storedStatus === 'Absent' && ! $checkIn) {
-            return $this->result('Absent', null, null, $scheduledStart, $scheduledEnd, $isDayOff, true, false);
+        if ($storedStatus === AttendanceStatus::Absent->value && ! $checkIn) {
+            return $this->result(AttendanceStatus::Absent->value, null, null, $scheduledStart, $scheduledEnd, $isDayOff, true, false);
         }
 
         // Marked Present by hand with no times (the system always has a time in when it says Present):
         // that is the manager's decision, kept as it is.
-        if ($storedStatus === 'Present' && ! $checkIn) {
-            return $this->result('Present', null, null, $scheduledStart, $scheduledEnd, $isDayOff, false, false);
+        if ($storedStatus === AttendanceStatus::Present->value && ! $checkIn) {
+            return $this->result(AttendanceStatus::Present->value, null, null, $scheduledStart, $scheduledEnd, $isDayOff, false, false);
         }
 
         // Checked in — a real fact, computed regardless of whether a
@@ -273,12 +275,12 @@ class AttendanceStatusCalculator
             // see FrontOfficeAttendanceService::checkIn) is stored as 'Fill
             // In' and must pass through as-is; every other stored status
             // here is recomputed fresh from the check-in fact.
-            $status = $storedStatus === 'Fill In' ? 'Fill In' : 'Present';
+            $status = $storedStatus === AttendanceStatus::FillIn->value ? AttendanceStatus::FillIn->value : AttendanceStatus::Present->value;
 
             // A fill-in came in to cover, not for their own shift — never Late.
-            if ($status !== 'Fill In' && $scheduledStart && $checkIn->gt($scheduledStart->copy()->addMinutes($graceMinutes))) {
+            if ($status !== AttendanceStatus::FillIn->value && $scheduledStart && $checkIn->gt($scheduledStart->copy()->addMinutes($graceMinutes))) {
                 $lateMinutes = (int) $scheduledStart->diffInMinutes($checkIn);
-                $status = 'Late';
+                $status = AttendanceStatus::Late->value;
             }
 
             if (! $checkOut) {
@@ -322,7 +324,7 @@ class AttendanceStatusCalculator
         // Only becomes Absent once the shift/day has actually passed —
         // never just because there's no check-in yet.
         if ($this->dayHasEnded($date, $scheduledEnd, $now)) {
-            return $this->result('Absent', null, null, $scheduledStart, $scheduledEnd, $isDayOff, true, false);
+            return $this->result(AttendanceStatus::Absent->value, null, null, $scheduledStart, $scheduledEnd, $isDayOff, true, false);
         }
 
         return $this->result(null, null, null, $scheduledStart, $scheduledEnd, $isDayOff, false, false);

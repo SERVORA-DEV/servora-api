@@ -14,11 +14,6 @@ class BillingAdjustment extends Model
 {
     use HasUuids;
 
-    public const PENDING = 'pending';
-    public const APPLIED = 'applied';
-    public const DECLINED = 'declined';
-    public const WITHDRAWN = 'withdrawn';
-
     protected $fillable = [
         'uuid',
         'spa_business_id',
@@ -43,7 +38,7 @@ class BillingAdjustment extends Model
         'refund_policy_id',
         'refund_policy_name',
         'refund_policy_rule',
-        // Who it comes out of, as the policy said (App\Support\RefundCharge),
+        // Who it comes out of, as the policy said (App\Support\Billing\RefundCharge),
         // and what came off staff earnings (StaffRefundCharge::ready).
         'charge_to',
         'staff_share',

@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\AttendanceKept;
+use App\Support\Staff\AttendanceKept;
 use PHPUnit\Framework\TestCase;
 
 // An attendance day stays as it turned out.

@@ -6,10 +6,11 @@ use App\Models\AuditLog;
 use App\Models\User;
 use App\Models\UserPermission;
 use App\Repository\AuditLogRepository;
-use App\Service\NotificationService;
-use App\Support\AdminPermissions;
+use App\Service\Notifications\NotificationService;
+use App\Support\Access\AdminPermissions;
 use Database\Seeders\DatabaseSeeder;
 use Database\Seeders\ServiceTemplateSeeder;
+use Database\Seeders\SubscriptionPlanSeeder;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -27,8 +28,7 @@ class PrimaryAdministratorTest extends TestCase
         config(['database.default' => 'sqlite', 'database.connections.sqlite.database' => ':memory:', 'database.connections.sqlite.url' => null]);
         config(['admin_access.allowed_ips' => []]);
         DB::purge('sqlite');
-        (require database_path('migrations/2026_07_17_063713_create_users_table.php'))->up();
-        Schema::table('users', fn (Blueprint $t) => $t->string('audience')->default('web'));
+        (require database_path('migrations/2026_01_01_000120_create_users_table.php'))->up();
         Schema::create('staff', function (Blueprint $t) {
             $t->id(); $t->foreignId('user_id')->nullable(); $t->softDeletes();
         });
@@ -37,8 +37,7 @@ class PrimaryAdministratorTest extends TestCase
             foreach (AdminPermissions::keys() as $key) $t->boolean($key)->default(false);
             $t->timestamps();
         });
-        (require database_path('migrations/2026_07_17_063802_create_personal_access_tokens_table.php'))->up();
-        $this->migration()->up();
+        (require database_path('migrations/2026_01_01_000080_create_personal_access_tokens_table.php'))->up();
 
         $audit = Mockery::mock(AuditLogRepository::class)->makePartial();
         $audit->shouldReceive('recordAdminAction')->andReturn(new AuditLog());
@@ -46,11 +45,6 @@ class PrimaryAdministratorTest extends TestCase
         $notifications = Mockery::mock(NotificationService::class);
         $notifications->shouldReceive('administratorCreated')->andReturnNull();
         app()->instance(NotificationService::class, $notifications);
-    }
-
-    private function migration(): \Illuminate\Database\Migrations\Migration
-    {
-        return require database_path('migrations/2026_11_19_090000_protect_primary_administrator.php');
     }
 
     private function admin(bool $primary = false, bool $fullAccess = true): User
@@ -72,25 +66,11 @@ class PrimaryAdministratorTest extends TestCase
         return "/api/system/admin/user-management/{$user->uuid}";
     }
 
-    public function test_migration_marks_only_the_original_admin_regardless_of_email_or_creation_date_edits(): void
-    {
-        $this->migration()->down();
-        User::create(['role' => 'business_owner', 'email' => 'owner@example.test', 'password' => 'Test-password1']);
-        $original = $this->admin();
-        $original->update(['email' => 'renamed@example.test', 'created_at' => now()->addDay()]);
-        $later = $this->admin();
-        $later->update(['email' => 'admin@servora.com', 'created_at' => now()->subYear()]);
-
-        $this->migration()->up();
-
-        $this->assertTrue($original->fresh()->isPrimaryAdmin());
-        $this->assertFalse($later->fresh()->isPrimaryAdmin());
-        $this->assertSame(1, User::where('is_primary_admin', true)->count());
-    }
-
     public function test_fresh_seed_and_reseeding_keep_the_same_primary_after_an_email_change(): void
     {
         $seeder = Mockery::mock(DatabaseSeeder::class)->makePartial();
+        // The seeders it calls (the plans, the service templates) are their own concern here.
+        $seeder->shouldReceive('call')->with(SubscriptionPlanSeeder::class)->twice();
         $seeder->shouldReceive('call')->with(ServiceTemplateSeeder::class)->twice();
         $seeder->run();
         $primary = User::where('is_primary_admin', true)->firstOrFail();

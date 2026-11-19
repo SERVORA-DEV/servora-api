@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AccountStatus;
 use App\Http\Resources\AccountResource;
 use App\Models\AccountBranch;
 use App\Models\SpaBranch;
@@ -11,8 +12,8 @@ use App\Models\User;
 use App\Repository\Business\AccountRepository;
 use App\Repository\Business\StaffRepository;
 use App\Repository\SpaBusinessRepository;
-use App\Service\PlanFitService;
-use App\Support\AccountScope;
+use App\Service\Subscription\PlanFitService;
+use App\Support\Access\AccountScope;
 use App\Support\AppCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Collection;
@@ -31,26 +32,13 @@ use Illuminate\Support\Str;
 // from an employee record (staff_uuid), as it always was.
 class AccountService
 {
-    private AccountRepository $accountRepository;
-
-    private StaffRepository $staffRepository;
-
-    private SpaBusinessRepository $spaBusinessRepository;
-
-    private BusinessSettingsService $businessSettingsService;
-
     public function __construct(
-        AccountRepository $accountRepository,
-        StaffRepository $staffRepository,
-        SpaBusinessRepository $spaBusinessRepository,
-        BusinessSettingsService $businessSettingsService,
+        private AccountRepository $accountRepository,
+        private StaffRepository $staffRepository,
+        private SpaBusinessRepository $spaBusinessRepository,
+        private BusinessSettingsService $businessSettingsService,
         private PlanFitService $planFit,
-    ) {
-        $this->accountRepository = $accountRepository;
-        $this->staffRepository = $staffRepository;
-        $this->spaBusinessRepository = $spaBusinessRepository;
-        $this->businessSettingsService = $businessSettingsService;
-    }
+    ) {}
 
     public function listAccounts(User $user, int $perPage = 15)
     {
@@ -115,7 +103,7 @@ class AccountService
                 'username' => $payload['username'],
                 'email' => $payload['email'],
                 'password' => $payload['password'],
-                'account_status' => 'Active',
+                'account_status' => AccountStatus::Active->value,
             ]);
             $this->accountRepository->syncBranches($account, $branches->map(fn ($b) => ['spa_branch_id' => $b['branch']->id, 'level' => $b['level']])->all());
 
@@ -217,7 +205,7 @@ class AccountService
 
         // Suspended by the plan: it comes back through bringBack() (which
         // checks there is room), not by setting the status by hand.
-        if ($account->plan_hold_at && ($payload['account_status'] ?? null) === 'Active') {
+        if ($account->plan_hold_at && ($payload['account_status'] ?? null) === AccountStatus::Active->value) {
             return response()->json([
                 'message' => 'This login is on hold because your plan has no room for it. Upgrade, or bring it back once there is room.',
                 'code' => 'PLAN_HOLD',
@@ -330,10 +318,10 @@ class AccountService
         }
 
         return response()->json([
-            'message' => "Your {$plan->name} plan allows ".((int) $plan->max_user_accounts === 1 ? '1 staff login' : "{$plan->max_user_accounts} staff logins").'. '.(\App\Support\PlanTerms::offers($plan, 'account') ? 'Add an account slot or upgrade to add another.' : 'Upgrade to add another.'),
+            'message' => "Your {$plan->name} plan allows ".((int) $plan->max_user_accounts === 1 ? '1 staff login' : "{$plan->max_user_accounts} staff logins").'. '.(\App\Support\Platform\PlanTerms::offers($plan, 'account') ? 'Add an account slot or upgrade to add another.' : 'Upgrade to add another.'),
             'code' => 'PLAN_LIMIT',
             // The plan sells extra account slots (SubscriptionAddonService).
-            'can_add_slots' => \App\Support\PlanTerms::offers($plan, 'account'),
+            'can_add_slots' => \App\Support\Platform\PlanTerms::offers($plan, 'account'),
             'slot_kind' => 'account',
         ], 422);
     }
@@ -366,7 +354,7 @@ class AccountService
             'username' => $payload['username'],
             'email' => $payload['email'],
             'password' => $payload['password'],
-            'account_status' => 'Active',
+            'account_status' => AccountStatus::Active->value,
         ]);
         $this->accountRepository->assignStaff($account, $staff);
         $defaults = $this->businessSettingsService->settingsFor($business)->rolePermissions($role);

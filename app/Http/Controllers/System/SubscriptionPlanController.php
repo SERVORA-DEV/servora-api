@@ -10,18 +10,14 @@ use App\Http\Controllers\Controller;
 
 class SubscriptionPlanController extends Controller
 {
-    private SubscriptionPlanService $subscriptionPlanService;
-
-    public function __construct(SubscriptionPlanService $subscriptionPlanService)
-    {
-        $this->subscriptionPlanService = $subscriptionPlanService;
-    }
+    public function __construct(
+        private SubscriptionPlanService $subscriptionPlanService,
+    ) {}
 
     public function index(Request $request)
     {
         return $this->subscriptionPlanService->listSubscriptionPlan($request->input('per_page', 15));
     }   
-
 
     //Create a Subscription Plan
     public function store(SubscriptionPlanRequest $request)
@@ -48,14 +44,6 @@ class SubscriptionPlanController extends Controller
 
         return response()->json(['message' => 'Deleted successfully'], 200);
     }
-    
-    public function restore(string $uuid)
-    {
-        return $this->subscriptionPlanService->restoreSubscriptionPlan($uuid);
-    }
-
-
-
 
     //Display Active Subscription Plans
     public function displayActivePlans(Request $request)

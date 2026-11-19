@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Services\ImageUploadService;
+use App\Service\Uploads\ImageUploadService;
 use Cloudinary\Cloudinary;
 use Tests\TestCase;
 

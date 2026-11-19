@@ -2,8 +2,8 @@
 
 namespace App\Http\Resources;
 
-use App\Services\ImageUploadService;
-use App\Support\BranchHoursCalculator;
+use App\Service\Uploads\ImageUploadService;
+use App\Support\Branches\BranchHoursCalculator;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;

@@ -2,8 +2,9 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\AppointmentStatus;
 use App\Models\Appointment;
-use App\Support\ReminderPolicy;
+use App\Support\Visits\ReminderPolicy;
 use App\Service\Business\ClientNotifier;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
@@ -22,7 +23,7 @@ class SendAppointmentReminders extends Command
         $sent = 0;
 
         Appointment::query()
-            ->where('status', Appointment::STATUS_SCHEDULED)
+            ->where('status', AppointmentStatus::Scheduled->value)
             ->whereNull('reminder_sent_at')
             ->whereBetween('appointment_date', [now()->toDateString(), now()->addHours(self::MAX_LEAD_HOURS)->toDateString()])
             ->whereHas('client', fn ($q) => $q->whereNotNull('user_id'))

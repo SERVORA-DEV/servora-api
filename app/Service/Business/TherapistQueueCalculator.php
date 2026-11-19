@@ -2,13 +2,15 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentServiceStatus;
+use App\Enums\AssignmentStatus;
+use App\Enums\StaffStatus;
 use App\Models\Attendance;
 use App\Models\SpaBranch;
-use App\Models\SpaBusiness;
 use App\Models\Staff;
 use App\Models\StaffTimeOff;
 use App\Models\TherapistAssignment;
-use App\Support\RotationTurn;
+use App\Support\Visits\RotationTurn;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -50,7 +52,7 @@ class TherapistQueueCalculator
     {
         $therapists ??= Staff::where('spa_branch_id', $branchId)
             ->where('role', 'therapist')
-            ->where('status', 'active')
+            ->where('status', StaffStatus::Active->value)
             ->orderBy('first_name')
             ->get();
 
@@ -61,7 +63,7 @@ class TherapistQueueCalculator
         $staffIds = $therapists->pluck('id')->all();
 
         $attendanceByStaffId = Attendance::whereIn('staff_id', $staffIds)
-            ->where('attendance_date', \App\Support\BusinessDay::attendanceDate($branchId, $date))
+            ->where('attendance_date', \App\Support\Branches\BusinessDay::attendanceDate($branchId, $date))
             ->get()
             ->keyBy('staff_id');
 
@@ -91,7 +93,7 @@ class TherapistQueueCalculator
                     'uuid' => $staff->uuid,
                     'name' => trim("{$staff->first_name} {$staff->last_name}"),
                     'first_name' => $staff->first_name,
-                    // What they do, main one first (App\Support\StaffSpecialty).
+                    // What they do, main one first (App\Support\Staff\StaffSpecialty).
                     'specialties' => $staff->specialtyList(),
                     'position' => null,
                     'rotation_status' => $activeStatusByStaffId[$staff->id] ?? 'free',
@@ -136,7 +138,7 @@ class TherapistQueueCalculator
     /**
      * The first row in the queue who can take the next client, or null when
      * everyone is mid-service. Someone assigned to a booking that hasn't
-     * started is still next up — see App\Support\RotationTurn.
+     * started is still next up — see App\Support\Visits\RotationTurn.
      */
     public function nextUp(Collection $rows): ?array
     {
@@ -182,7 +184,7 @@ class TherapistQueueCalculator
     {
         return TherapistAssignment::query()
             ->whereIn('staff_id', $staffIds)
-            ->where('assignment_status', 'Completed')
+            ->where('assignment_status', AssignmentStatus::Completed->value)
             ->whereDate('completed_at', $date)
             ->selectRaw('staff_id, MAX(completed_at) as last_completed_at')
             ->groupBy('staff_id')
@@ -204,7 +206,7 @@ class TherapistQueueCalculator
      * service moves a therapist to the back. A client who cancels or no-shows
      * therefore never costs their therapist a turn. And only 'in_service'
      * takes them out of "next up": someone merely assigned is standing free
-     * (App\Support\RotationTurn).
+     * (App\Support\Visits\RotationTurn).
      *
      * @return array<int, string>
      */
@@ -212,12 +214,12 @@ class TherapistQueueCalculator
     {
         $rows = TherapistAssignment::query()
             ->whereIn('staff_id', $staffIds)
-            ->whereIn('assignment_status', ['In Progress', 'Assigned'])
+            ->whereIn('assignment_status', [AssignmentStatus::InProgress->value, AssignmentStatus::Assigned->value])
             // The parent service must still be live. Cancelling an appointment
             // already cancels its Assigned rows (see cancelAppointment), but
             // guarding on the service too means a stray row can never pin a
             // therapist as occupied when there's nothing left to do.
-            ->whereHas('appointmentService', fn ($q) => $q->whereIn('status', ['Pending', 'In Progress']))
+            ->whereHas('appointmentService', fn ($q) => $q->whereIn('status', [AppointmentServiceStatus::Pending->value, AppointmentServiceStatus::InProgress->value]))
             ->whereHas('appointmentService.appointment', fn ($q) => $q->whereDate('appointment_date', $date))
             ->get(['staff_id', 'assignment_status']);
 
@@ -233,8 +235,8 @@ class TherapistQueueCalculator
             // In Progress outranks Assigned: a therapist mid-service who also
             // has a later booking lined up is busy right now, which is the
             // more useful thing for the front desk to see.
-            if ($row->assignment_status === 'In Progress' || ! isset($statuses[$row->staff_id])) {
-                $statuses[$row->staff_id] = $row->assignment_status === 'In Progress' ? 'in_service' : 'assigned';
+            if ($row->assignment_status === AssignmentStatus::InProgress->value || ! isset($statuses[$row->staff_id])) {
+                $statuses[$row->staff_id] = $row->assignment_status === AssignmentStatus::InProgress->value ? 'in_service' : 'assigned';
             }
         }
 

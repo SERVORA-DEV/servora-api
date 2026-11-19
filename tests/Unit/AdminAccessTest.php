@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\AdminAccess;
+use App\Support\Access\AdminAccess;
 use PHPUnit\Framework\TestCase;
 
 class AdminAccessTest extends TestCase

@@ -2,13 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\PushSubscriptionRequest;
+use App\Http\Requests\PushUnsubscribeRequest;
 use App\Models\PushSubscription;
-use App\Service\PushSender;
-use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
+use App\Service\Notifications\PushSender;
 
 // The signed-in user's browsers and phones that get a pop-up for each new
-// notification while Servora isn't open (App\Service\PushSender). Any role:
+// notification while Servora isn't open (App\Service\Notifications\PushSender). Any role:
 // the web app's staff and administrators register browsers, the client app
 // registers phones.
 class PushSubscriptionController extends Controller
@@ -24,16 +24,9 @@ class PushSubscriptionController extends Controller
 
     // One row per browser or phone: signing in as someone else there moves
     // it to them, so the last account signed in is the one it pops up for.
-    public function store(Request $request)
+    public function store(PushSubscriptionRequest $request)
     {
-        $data = $request->validate([
-            'kind' => ['required', Rule::in([PushSubscription::KIND_WEB, PushSubscription::KIND_FCM])],
-            'endpoint' => ['required', 'string', 'max:2000'],
-            'keys.p256dh' => ['required_if:kind,web', 'nullable', 'string', 'max:200'],
-            'keys.auth' => ['required_if:kind,web', 'nullable', 'string', 'max:100'],
-            // The device's Notification sound setting, re-sent when it changes.
-            'quiet' => ['sometimes', 'boolean'],
-        ]);
+        $data = $request->validated();
         if ($data['kind'] === PushSubscription::KIND_WEB && ! str_starts_with($data['endpoint'], 'https://')) {
             return response()->json(['message' => 'A browser push address must be https.'], 422);
         }
@@ -55,9 +48,9 @@ class PushSubscriptionController extends Controller
     }
 
     // Turned off, or signing out: only ever the caller's own row.
-    public function destroy(Request $request)
+    public function destroy(PushUnsubscribeRequest $request)
     {
-        $data = $request->validate(['endpoint' => ['required', 'string', 'max:2000']]);
+        $data = $request->validated();
 
         PushSubscription::where('endpoint_hash', PushSubscription::hashOf($data['endpoint']))
             ->where('user_id', $request->user()->id)

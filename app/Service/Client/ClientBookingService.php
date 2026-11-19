@@ -2,23 +2,28 @@
 
 namespace App\Service\Client;
 
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
+use App\Enums\QueueStatus;
+use App\Enums\ReviewStatus;
+use App\Enums\StaffStatus;
 use App\Http\Resources\Client\ClientAppointmentResource;
 use App\Http\Resources\Client\ClientReviewResource;
 use App\Models\Appointment;
 use App\Models\Attendance;
 use App\Models\Client;
 use App\Models\Queue;
-use App\Repository\Business\QueueRepository;
 use App\Models\Review;
 use App\Models\SpaBranch;
 use App\Models\Staff;
 use App\Models\User;
+use App\Repository\Business\QueueRepository;
 use App\Service\Business\AppointmentAvailabilityService;
-use App\Service\Business\AppointmentService;
+use App\Service\Business\AppointmentBookingService;
 use App\Service\Business\MarketplaceReadiness;
 use App\Service\Business\StaffNotifier;
-use App\Support\BusinessDay;
-use App\Support\Suspension;
+use App\Support\Branches\BusinessDay;
+use App\Support\Platform\Suspension;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Cache;
@@ -31,14 +36,14 @@ use Illuminate\Support\Facades\DB;
 // lookup is scoped through that, and anything else 404s (not 403s), the
 // same anti-enumeration posture as the public branch lookups.
 //
-// Cancel and reschedule reuse AppointmentService::performCancel/
+// Cancel and reschedule reuse AppointmentBookingService::performCancel/
 // performReschedule, so a client can never leave a booking in a state the
 // front desk couldn't have; the client-only rules (own booking, still
 // Scheduled, not already started, therapist still free) are checked here
 // first.
 class ClientBookingService
 {
-    // Public: AppointmentService::createClientAppointment returns the new
+    // Public: AppointmentBookingService::createClientAppointment returns the new
     // booking in this same shape.
     public const RELATIONS = [
         'branch.business',
@@ -53,7 +58,7 @@ class ClientBookingService
     ];
 
     public function __construct(
-        private AppointmentService $appointmentService,
+        private AppointmentBookingService $booking,
         private AppointmentAvailabilityService $availabilityService,
         private StaffNotifier $staffNotifier,
         private BookingSlotService $slotService,
@@ -94,15 +99,15 @@ class ClientBookingService
 
         switch ($scope) {
             case 'upcoming':
-                $query->whereIn('status', [Appointment::STATUS_SCHEDULED, Appointment::STATUS_CHECKED_IN, Appointment::STATUS_IN_SERVICE])
+                $query->whereIn('status', [AppointmentStatus::Scheduled->value, AppointmentStatus::CheckedIn->value, AppointmentStatus::InService->value])
                     ->orderBy('appointment_date')->orderBy('appointment_time');
                 break;
             case 'past':
-                $query->whereIn('status', [Appointment::STATUS_COMPLETED, Appointment::STATUS_NO_SHOW])
+                $query->whereIn('status', [AppointmentStatus::Completed->value, AppointmentStatus::NoShow->value])
                     ->orderByDesc('appointment_date')->orderByDesc('appointment_time');
                 break;
             case 'cancelled':
-                $query->where('status', Appointment::STATUS_CANCELLED)
+                $query->where('status', AppointmentStatus::Cancelled->value)
                     ->orderByDesc('appointment_date')->orderByDesc('appointment_time');
                 break;
             default:
@@ -126,7 +131,7 @@ class ClientBookingService
                 return response()->json(['message' => $problem], 422);
             }
 
-            $error = $this->appointmentService->performCancel($appointment, $reason ?: 'Cancelled by client');
+            $error = $this->booking->performCancel($appointment, $reason ?: 'Cancelled by client');
             if ($error) {
                 return $error;
             }
@@ -152,13 +157,13 @@ class ClientBookingService
         $branch = SpaBranch::with('business')->where('uuid', $branchUuid)->firstOrFail();
         $policy = BookingPolicy::for($branch);
         $client = Client::where('spa_business_id', $branch->spa_business_id)->where('user_id', $user->id)->first();
-        $missed = $client ? $this->appointmentService->noShowCount($client->id) : 0;
+        $missed = $client ? $this->booking->noShowCount($client->id) : 0;
 
         $dayLimit = $policy['max_bookings_per_client_per_day'];
         $busy = $client
             ? Appointment::where('client_id', $client->id)
                 ->whereDate('appointment_date', '>=', BookingPolicy::now()->toDateString())
-                ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW])
+                ->whereNotIn('status', [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value])
                 ->pluck('appointment_date')->map(fn ($d) => Carbon::parse($d)->toDateString())
                 ->countBy()->filter(fn ($n) => $n >= $dayLimit)->keys()->values()
             : collect();
@@ -168,7 +173,7 @@ class ClientBookingService
         $upcoming = $client
             ? Appointment::with('branch')->where('client_id', $client->id)
                 ->whereDate('appointment_date', '>=', BookingPolicy::now()->toDateString())
-                ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW])
+                ->whereNotIn('status', [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value])
                 ->get()
                 ->map(fn ($a) => [
                     'date' => Carbon::parse($a->appointment_date)->toDateString(),
@@ -204,8 +209,8 @@ class ClientBookingService
             }
             // Not onto a day that already holds the most bookings one client may have.
             $dayLimit = BookingPolicy::for($branch)['max_bookings_per_client_per_day'];
-            if ($this->appointmentService->clientBookingsOn($user, $branch->spa_business_id, $payload['appointment_date'], $appointment->id) >= $dayLimit) {
-                return response()->json(['message' => AppointmentService::dayLimitMessage($dayLimit, $payload['appointment_date'])], 422);
+            if ($this->booking->clientBookingsOn($user, $branch->spa_business_id, $payload['appointment_date'], $appointment->id) >= $dayLimit) {
+                return response()->json(['message' => AppointmentBookingService::dayLimitMessage($dayLimit, $payload['appointment_date'])], 422);
             }
 
             // Same hard gate as booking: a therapist the client asked for
@@ -213,7 +218,7 @@ class ClientBookingService
             // move is refused rather than silently leaving them unassigned.
             $duration = max($this->availabilityService->estimatedDurationMinutes($appointment), 30);
             $staffIds = $appointment->services
-                ->flatMap(fn ($s) => $s->therapistAssignments->where('assignment_status', 'Assigned')->pluck('staff_id'))
+                ->flatMap(fn ($s) => $s->therapistAssignments->where('assignment_status', AssignmentStatus::Assigned->value)->pluck('staff_id'))
                 ->unique();
 
             foreach ($staffIds as $staffId) {
@@ -243,13 +248,13 @@ class ClientBookingService
                 $staffIds->isNotEmpty() ? Staff::find($staffIds->first()) : null,
                 $appointment->id,
                 $appointment->isHomeService(),
-                \App\Support\ServiceParts::needOf($appointment->loadMissing('services.serviceVariant')),
+                \App\Support\Catalog\ServiceParts::needOf($appointment->loadMissing('services.serviceVariant')),
             );
             if ($slotProblem) {
                 return response()->json(['message' => $slotProblem], 422);
             }
 
-            $error = $this->appointmentService->performReschedule($appointment, [
+            $error = $this->booking->performReschedule($appointment, [
                 'appointment_date' => $payload['appointment_date'],
                 'appointment_time' => $payload['appointment_time'],
             ]);
@@ -283,8 +288,8 @@ class ClientBookingService
         $ticket = $appointment->queue;
 
         if (! $ticket) {
-            // Called by the spa (AppointmentService::callQueue) and not checked in yet.
-            $called = $appointment->status === Appointment::STATUS_SCHEDULED
+            // Called by the spa (CheckInService::callQueue) and not checked in yet.
+            $called = $appointment->status === AppointmentStatus::Scheduled->value
                 ? Cache::get(Queue::calledKey($appointment->id))
                 : null;
 
@@ -294,7 +299,7 @@ class ClientBookingService
                 'status' => $appointment->status,
                 'called' => (bool) $called,
                 'called_at' => $called,
-                'message' => $appointment->status === Appointment::STATUS_SCHEDULED
+                'message' => $appointment->status === AppointmentStatus::Scheduled->value
                     ? ($called
                         ? 'The spa is ready for you. Please come in and check in with the Front Officer.'
                         : 'You join the queue when you check in with the Front Officer.')
@@ -312,13 +317,13 @@ class ClientBookingService
         $ahead = $this->queueRepository->aheadOf($ticket, $walkInsFirst);
 
         $nowServing = (clone $sameDay)
-            ->whereIn('queue_status', ['Called', 'Serving'])
+            ->whereIn('queue_status', [QueueStatus::Called->value, QueueStatus::Serving->value])
             ->orderByDesc('called_at')
             ->value('queue_number');
 
         // Therapists actually in today (checked in, not out) share the line;
         // before anyone has checked in, fall back to the active roster.
-        $roster = Staff::where('spa_branch_id', $ticket->spa_branch_id)->where('role', 'therapist')->where('status', 'active');
+        $roster = Staff::where('spa_branch_id', $ticket->spa_branch_id)->where('role', 'therapist')->where('status', StaffStatus::Active->value);
         $inToday = Attendance::whereIn('staff_id', (clone $roster)->select('id'))
             ->whereDate('attendance_date', BusinessDay::attendanceDate($ticket->spa_branch_id, $date))
             ->whereNotNull('check_in_at')
@@ -329,7 +334,7 @@ class ClientBookingService
             ? max($this->availabilityService->estimatedDurationMinutes($q->appointment), 30)
             : 30);
 
-        $waiting = in_array($ticket->queue_status, ['Waiting', 'Called'], true);
+        $waiting = in_array($ticket->queue_status, [QueueStatus::Waiting->value, QueueStatus::Called->value], true);
 
         return response()->json(['data' => [
             'appointment_uuid' => $appointment->uuid,
@@ -353,7 +358,7 @@ class ClientBookingService
     {
         $appointment = $this->findMine($user, $uuid);
 
-        if ($appointment->status !== Appointment::STATUS_COMPLETED) {
+        if ($appointment->status !== AppointmentStatus::Completed->value) {
             return response()->json(['message' => 'You can review a visit once it is completed.'], 422);
         }
 
@@ -375,7 +380,7 @@ class ClientBookingService
                 'rating' => $payload['rating'],
                 'comment' => $payload['comment'] ?? null,
                 'is_anonymous' => (bool) ($payload['is_anonymous'] ?? false),
-                'status' => 'Published',
+                'status' => ReviewStatus::Published->value,
                 'reviewed_at' => now(),
             ]);
 

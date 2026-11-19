@@ -7,9 +7,9 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
 /**
- * Single place every outbound OTP mail goes through, shared by UserService
- * (registration/password-reset OTPs) and SecurityService (personal-email
- * verification OTP). SMTP is a network call to a third party that can fail
+ * Single place every outbound OTP mail goes through, shared by the
+ * Auth\RegistrationService, PasswordResetService and SignInService codes
+ * and SecurityService (personal-email verification OTP). SMTP is a network call to a third party that can fail
  * for reasons that have nothing to do with the caller — a wrong app
  * password, Gmail's daily cap, a dropped connection — and none of those
  * should surface as a 500 on a request whose database work already

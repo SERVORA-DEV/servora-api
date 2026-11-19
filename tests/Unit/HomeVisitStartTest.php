@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\HomeVisitStart;
+use App\Support\Visits\HomeVisitStart;
 use Carbon\Carbon;
 use PHPUnit\Framework\TestCase;
 
@@ -79,10 +79,10 @@ class HomeVisitStartTest extends TestCase
     {
         $day = Carbon::parse('2026-10-20');
         $this->assertSame('This booking was cancelled.', HomeVisitStart::problem('cancelled', $day, $day));
-        $this->assertSame('This booking was marked as a no-show. Call the front desk.', HomeVisitStart::problem('no_show', $day, $day));
+        $this->assertSame('This booking was marked as a no-show. Call the Front Officer.', HomeVisitStart::problem('no_show', $day, $day));
         $this->assertSame('This visit is already finished.', HomeVisitStart::problem('completed', $day, $day));
         $this->assertSame('This visit has already started.', HomeVisitStart::problem('in_service', $day, $day));
-        $this->assertSame('This booking can\'t be started. Call the front desk.', HomeVisitStart::problem('something_new', $day, $day));
+        $this->assertSame('This booking can\'t be started. Call the Front Officer.', HomeVisitStart::problem('something_new', $day, $day));
     }
 
     public function test_the_state_of_the_booking_is_said_before_the_day(): void

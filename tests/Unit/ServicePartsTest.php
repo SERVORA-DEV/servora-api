@@ -3,8 +3,8 @@
 namespace Tests\Unit;
 
 use App\Http\Requests\Business\ServiceRequest;
-use App\Support\AutoAssignment;
-use App\Support\CommissionShare;
+use App\Support\Visits\AutoAssignment;
+use App\Support\Staff\CommissionShare;
 use Illuminate\Support\Facades\Cache;
 use Tests\TestCase;
 

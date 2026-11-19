@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\ServiceAddon;
+use App\Support\Catalog\ServiceAddon;
 use PHPUnit\Framework\TestCase;
 
 // Add-ons: which services one goes with, why one can't be added, and what it

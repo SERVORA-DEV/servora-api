@@ -2,11 +2,12 @@
 
 namespace App\Http\Controllers\System;
 
+use App\Exceptions\NotPermitted;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\System\OwnerVerificationRejectRequest;
 use App\Service\System\OwnerVerificationService;
 use App\Service\System\OwnerVerificationChecklistService;
-use App\Support\AdminPermissions;
+use App\Support\Access\AdminPermissions;
 use Illuminate\Http\Request;
 
 class OwnerVerificationController extends Controller
@@ -25,8 +26,8 @@ class OwnerVerificationController extends Controller
 
     public function saveChecklist(Request $request, string $uuid, string $part, OwnerVerificationChecklistService $checklists)
     {
-        abort_unless(AdminPermissions::allows($request->user(), 'spa_business_approve')
-            || AdminPermissions::allows($request->user(), 'spa_business_reject'), 403, 'You do not have permission to review verifications.');
+        throw_unless(AdminPermissions::allows($request->user(), 'spa_business_approve')
+            || AdminPermissions::allows($request->user(), 'spa_business_reject'), NotPermitted::class, 'You do not have permission to review verifications.');
         return response()->json(['data' => $checklists->save($request->user(), $uuid, $part, $request)]);
     }
 

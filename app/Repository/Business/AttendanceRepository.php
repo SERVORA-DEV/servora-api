@@ -2,6 +2,7 @@
 
 namespace App\Repository\Business;
 
+use App\Enums\StaffStatus;
 use App\Models\Attendance;
 use App\Models\Staff;
 use App\Models\StaffTransferRequest;
@@ -20,7 +21,7 @@ class AttendanceRepository
             'attendance' => fn ($query) => $this->atBranches($query->where('attendance_date', $date), $spaBranchIds),
         ])
             ->whereIn('spa_branch_id', $spaBranchIds)
-            ->where('status', 'active')
+            ->where('status', StaffStatus::Active->value)
             ->orderBy('first_name')
             ->get();
     }
@@ -73,14 +74,14 @@ class AttendanceRepository
             'attendance' => fn ($query) => $this->atBranches($query->whereBetween('attendance_date', [$dateFrom, $dateTo]), $spaBranchIds),
         ])
             ->whereIn('spa_branch_id', $spaBranchIds)
-            ->where('status', 'active')
+            ->where('status', StaffStatus::Active->value)
             ->orderBy('first_name')
             ->get();
     }
 
     // Records at these branches: by the branch each was recorded at, so a
     // staff member who moved keeps their old days at the old branch. A record
-    // from before the branch was kept follows the person (App\Support\History).
+    // from before the branch was kept follows the person (App\Support\Activity\History).
     private function recordedAt($query, array $spaBranchIds)
     {
         if (! StaffTransferRequest::ready()) {

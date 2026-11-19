@@ -2,19 +2,24 @@
 
 namespace App\Service\Business;
 
+use App\Enums\ChangeRequestStatus;
+use App\Enums\VerificationStatus;
+use App\Exceptions\ActionRefused;
+use App\Exceptions\NotSetUp;
 use App\Mail\IdentityChangeEmailOtpMail;
 use App\Models\OwnerIdentityChange;
 use App\Models\OwnerIdentityVerification;
+use App\Models\SpaBusiness;
 use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\NotificationRepository;
 use App\Repository\System\AdminUsersRepository;
 use App\Service\Concerns\SendsOtpMail;
-use App\Services\DocumentUploadService;
-use Carbon\Carbon;
+use App\Service\Uploads\DocumentUploadService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 
@@ -46,14 +51,14 @@ class OwnerIdentityChangeService
         $identity = OwnerIdentityVerification::where('user_id', $owner->id)->first();
         $open = $this->ready() ? $this->openFor($owner) : null;
         $last = $this->ready() && ! $open
-            ? OwnerIdentityChange::where('user_id', $owner->id)->whereIn('status', ['Approved', 'Rejected'])->latest('reviewed_at')->first()
+            ? OwnerIdentityChange::where('user_id', $owner->id)->whereIn('status', [ChangeRequestStatus::Approved->value, ChangeRequestStatus::Rejected->value])->latest('reviewed_at')->first()
             : null;
 
         return response()->json(['data' => [
             // The ID on the account now, shown on the profile.
             'current' => [
                 'id_type' => $identity?->id_type,
-                'status' => $identity?->status ?? 'Unregistered',
+                'status' => $identity?->status ?? VerificationStatus::Unregistered->value,
                 'verified_at' => $identity?->verified_at?->toIso8601String(),
             ],
             'request' => $open ? $this->present($open) : null,
@@ -81,7 +86,7 @@ class OwnerIdentityChangeService
         }
 
         $change = $this->openFor($owner);
-        if ($change && $change->status !== 'Draft') {
+        if ($change && $change->status !== ChangeRequestStatus::Draft->value) {
             return response()->json(['message' => 'Your request is with the SERVORA team. Cancel it first to change it.'], 422);
         }
 
@@ -100,7 +105,7 @@ class OwnerIdentityChangeService
 
         $change = $change
             ? tap($change)->update($values)
-            : OwnerIdentityChange::create($values + ['user_id' => $owner->id, 'status' => 'Draft']);
+            : OwnerIdentityChange::create($values + ['user_id' => $owner->id, 'status' => ChangeRequestStatus::Draft->value]);
         $change->setRelation('user', $owner);
 
         $sent = null;
@@ -188,8 +193,8 @@ class OwnerIdentityChangeService
             return response()->json(['message' => 'Take the face scan first.'], 422);
         }
 
-        $change->update(['status' => 'Pending', 'submitted_at' => now()]);
-        $this->auditLogs->record($owner->id, 'owner_identity_changes', $change->id, 'Submit', ['status' => 'Draft'], ['status' => 'Pending'], $request);
+        $change->update(['status' => ChangeRequestStatus::Pending->value, 'submitted_at' => now()]);
+        $this->auditLogs->record($owner->id, 'owner_identity_changes', $change->id, 'Submit', ['status' => ChangeRequestStatus::Draft->value], ['status' => ChangeRequestStatus::Pending->value], $request);
 
         $who = trim("{$owner->first_name} {$owner->last_name}");
         foreach ($this->admins->allAdministrators() as $admin) {
@@ -207,19 +212,19 @@ class OwnerIdentityChangeService
             return response()->json(['message' => 'There is no request to cancel.'], 422);
         }
         $before = $change->status;
-        $change->update(['status' => 'Cancelled', 'email_code_hash' => null]);
-        $this->auditLogs->record($owner->id, 'owner_identity_changes', $change->id, 'Cancel', ['status' => $before], ['status' => 'Cancelled'], $request);
+        $change->update(['status' => ChangeRequestStatus::Cancelled->value, 'email_code_hash' => null]);
+        $this->auditLogs->record($owner->id, 'owner_identity_changes', $change->id, 'Cancel', ['status' => $before], ['status' => ChangeRequestStatus::Cancelled->value], $request);
 
         return response()->json(['message' => 'Request cancelled. Your name and email stay as they are.']);
     }
 
     // ── System administrator ───────────────────────────────────────────
 
-    public function adminList(string $status = 'Pending')
+    public function adminList(string $status = ChangeRequestStatus::Pending->value)
     {
         $rows = OwnerIdentityChange::query()
             ->with(['user:id,uuid,first_name,middle_name,last_name,suffix,email', 'reviewer:id,first_name,last_name'])
-            ->when($status !== 'All', fn ($q) => $q->where('status', $status), fn ($q) => $q->where('status', '!=', 'Draft'))
+            ->when($status !== 'All', fn ($q) => $q->where('status', $status), fn ($q) => $q->where('status', '!=', ChangeRequestStatus::Draft->value))
             ->orderByRaw("CASE WHEN status = 'Pending' THEN 0 ELSE 1 END")
             ->orderByDesc('submitted_at')
             ->limit(200)
@@ -230,7 +235,7 @@ class OwnerIdentityChangeService
 
     public function adminShow(string $uuid)
     {
-        $change = OwnerIdentityChange::with(['user', 'reviewer:id,first_name,last_name'])->where('uuid', $uuid)->where('status', '!=', 'Draft')->firstOrFail();
+        $change = OwnerIdentityChange::with(['user', 'reviewer:id,first_name,last_name'])->where('uuid', $uuid)->where('status', '!=', ChangeRequestStatus::Draft->value)->firstOrFail();
 
         return response()->json(['data' => $this->presentForAdmin($change, true)]);
     }
@@ -239,7 +244,7 @@ class OwnerIdentityChangeService
     {
         return DB::transaction(function () use ($admin, $uuid, $request) {
             $change = OwnerIdentityChange::where('uuid', $uuid)->lockForUpdate()->firstOrFail();
-            if ($change->status !== 'Pending') {
+            if ($change->status !== ChangeRequestStatus::Pending->value) {
                 return response()->json(['message' => 'This request has already been decided.'], 422);
             }
             $owner = User::findOrFail($change->user_id);
@@ -272,7 +277,7 @@ class OwnerIdentityChangeService
                 ]);
             }
 
-            $change->update(['status' => 'Approved', 'reviewed_by' => $admin->id, 'reviewed_at' => now()]);
+            $change->update(['status' => ChangeRequestStatus::Approved->value, 'reviewed_by' => $admin->id, 'reviewed_at' => now()]);
             $this->auditLogs->record($admin->id, 'users', $owner->id, 'Approve', $before, $owner->only(['first_name', 'middle_name', 'last_name', 'suffix', 'email']), $request);
 
             $this->notifications->create($owner->id, 'Name and Email Updated', $emailChanges
@@ -287,11 +292,11 @@ class OwnerIdentityChangeService
     {
         return DB::transaction(function () use ($admin, $uuid, $reason, $request) {
             $change = OwnerIdentityChange::where('uuid', $uuid)->lockForUpdate()->firstOrFail();
-            if ($change->status !== 'Pending') {
+            if ($change->status !== ChangeRequestStatus::Pending->value) {
                 return response()->json(['message' => 'This request has already been decided.'], 422);
             }
-            $change->update(['status' => 'Rejected', 'rejection_reason' => $reason, 'reviewed_by' => $admin->id, 'reviewed_at' => now()]);
-            $this->auditLogs->record($admin->id, 'owner_identity_changes', $change->id, 'Reject', ['status' => 'Pending'], ['status' => 'Rejected', 'rejection_reason' => $reason], $request);
+            $change->update(['status' => ChangeRequestStatus::Rejected->value, 'rejection_reason' => $reason, 'reviewed_by' => $admin->id, 'reviewed_at' => now()]);
+            $this->auditLogs->record($admin->id, 'owner_identity_changes', $change->id, 'Reject', ['status' => ChangeRequestStatus::Pending->value], ['status' => ChangeRequestStatus::Rejected->value, 'rejection_reason' => $reason], $request);
             $this->notifications->create($change->user_id, 'Details Change Not Approved', "Your name or email change wasn't approved: {$reason}", 'Verification');
 
             return response()->json(['message' => 'Rejected. The owner was told why.', 'data' => $this->presentForAdmin($change->fresh(['user', 'reviewer']), true)]);
@@ -311,10 +316,10 @@ class OwnerIdentityChangeService
 
     private function guard(User $owner): void
     {
-        abort_unless($this->ready(), 503, 'Changing your name or email is not set up on this server yet.');
-        abort_unless($owner->role === 'business_owner', 403, 'Only the owner can do this.');
+        throw_unless($this->ready(), NotSetUp::class, 'Changing your name or email is not set up on this server yet.');
+        Gate::forUser($owner)->authorize('changeOwnerDetails', SpaBusiness::class);
         $identity = OwnerIdentityVerification::where('user_id', $owner->id)->first();
-        abort_unless($identity && $identity->status === 'Verified', 422, 'Finish verifying your identity first. You can correct your details there.');
+        throw_unless($identity && $identity->status === VerificationStatus::Verified->value, ActionRefused::class, 'Finish verifying your identity first. You can correct your details there.');
     }
 
     private function openFor(User $owner): ?OwnerIdentityChange
@@ -327,8 +332,8 @@ class OwnerIdentityChangeService
     {
         $this->guard($owner);
         $change = $this->openFor($owner);
-        abort_unless($change, 422, 'Start by entering your new name or email.');
-        abort_unless($change->status === 'Draft', 422, 'Your request is with the SERVORA team. Cancel it first to change it.');
+        throw_unless($change, ActionRefused::class, 'Start by entering your new name or email.');
+        throw_unless($change->status === ChangeRequestStatus::Draft->value, ActionRefused::class, 'Your request is with the SERVORA team. Cancel it first to change it.');
 
         return $change;
     }
@@ -357,7 +362,7 @@ class OwnerIdentityChangeService
             'has_id' => $c->hasIdDocuments(),
             'has_face_scan' => ! empty($c->face_scan_paths),
             'status' => $c->status,
-            'rejection_reason' => $c->status === 'Rejected' ? $c->rejection_reason : null,
+            'rejection_reason' => $c->status === ChangeRequestStatus::Rejected->value ? $c->rejection_reason : null,
             'submitted_at' => $c->submitted_at?->toIso8601String(),
             'reviewed_at' => $c->reviewed_at?->toIso8601String(),
         ];

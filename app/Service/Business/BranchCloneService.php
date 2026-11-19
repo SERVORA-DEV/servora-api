@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Enums\VerificationStatus;
 use App\Http\Resources\SpaBranchResource;
 use App\Models\BranchPackage;
 use App\Models\BranchService;
@@ -29,7 +30,7 @@ class BranchCloneService
             // until every selected setting has been copied (or rolled back).
             SpaBusiness::whereKey($business->id)->lockForUpdate()->firstOrFail();
             $source = SpaBranch::where('spa_business_id', $business->id)->where('uuid', $uuid)->firstOrFail();
-            if ($source->verification_status === 'Unregistered') {
+            if ($source->verification_status === VerificationStatus::Unregistered->value) {
                 throw ValidationException::withMessages(['source' => 'Finish registering the source branch before copying it.']);
             }
 

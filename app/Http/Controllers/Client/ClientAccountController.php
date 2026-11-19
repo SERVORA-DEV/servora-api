@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Client;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Client\ClientChangePasswordRequest;
+use App\Http\Requests\Client\DeleteAccountRequest;
+use App\Http\Requests\Client\FavoritesRequest;
 use App\Service\Client\ClientAccountService;
 use Illuminate\Http\Request;
 
@@ -13,13 +15,8 @@ class ClientAccountController extends Controller
     {
     }
 
-    public function favorites(Request $request)
+    public function favorites(FavoritesRequest $request)
     {
-        $request->validate([
-            'lat' => ['nullable', 'numeric', 'between:-90,90'],
-            'lng' => ['nullable', 'numeric', 'between:-180,180'],
-        ]);
-
         $lat = $request->query('lat');
         $lng = $request->query('lng');
 
@@ -40,9 +37,9 @@ class ClientAccountController extends Controller
         return $this->account->removeFavorite($request->user(), $branchUuid);
     }
 
-    public function deleteAccount(Request $request)
+    public function deleteAccount(DeleteAccountRequest $request)
     {
-        $data = $request->validate(['password' => ['required', 'string']]);
+        $data = $request->validated();
 
         return $this->account->deleteAccount($request->user(), $data['password']);
     }

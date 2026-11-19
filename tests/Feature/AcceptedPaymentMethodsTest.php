@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\AppointmentStatus;
 use App\Models\Appointment;
 use App\Models\Billing;
 use App\Models\Client;
@@ -56,6 +57,8 @@ class AcceptedPaymentMethodsTest extends TestCase
         $this->patchJson('/api/business/settings/payments', array_merge([
             'accept_cash' => false, 'accept_gcash' => false, 'accept_paymaya' => false,
             'accept_card' => false, 'accept_bank_transfer' => false,
+            // Switching GCash or Maya on needs the number clients pay to.
+            'gcash_number' => '09171234567', 'paymaya_number' => '09181234567',
         ], $methods))->assertOk();
     }
 
@@ -70,7 +73,7 @@ class AcceptedPaymentMethodsTest extends TestCase
             'appointment_time' => '10:00',
             'appointment_type' => 'Reservation',
             'source' => 'Front Desk',
-            'status' => Appointment::STATUS_IN_SERVICE,
+            'status' => AppointmentStatus::InService->value,
             'subtotal' => $amount,
             'total_amount' => $amount,
         ]);
@@ -93,7 +96,15 @@ class AcceptedPaymentMethodsTest extends TestCase
         return $this->postJson("/api/business/billing/{$bill->uuid}/payments", [
             'payment_method' => $method,
             'amount' => $amount,
-            'reference_number' => $method === 'Cash' ? null : 'REF-12345',
+            // Each method's own kind of reference: GCash's Ref No. (10–13 digits), Maya's
+            // Reference ID, a card slip's approval code.
+            'reference_number' => match ($method) {
+                'Cash' => null,
+                'GCash' => '1234567890123',
+                'Maya' => 'MAYA12345678',
+                'Credit Card', 'Debit Card' => 'A1B2C3',
+                default => 'REF-12345',
+            },
         ]);
     }
 

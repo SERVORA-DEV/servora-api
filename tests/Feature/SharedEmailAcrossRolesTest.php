@@ -21,7 +21,7 @@ class SharedEmailAcrossRolesTest extends TestCase
         return User::factory()->create(array_merge([
             'role' => 'business_owner',
             'email' => self::EMAIL,
-            'password' => 'owner-pass-1',
+            'password' => 'Owner-pass-1',
             'email_verified_at' => now(),
         ], $attributes));
     }
@@ -31,7 +31,7 @@ class SharedEmailAcrossRolesTest extends TestCase
         return User::factory()->create(array_merge([
             'role' => 'client',
             'email' => self::EMAIL,
-            'password' => 'client-pass-1',
+            'password' => 'Client-pass-1',
             'email_verified_at' => now(),
         ], $attributes));
     }
@@ -48,15 +48,15 @@ class SharedEmailAcrossRolesTest extends TestCase
 
         $this->postJson('/api/auth/register', [
             'email' => self::EMAIL,
-            'password' => 'client-pass-1',
-            'password_confirmation' => 'client-pass-1',
+            'password' => 'Client-pass-1',
+            'password_confirmation' => 'Client-pass-1',
             'terms_accepted' => true,
         ])->assertCreated();
 
         $this->postJson('/api/business/administrator/register', [
             'email' => self::EMAIL,
-            'password' => 'owner-pass-1',
-            'password_confirmation' => 'owner-pass-1',
+            'password' => 'Owner-pass-1',
+            'password_confirmation' => 'Owner-pass-1',
             'terms_accepted' => true,
         ])->assertCreated();
 
@@ -72,16 +72,16 @@ class SharedEmailAcrossRolesTest extends TestCase
         $this->owner();
         $this->postJson('/api/business/administrator/register', [
             'email' => self::EMAIL,
-            'password' => 'another-pass-1',
-            'password_confirmation' => 'another-pass-1',
+            'password' => 'Another-pass-1',
+            'password_confirmation' => 'Another-pass-1',
             'terms_accepted' => true,
         ])->assertUnprocessable()->assertJsonValidationErrors('email');
 
         $this->client();
         $this->postJson('/api/auth/register', [
             'email' => self::EMAIL,
-            'password' => 'another-pass-1',
-            'password_confirmation' => 'another-pass-1',
+            'password' => 'Another-pass-1',
+            'password_confirmation' => 'Another-pass-1',
             'terms_accepted' => true,
         ])->assertUnprocessable()->assertJsonValidationErrors('email');
     }
@@ -92,20 +92,20 @@ class SharedEmailAcrossRolesTest extends TestCase
         $this->client();
 
         $this->postJson('/api/auth/login', [
-            'email' => self::EMAIL, 'password' => 'owner-pass-1',
+            'email' => self::EMAIL, 'password' => 'Owner-pass-1',
         ])->assertOk()->assertJsonPath('user.role', 'business_owner');
 
         $this->postJson('/api/auth/login', [
-            'email' => self::EMAIL, 'password' => 'client-pass-1', 'audience' => 'mobile',
+            'email' => self::EMAIL, 'password' => 'Client-pass-1', 'audience' => 'mobile',
         ])->assertOk()->assertJsonPath('user.role', 'client');
 
         // Each password only works on its own side.
         $this->postJson('/api/auth/login', [
-            'email' => self::EMAIL, 'password' => 'client-pass-1',
+            'email' => self::EMAIL, 'password' => 'Client-pass-1',
         ])->assertUnauthorized();
 
         $this->postJson('/api/auth/login', [
-            'email' => self::EMAIL, 'password' => 'owner-pass-1', 'audience' => 'mobile',
+            'email' => self::EMAIL, 'password' => 'Owner-pass-1', 'audience' => 'mobile',
         ])->assertUnauthorized();
     }
 

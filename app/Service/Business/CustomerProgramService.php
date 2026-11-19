@@ -2,6 +2,10 @@
 
 namespace App\Service\Business;
 
+use App\Enums\BillingStatus;
+use App\Enums\MembershipStatus;
+use App\Enums\PaymentStatus;
+use App\Enums\VoucherStatus;
 use App\Http\Resources\CustomerProgramResource;
 use App\Models\Billing;
 use App\Models\Client;
@@ -18,13 +22,14 @@ use App\Repository\Business\ClientRepository;
 use App\Repository\BillingRepository;
 use App\Repository\PaymentRepository;
 use App\Repository\SpaBusinessRepository;
-use App\Support\AppOnlyPrograms;
-use App\Support\ProgramChannel;
-use App\Support\VoucherTarget;
+use App\Support\Programs\AppOnlyPrograms;
+use App\Support\Programs\ProgramChannel;
+use App\Support\Programs\VoucherTarget;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 // Customer programs as the business runs them:
 //   - the owner creates/edits programs and picks the branches that offer them
@@ -187,14 +192,13 @@ class CustomerProgramService
         }
 
         $branch = SpaBranch::where('uuid', $branchUuid)->where('spa_business_id', $business->id)->firstOrFail();
-        if (! in_array($branch->id, $this->branchIds($user), true)) {
-            abort(403, 'You can only change programs for your own branch.');
-        }
+        Gate::forUser($user)->authorize('changePrograms', $branch);
 
         $program = $this->program($business, $uuid);
         if ($offered && $program->only_branch_id && $program->only_branch_id !== $branch->id) {
-            if ($user->role !== 'business_owner') {
-                return $this->reject("\"{$program->name}\" was made for another branch. Ask the owner to offer it at {$branch->branch_name}.");
+            $may = Gate::forUser($user)->inspect('offerAtAnotherBranch', [$program, $branch]);
+            if ($may->denied()) {
+                return $this->reject($may->message());
             }
             // The owner offering it somewhere else: it is no longer one
             // branch's own.
@@ -233,7 +237,7 @@ class CustomerProgramService
         $rows = ClientMembership::with(['client', 'program', 'branch'])
             ->whereHas('client', fn ($q) => $q->where('spa_business_id', $business->id))
             ->whereIn('spa_branch_id', $branchIds)
-            ->where('status', 'active')->where('ends_at', '>', now())
+            ->where('status', MembershipStatus::Active->value)->where('ends_at', '>', now())
             ->orderBy('ends_at')
             ->get();
 
@@ -249,9 +253,7 @@ class CustomerProgramService
 
         return DB::transaction(function () use ($user, $business, $data) {
             $branch = SpaBranch::where('uuid', $data['branch_uuid'])->where('spa_business_id', $business->id)->firstOrFail();
-            if (! in_array($branch->id, $this->branchIds($user), true)) {
-                abort(403, 'You can only sell memberships at your own branch.');
-            }
+            Gate::forUser($user)->authorize('sellMemberships', $branch);
             $client = $this->client($user, $business, $data['client_uuid']);
             $program = CustomerProgram::where('uuid', $data['program_uuid'])->where('spa_business_id', $business->id)
                 ->where('type', 'membership')->where('is_active', true)->first();
@@ -265,7 +267,7 @@ class CustomerProgramService
                 return $this->reject($refusal);
             }
 
-            $current =ClientMembership::where('client_id', $client->id)->where('status', 'active')->where('ends_at', '>', now())->lockForUpdate()->first();
+            $current =ClientMembership::where('client_id', $client->id)->where('status', MembershipStatus::Active->value)->where('ends_at', '>', now())->lockForUpdate()->first();
             if ($current && $current->customer_program_id !== $program->id) {
                 return $this->reject("{$client->first_name} already has {$current->displayName()} until " . $current->ends_at->format('M j, Y') . ' — cancel it first.');
             }
@@ -284,7 +286,7 @@ class CustomerProgramService
 
         return DB::transaction(function () use ($user, $business, $uuid, $data) {
             $membership = $this->membership($user, $business, $uuid);
-            if ($membership->status === 'cancelled') {
+            if ($membership->status === MembershipStatus::Cancelled->value) {
                 return $this->reject('This membership was cancelled — sell a new one instead.');
             }
             $program = $membership->program;
@@ -314,10 +316,10 @@ class CustomerProgramService
             // client, and takes back the bundled vouchers not used yet.
             $periods = ClientMembership::where('client_id', $membership->client_id)
                 ->where('customer_program_id', $membership->customer_program_id)
-                ->where('status', 'active')->get();
+                ->where('status', MembershipStatus::Active->value)->get();
             foreach ($periods as $period) {
-                $period->update(['status' => 'cancelled', 'cancelled_at' => now()]);
-                ClientVoucher::where('client_membership_id', $period->id)->where('status', 'available')->update(['status' => 'cancelled']);
+                $period->update(['status' => MembershipStatus::Cancelled->value, 'cancelled_at' => now()]);
+                ClientVoucher::where('client_membership_id', $period->id)->where('status', VoucherStatus::Available->value)->update(['status' => VoucherStatus::Cancelled->value]);
             }
 
             return ['data' => $this->membershipRow($membership->fresh(['client', 'program', 'branch']))];
@@ -337,7 +339,7 @@ class CustomerProgramService
                 'billing_number' => $this->billingRepository->generateBillingNumber(),
                 'subtotal' => $price,
                 'amount' => $price,
-                'status' => 'Pending',
+                'status' => BillingStatus::Pending->value,
                 'issued_at' => now(),
                 'remarks' => "{$program->name} — {$client->first_name} {$client->last_name}",
             ]);
@@ -358,7 +360,7 @@ class CustomerProgramService
                 'amount' => $price,
                 'amount_tendered' => $tendered,
                 'change_given' => $tendered !== null ? round($tendered - $price, 2) : null,
-                'payment_status' => 'Paid',
+                'payment_status' => PaymentStatus::Paid->value,
                 'paid_at' => now(),
                 'received_by' => $user->id,
                 'remarks' => $payload['remarks'] ?? null,
@@ -374,7 +376,7 @@ class CustomerProgramService
             'billing_id' => $billing?->id,
             'starts_at' => $starts,
             'ends_at' => $this->rewards->addPeriod($starts, $program->value('billing', 'Monthly')) ?? $starts->copy()->addMonth(),
-            'status' => 'active',
+            'status' => MembershipStatus::Active->value,
             'price' => $price,
             'sold_by' => $user->id,
         ]);
@@ -442,7 +444,7 @@ class CustomerProgramService
         if (! $this->rewards->enabledFor($client->spa_business_id) || ! AppOnlyPrograms::usesHeld($client->usesApp())) {
             return ['data' => []];
         }
-        $wallet = ClientVoucher::with('program')->where('client_id', $client->id)->where('status', 'available')
+        $wallet = ClientVoucher::with('program')->where('client_id', $client->id)->where('status', VoucherStatus::Available->value)
             ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
             ->orderBy('expires_at')->get()
             ->filter(fn ($v) => $this->rewards->voucherAllowedAt($v, ProgramChannel::DESK));
@@ -481,7 +483,7 @@ class CustomerProgramService
     }
 
     // Each voucher as it was issued: its own copy of the name and deal
-    // (ClientVoucher::dealProgram / App\Support\History). `deal_type` and
+    // (ClientVoucher::dealProgram / App\Support\Activity\History). `deal_type` and
     // `usable` say, in data, what it does and which services it is for.
     private function walletEntries($wallet): Collection
     {
@@ -539,7 +541,7 @@ class CustomerProgramService
 
         $membership = $client->activeMembership()->with('program.items')->first();
         $memberItemIds = $membership?->perkIds() ?? [];
-        $wallet = ClientVoucher::with('program')->where('client_id', $client->id)->where('status', 'available')
+        $wallet = ClientVoucher::with('program')->where('client_id', $client->id)->where('status', VoucherStatus::Available->value)
             ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
             ->orderBy('expires_at')->get()
             ->filter(fn ($v) => $this->rewards->voucherAllowedAt($v, $where))
@@ -547,7 +549,7 @@ class CustomerProgramService
         $visits = $this->rewards->paidVisitServices($client);
         // Points vouchers this client already claimed: a one-time one isn't offered again.
         $claimedWithPoints = ClientVoucher::where('client_id', $client->id)->where('source', 'points')
-            ->where('status', '!=', 'cancelled')->pluck('customer_program_id')->unique()->all();
+            ->where('status', '!=', VoucherStatus::Cancelled->value)->pluck('customer_program_id')->unique()->all();
 
         $loyalty = $catalogue->firstWhere('type', 'loyalty');
         // Vouchers that can still be got with points this visit; null = no limit.
@@ -563,7 +565,7 @@ class CustomerProgramService
             'business' => [
                 'uuid' => $business?->uuid,
                 'name' => $business?->business_name,
-                'logo_url' => $business?->business_logo ? \App\Services\ImageUploadService::url($business->business_logo) : null,
+                'logo_url' => $business?->business_logo ? \App\Service\Uploads\ImageUploadService::url($business->business_logo) : null,
             ],
             'client_uuid' => $client->uuid,
             'enabled' => $enabled,
@@ -580,7 +582,7 @@ class CustomerProgramService
                 'points' => (int) $client->current_points,
                 'lifetime_points' => (int) $client->lifetime_points,
                 // Points are for clients who use the app (LoyaltyEarning).
-                'earns' => \App\Support\LoyaltyEarning::earns($client->usesApp()),
+                'earns' => \App\Support\Programs\LoyaltyEarning::earns($client->usesApp()),
                 // "1 point for every ₱10": the two numbers to show. The
                 // rate per ₱1 stays for app builds that only read that.
                 'earn_points' => $earn['points'],
@@ -601,7 +603,7 @@ class CustomerProgramService
                 'bonus' => [],
             ] : null,
             // Each voucher as it was issued: its own copy of the name and
-            // deal (ClientVoucher::dealProgram / App\Support\History).
+            // deal (ClientVoucher::dealProgram / App\Support\Activity\History).
             // Held vouchers first, then a first-visit voucher not yet claimed (it
             // is there for the client's first booking).
             'wallet' => $this->walletEntries($wallet)->concat($this->claimableEntries($client, $catalogue, $where))->values(),
@@ -721,10 +723,10 @@ class CustomerProgramService
                 'clients_with_points' => Client::where('spa_business_id', $business->id)->where('current_points', '>', 0)->count(),
                 'points_issued' => (int) ClientPointEntry::whereIn('client_id', $clientIds)->where('type', 'earn')->sum('points'),
                 'points_outstanding' => (int) Client::where('spa_business_id', $business->id)->sum('current_points'),
-                'active_members' => ClientMembership::whereIn('client_id', $clientIds)->where('status', 'active')->where('ends_at', '>', now())->count(),
-                'membership_sales' => (float) Billing::where('spa_business_id', $business->id)->where('billing_type', 'Membership')->where('status', 'Paid')->sum('amount'),
-                'vouchers_issued' => ClientVoucher::whereIn('client_id', $clientIds)->where('status', '!=', 'cancelled')->count(),
-                'vouchers_used' => ClientVoucher::whereIn('client_id', $clientIds)->where('status', 'used')->count(),
+                'active_members' => ClientMembership::whereIn('client_id', $clientIds)->where('status', MembershipStatus::Active->value)->where('ends_at', '>', now())->count(),
+                'membership_sales' => (float) Billing::where('spa_business_id', $business->id)->where('billing_type', 'Membership')->where('status', BillingStatus::Paid->value)->sum('amount'),
+                'vouchers_issued' => ClientVoucher::whereIn('client_id', $clientIds)->where('status', '!=', VoucherStatus::Cancelled->value)->count(),
+                'vouchers_used' => ClientVoucher::whereIn('client_id', $clientIds)->where('status', VoucherStatus::Used->value)->count(),
             ],
         ];
     }
@@ -824,7 +826,7 @@ class CustomerProgramService
         return $values;
     }
 
-    // A voucher's two service targets (App\Support\VoucherTarget: what it
+    // A voucher's two service targets (App\Support\Programs\VoucherTarget: what it
     // can be used on, and which visits count toward it), tidied on save. Only
     // what the kind uses is kept, and the readable form is written here so
     // the client app, the wallet and the front desk all show the same words.

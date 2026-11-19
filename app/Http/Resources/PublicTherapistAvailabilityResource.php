@@ -12,7 +12,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
 // Same "only what's safe to show a stranger" rule as BranchDetailResource:
 // the identity fields match what that endpoint's 'therapists' key already
 // exposes, and the reason is deliberately coarse — the business-side
-// AppointmentService::therapistOptions() returns shift times and check-in
+// VisitAssignmentService::therapistOptions() returns shift times and check-in
 // state, none of which a prospective client has any business seeing.
 class PublicTherapistAvailabilityResource extends JsonResource
 {

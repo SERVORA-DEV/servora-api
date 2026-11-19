@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\CheckoutStatus;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 
@@ -60,6 +61,6 @@ class CheckoutSession extends Model
 
     public function isFinal(): bool
     {
-        return in_array($this->status, ['completed', 'failed', 'expired'], true);
+        return in_array($this->status, [CheckoutStatus::Completed->value, CheckoutStatus::Failed->value, CheckoutStatus::Expired->value], true);
     }
 }

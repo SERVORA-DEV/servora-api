@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Business\DeclineRequest;
 use App\Service\Business\StaffTransferService;
 use Illuminate\Http\Request;
 
@@ -30,9 +31,9 @@ class StaffTransferController extends Controller
         return $this->transfers->approve($request->user(), $uuid);
     }
 
-    public function decline(Request $request, string $uuid)
+    public function decline(DeclineRequest $request, string $uuid)
     {
-        $reason = $request->validate(['reason' => 'nullable|string|max:500'])['reason'] ?? null;
+        $reason = $request->validated()['reason'] ?? null;
 
         return $this->transfers->decline($request->user(), $uuid, $reason);
     }

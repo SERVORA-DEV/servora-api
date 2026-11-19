@@ -2,6 +2,7 @@
 
 namespace App\Repository\System;
 
+use App\Enums\VerificationStatus;
 use App\Models\SpaBranch;
 
 class BranchRegistrationRepository
@@ -11,7 +12,7 @@ class BranchRegistrationRepository
     public function paginatePending(int $perPage = 15)
     {
         return SpaBranch::with('business.owner.ownerIdentityVerification')
-            ->where('verification_status', 'Pending')
+            ->where('verification_status', VerificationStatus::Pending->value)
             ->latest()
             ->paginate($perPage);
     }

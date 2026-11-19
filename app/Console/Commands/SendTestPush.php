@@ -4,7 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\Notification;
 use App\Models\User;
-use App\Service\PushSender;
+use App\Service\Notifications\PushSender;
 use Illuminate\Console\Command;
 
 // Pops a test notification up on every browser and phone that has pop-ups on

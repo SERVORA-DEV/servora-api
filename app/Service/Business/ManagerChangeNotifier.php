@@ -2,13 +2,15 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AccountStatus;
+use App\Enums\StaffStatus;
 use App\Models\SpaBranch;
 use App\Models\SpaBusinessSetting;
 use App\Models\Staff;
 use App\Models\User;
 use App\Repository\NotificationRepository;
 use App\Support\AppCache;
-use App\Support\ManagerNotificationPrefs;
+use App\Support\Staff\ManagerNotificationPrefs;
 use Illuminate\Support\Facades\DB;
 
 // Tells the people who run a branch when someone else changes something
@@ -265,13 +267,13 @@ class ManagerChangeNotifier
         // Operation ones when the owner has the front desk told.
         if (\App\Models\AccountBranch::ready()) {
             $managers = $managerKey
-                ? \App\Models\User::whereIn('id', \App\Support\AccountScope::userIdsAt($branchIds, ['manager']))->get()
+                ? \App\Models\User::whereIn('id', \App\Support\Access\AccountScope::userIdsAt($branchIds, ['manager']))->get()
                     ->filter(fn (\App\Models\User $u) => $locked || ManagerNotificationPrefs::wants($u, $managerKey))
                     ->pluck('id')->all()
                 : [];
             $frontDesk = in_array('frontdesk', $roles, true)
                 ? \App\Models\AccountBranch::whereIn('spa_branch_id', $branchIds)->where('level', \App\Models\AccountBranch::OPERATION)
-                    ->whereHas('user', fn ($q) => $q->where('account_status', 'Active'))->pluck('user_id')->all()
+                    ->whereHas('user', fn ($q) => $q->where('account_status', AccountStatus::Active->value))->pluck('user_id')->all()
                 : [];
 
             return array_values(array_unique(array_merge($managers, $frontDesk)));
@@ -279,7 +281,7 @@ class ManagerChangeNotifier
 
         return Staff::with('user')
             ->whereIn('spa_branch_id', $branchIds)
-            ->where('status', 'active')
+            ->where('status', StaffStatus::Active->value)
             ->whereIn('role', $roles)
             ->whereNotNull('user_id')
             ->get()
@@ -295,7 +297,7 @@ class ManagerChangeNotifier
         // The manager's own business is usually loaded on their account
         // already (it is how every service finds "their" business) — reuse
         // it rather than asking the database for it again.
-        $own = \App\Support\AccountScope::business($manager);
+        $own = \App\Support\Access\AccountScope::business($manager);
         if ($own && $own->id === $branch->spa_business_id && ! $branch->relationLoaded('business')) {
             $branch->setRelation('business', $own);
         }

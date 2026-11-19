@@ -2,6 +2,10 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentServiceStatus;
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
+use App\Enums\StaffStatus;
 use App\Models\Appointment;
 use App\Models\Attendance;
 use App\Models\BranchSchedule;
@@ -12,9 +16,10 @@ use App\Models\StaffQualification;
 use App\Models\TherapistAssignment;
 use App\Models\User;
 use App\Repository\SpaBusinessRepository;
-use App\Support\BusinessDay;
-use App\Support\RotationTurn;
-use App\Support\ServiceKind;
+use App\Support\Branches\BusinessDay;
+use App\Support\Visits\RotationTurn;
+use App\Support\Catalog\ServiceKind;
+use App\Support\Visits\StaleVisit;
 use Carbon\Carbon;
 
 // Everything the front desk's Assign Staff & Facility drawer needs for ONE booking, in one read:
@@ -50,7 +55,7 @@ class AssignmentPlanner
             ->with('services.serviceVariant.service', 'services.therapistAssignments.staff', 'services.therapistAssignments.facility')
             ->firstOrFail();
 
-        if ($stale = AppointmentService::staleRefusal($appointment)) {
+        if ($stale = StaleVisit::refusal($appointment)) {
             return $stale;
         }
 
@@ -67,7 +72,7 @@ class AssignmentPlanner
      */
     public static function window(Appointment $appointment): array
     {
-        if ($appointment->status === Appointment::STATUS_SCHEDULED) {
+        if ($appointment->status === AppointmentStatus::Scheduled->value) {
             return ['mode' => 'reserve', 'date' => $appointment->appointment_date->format('Y-m-d'), 'time' => (string) $appointment->appointment_time];
         }
 
@@ -96,7 +101,7 @@ class AssignmentPlanner
 
         // Add-ons ride with their main service; started and finished services are not asked about.
         $services = $appointment->services
-            ->filter(fn (AppointmentServiceItem $s) => ! $s->isAddon() && $s->status === 'Pending')
+            ->filter(fn (AppointmentServiceItem $s) => ! $s->isAddon() && $s->status === AppointmentServiceStatus::Pending->value)
             ->values();
 
         $staff = $this->staff($appointment, $services, $date, $time, $isHome, $mode);
@@ -134,7 +139,7 @@ class AssignmentPlanner
 
         $until = [];
         TherapistAssignment::whereIn($column, $ids)
-            ->where('assignment_status', 'In Progress')
+            ->where('assignment_status', AssignmentStatus::InProgress->value)
             ->whereNotNull('started_at')
             ->with('appointmentService.serviceVariant', 'appointmentService.appointment')
             ->get()
@@ -167,9 +172,9 @@ class AssignmentPlanner
     private function serviceRow(AppointmentServiceItem $service, bool $isHome): array
     {
         $current = $service->therapistAssignments
-            ->first(fn (TherapistAssignment $a) => $a->assignment_status === 'Assigned' && ($a->staff_id !== null || $a->facility_id !== null));
-        $staffed = $service->therapistAssignments->first(fn (TherapistAssignment $a) => $a->assignment_status === 'Assigned' && $a->staff_id !== null);
-        $roomed = $service->therapistAssignments->first(fn (TherapistAssignment $a) => $a->assignment_status === 'Assigned' && $a->facility_id !== null);
+            ->first(fn (TherapistAssignment $a) => $a->assignment_status === AssignmentStatus::Assigned->value && ($a->staff_id !== null || $a->facility_id !== null));
+        $staffed = $service->therapistAssignments->first(fn (TherapistAssignment $a) => $a->assignment_status === AssignmentStatus::Assigned->value && $a->staff_id !== null);
+        $roomed = $service->therapistAssignments->first(fn (TherapistAssignment $a) => $a->assignment_status === AssignmentStatus::Assigned->value && $a->facility_id !== null);
 
         return [
             'uuid' => $service->uuid,
@@ -190,11 +195,11 @@ class AssignmentPlanner
     /** @return array<int, array<string, mixed>> */
     private function partsRow(AppointmentServiceItem $service): array
     {
-        $parts = \App\Support\ServiceParts::forLine($service);
+        $parts = \App\Support\Catalog\ServiceParts::forLine($service);
         if ($parts->isEmpty()) {
             return [];
         }
-        $rows = $service->therapistAssignments->filter(fn (TherapistAssignment $a) => in_array($a->assignment_status, ['Assigned', 'In Progress'], true) && $a->staff_id !== null);
+        $rows = $service->therapistAssignments->filter(fn (TherapistAssignment $a) => in_array($a->assignment_status, [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value], true) && $a->staff_id !== null);
 
         return $parts->map(function ($part) use ($rows) {
             $row = $rows->firstWhere('service_part_id', $part->id);
@@ -213,7 +218,7 @@ class AssignmentPlanner
     {
         $therapists = Staff::where('spa_branch_id', $appointment->spa_branch_id)
             ->where('role', 'therapist')
-            ->where('status', 'active')
+            ->where('status', StaffStatus::Active->value)
             ->with('schedules')
             ->orderBy('first_name')
             ->get();
@@ -230,11 +235,11 @@ class AssignmentPlanner
 
         // How many bookings each already has that day (to spread reservations fairly), one query.
         $workload = TherapistAssignment::whereIn('staff_id', $ids)
-            ->whereIn('assignment_status', ['Assigned', 'In Progress'])
+            ->whereIn('assignment_status', [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value])
             ->whereHas('appointmentService.appointment', fn ($q) => $q
                 ->whereDate('appointment_date', $date)
                 ->where('id', '!=', $appointment->id)
-                ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW, Appointment::STATUS_COMPLETED]))
+                ->whereNotIn('status', [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value, AppointmentStatus::Completed->value]))
             ->selectRaw('staff_id, count(*) as n')->groupBy('staff_id')->pluck('n', 'staff_id');
 
         // Today's attendance and shifts: who is on leave, absent or late.
@@ -319,7 +324,7 @@ class AssignmentPlanner
         $facilities = Facility::with('services:id,uuid')->where('spa_branch_id', $appointment->spa_branch_id)->orderBy('name')->get();
 
         // A room the visit's other services already use is fine whatever it is set up for.
-        $own = TherapistAssignment::whereIn('assignment_status', ['Assigned', 'In Progress'])
+        $own = TherapistAssignment::whereIn('assignment_status', [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value])
             ->whereNotNull('facility_id')
             ->whereHas('appointmentService', fn ($q) => $q->where('appointment_id', $appointment->id))
             ->pluck('facility_id')->all();

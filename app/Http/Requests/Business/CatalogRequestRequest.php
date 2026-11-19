@@ -3,7 +3,7 @@
 namespace App\Http\Requests\Business;
 
 use App\Rules\NoEmoji;
-use App\Support\ServiceKind;
+use App\Support\Catalog\ServiceKind;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 

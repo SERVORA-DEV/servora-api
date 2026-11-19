@@ -17,19 +17,11 @@ use Illuminate\Support\Facades\DB;
 // 'service_templates' module (the rows themselves live in `services`).
 class ServiceTemplateService
 {
-    private ServiceTemplateRepository $serviceTemplateRepository;
-    private ServiceVariantRepository $serviceVariantRepository;
-    private AuditLogRepository $auditLogRepository;
-
     public function __construct(
-        ServiceTemplateRepository $serviceTemplateRepository,
-        ServiceVariantRepository $serviceVariantRepository,
-        AuditLogRepository $auditLogRepository,
-    ) {
-        $this->serviceTemplateRepository = $serviceTemplateRepository;
-        $this->serviceVariantRepository = $serviceVariantRepository;
-        $this->auditLogRepository = $auditLogRepository;
-    }
+        private ServiceTemplateRepository $serviceTemplateRepository,
+        private ServiceVariantRepository $serviceVariantRepository,
+        private AuditLogRepository $auditLogRepository,
+    ) {}
 
     public function listTemplates(?string $category = null, int $perPage = 15)
     {

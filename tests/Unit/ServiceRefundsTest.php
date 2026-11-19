@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\ServiceRefunds;
+use App\Support\Billing\ServiceRefunds;
 use PHPUnit\Framework\TestCase;
 
 class ServiceRefundsTest extends TestCase

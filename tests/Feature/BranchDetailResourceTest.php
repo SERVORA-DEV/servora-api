@@ -78,11 +78,10 @@ class BranchDetailResourceTest extends TestCase
 
     private function services(): array
     {
-        $payload = app(SpaBranchService::class)
+        // publicShow answers the finished JSON response (the page is cached as plain arrays).
+        return app(SpaBranchService::class)
             ->publicShow($this->branch->uuid)
-            ->toArray(request());
-
-        return $payload['services']->all();
+            ->getData(true)['data']['services'];
     }
 
     public function test_variants_of_one_service_collapse_into_a_single_entry(): void
@@ -95,11 +94,12 @@ class BranchDetailResourceTest extends TestCase
         $this->assertSame($service->uuid, $services[0]['service_uuid']);
         $this->assertSame('Swedish Massage', $services[0]['name']);
 
-        $variants = $services[0]['variants']->all();
+        $variants = $services[0]['variants'];
         $this->assertCount(3, $variants);
         // Ascending by duration — the axis the app's dropdown labels.
         $this->assertSame([30, 60, 90], array_column($variants, 'duration_minutes'));
-        $this->assertSame([400.0, 650.0, 900.0], array_column($variants, 'price'));
+        // Read back from JSON, where a whole-number price comes as 900, not 900.0.
+        $this->assertEquals([400.0, 650.0, 900.0], array_column($variants, 'price'));
         // Each option is separately bookable.
         $this->assertCount(3, array_unique(array_column($variants, 'service_variant_uuid')));
     }
@@ -108,17 +108,14 @@ class BranchDetailResourceTest extends TestCase
     {
         $this->offer('Swedish Massage', [30 => 400, 60 => 650]);
 
-        $payload = app(SpaBranchService::class)
+        $json = app(SpaBranchService::class)
             ->publicShow($this->branch->uuid)
-            ->toArray(request());
+            ->getContent();
 
         // groupBy keys by service_id and map/sortBy preserve keys, so a missing
         // values() would encode this as an object and the client would parse no
         // services at all.
-        $this->assertSame(
-            '[',
-            substr(json_encode($payload['services']), 0, 1),
-        );
+        $this->assertStringContainsString('"services":[', $json);
     }
 
     public function test_a_branch_price_override_moves_only_that_variant(): void
@@ -126,9 +123,9 @@ class BranchDetailResourceTest extends TestCase
         [, $rows] = $this->offer('Swedish Massage', [30 => 400, 60 => 650, 90 => 900]);
         $rows[60]->update(['custom_price' => 700]);
 
-        $variants = $this->services()[0]['variants']->all();
+        $variants = $this->services()[0]['variants'];
 
-        $this->assertSame([400.0, 700.0, 900.0], array_column($variants, 'price'));
+        $this->assertEquals([400.0, 700.0, 900.0], array_column($variants, 'price'));
     }
 
     public function test_a_variant_disabled_at_this_branch_is_omitted(): void
@@ -142,7 +139,7 @@ class BranchDetailResourceTest extends TestCase
         // is why the resource groups branch_services rows instead of walking
         // $service->variants, which would still list the 60-minute option.
         $this->assertCount(1, $services);
-        $this->assertSame([30, 90], array_column($services[0]['variants']->all(), 'duration_minutes'));
+        $this->assertSame([30, 90], array_column($services[0]['variants'], 'duration_minutes'));
     }
 
     public function test_a_service_with_every_variant_disabled_disappears(): void

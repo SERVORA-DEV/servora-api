@@ -5,7 +5,7 @@ namespace App\Service\Business;
 use App\Models\StaffRefundCharge;
 use Carbon\Carbon;
 
-// The parts of refunds charged to staff (App\Support\RefundCharge) between
+// The parts of refunds charged to staff (App\Support\Billing\RefundCharge) between
 // two days, for the Earnings pages — alongside the late and absent days of
 // AttendancePenaltyReader, and taken off the same way.
 class StaffRefundChargeReader

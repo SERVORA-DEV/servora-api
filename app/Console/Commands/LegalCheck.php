@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands;
 
-use App\Support\LegalDocuments;
+use App\Support\Platform\LegalDocuments;
 use Illuminate\Console\Command;
 
 // Fails while the Terms or Privacy Policy still show a [placeholder] to

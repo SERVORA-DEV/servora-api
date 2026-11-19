@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\ListingPolicy;
+use App\Support\Platform\ListingPolicy;
 use Tests\TestCase;
 
 // The administrator's marketplace listing policy: which listing items a

@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use App\Support\MobileRelease;
+use App\Support\Platform\MobileRelease;
 
 // What the mobile app reads when it opens, to know whether to offer (or require) an update.
 class MobileReleaseController extends Controller

@@ -6,10 +6,13 @@ use App\Models\OwnerIdentityVerification;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
 use App\Models\Staff;
+use App\Models\Subscription;
+use App\Models\SubscriptionPlan;
 use App\Models\User;
 use App\Models\UserPermission;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
+use Tests\Concerns\MakesStaffLogins;
 use Tests\TestCase;
 
 // Business Settings → Staff Policies sets the starting permissions for new
@@ -20,6 +23,7 @@ use Tests\TestCase;
 //   DB_PASSWORD=... php artisan test --filter=RolePermissionDefaultsTest
 class RolePermissionDefaultsTest extends TestCase
 {
+    use MakesStaffLogins;
     use RefreshDatabase;
 
     private User $owner;
@@ -34,6 +38,16 @@ class RolePermissionDefaultsTest extends TestCase
         OwnerIdentityVerification::create(['user_id' => $this->owner->id, 'status' => 'Verified']);
         $this->business = SpaBusiness::factory()->create(['owner_id' => $this->owner->id]);
         $this->branch = SpaBranch::factory()->create(['spa_business_id' => $this->business->id]);
+
+        // The dashboard routes need a live plan (EnsureBusinessSubscribed answers 402 without one).
+        $plan = SubscriptionPlan::create([
+            'category' => 'Basic', 'name' => 'Basic', 'monthly_price' => 500, 'billing_cycle' => 'Monthly',
+            'max_branches' => 5, 'max_user_accounts' => 10, 'is_active' => true,
+        ]);
+        Subscription::create([
+            'spa_business_id' => $this->business->id, 'subscription_plan_id' => $plan->id, 'billing_cycle' => 'Monthly',
+            'starts_at' => now()->subDay(), 'expires_at' => now()->addMonth(), 'status' => 'Active',
+        ]);
     }
 
     private function createAccount(string $staffRole): User
@@ -41,14 +55,7 @@ class RolePermissionDefaultsTest extends TestCase
         $staff = Staff::factory()->create(['spa_branch_id' => $this->branch->id, 'role' => $staffRole]);
 
         Sanctum::actingAs($this->owner);
-        $this->postJson('/api/business/account', [
-            'staff_uuid' => $staff->uuid,
-            'username' => 'acct'.$staff->id,
-            'email' => "acct{$staff->id}@lotus.test",
-            'password' => 'secret-password',
-        ])->assertSuccessful();
-
-        return User::where('username', 'acct'.$staff->id)->firstOrFail();
+        return $this->makeStaffLogin($staff, 'acct'.$staff->id, "acct{$staff->id}@lotus.test");
     }
 
     public function test_new_accounts_start_with_the_owners_defaults_for_their_role(): void
@@ -91,7 +98,8 @@ class RolePermissionDefaultsTest extends TestCase
         Sanctum::actingAs($manager->fresh());
         $this->getJson($route)->assertOk();
 
-        UserPermission::where('user_id', $manager->id)->update(['staff_view' => false]);
+        // Through the model, so its cached copy (AppCache) is dropped as in Account Management.
+        UserPermission::where('user_id', $manager->id)->firstOrFail()->update(['staff_view' => false]);
 
         Sanctum::actingAs($manager->fresh());
         $this->getJson($route)->assertForbidden();
@@ -105,7 +113,7 @@ class RolePermissionDefaultsTest extends TestCase
         Sanctum::actingAs($frontOfficer->fresh());
         $this->postJson('/api/business/frontoffice/attendance/check-in', [])->assertStatus(422);
 
-        UserPermission::where('user_id', $frontOfficer->id)->update(['attendance_checkin' => false]);
+        UserPermission::where('user_id', $frontOfficer->id)->firstOrFail()->update(['attendance_checkin' => false]);
 
         Sanctum::actingAs($frontOfficer->fresh());
         $this->postJson('/api/business/frontoffice/attendance/check-in', [])->assertForbidden();

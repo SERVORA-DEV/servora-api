@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\StaleVisit;
+use App\Support\Visits\StaleVisit;
 use Carbon\Carbon;
 use PHPUnit\Framework\TestCase;
 

@@ -2,8 +2,8 @@
 
 namespace Tests\Unit;
 
-use App\Support\BookingBoard;
-use App\Support\HourlyCapacity;
+use App\Support\Visits\BookingBoard;
+use App\Support\Branches\HourlyCapacity;
 use PHPUnit\Framework\TestCase;
 
 // "Bookings per hour": a booking belongs to the clock hour it starts in, and

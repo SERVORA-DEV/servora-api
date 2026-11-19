@@ -2,12 +2,14 @@
 
 namespace App\Service\System;
 
+use App\Enums\VerificationStatus;
+use App\Exceptions\ChangedElsewhere;
 use App\Models\OwnerVerificationReview;
 use App\Models\SpaBusiness;
 use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\System\OwnerVerificationRepository;
-use App\Support\OwnerVerificationChecklist as Checklist;
+use App\Support\Platform\OwnerVerificationChecklist as Checklist;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -32,7 +34,7 @@ class OwnerVerificationChecklistService
     private function current(SpaBusiness $business, string $part, ?OwnerVerificationReview $row): bool
     {
         return $row && hash_equals($row->evidence_hash, Checklist::fingerprint($business, $part))
-            && ! (Checklist::status($business, $part) === 'Pending' && $row->decision !== null);
+            && ! (Checklist::status($business, $part) === VerificationStatus::Pending->value && $row->decision !== null);
     }
 
     public function section(SpaBusiness $business, string $part): array
@@ -46,7 +48,7 @@ class OwnerVerificationChecklistService
             'evidence_hash' => Checklist::fingerprint($business, $part),
             'revision' => $row?->revision ?? 0,
             'checks' => $checks,
-            'editable' => Checklist::status($business, $part) === 'Pending',
+            'editable' => Checklist::status($business, $part) === VerificationStatus::Pending->value,
             'approval_blockers' => $blockers,
             'eligible_for_approval' => $current && ! $blockers && Checklist::allPassed($part, $checks),
             'decision' => $current ? $row?->decision : null,
@@ -72,7 +74,7 @@ class OwnerVerificationChecklistService
 
         return DB::transaction(function () use ($admin, $uuid, $part, $request, $data) {
             $business = $this->repository->findForReviewUpdate($uuid);
-            abort_unless(Checklist::status($business, $part) === 'Pending', 409, 'This verification has already changed. Reload the review.');
+            throw_unless(Checklist::status($business, $part) === VerificationStatus::Pending->value, ChangedElsewhere::class, 'This verification has already changed. Reload the review.');
             $row = $this->row($business, $part);
             $this->assertVersion($business, $part, $row, $data);
             $checks = [];
@@ -93,8 +95,8 @@ class OwnerVerificationChecklistService
 
     private function assertVersion(SpaBusiness $business, string $part, ?OwnerVerificationReview $row, array $data): void
     {
-        abort_unless(hash_equals(Checklist::fingerprint($business, $part), $data['evidence_hash'])
-            && ($row?->revision ?? 0) === (int) $data['revision'], 409,
+        throw_unless(hash_equals(Checklist::fingerprint($business, $part), $data['evidence_hash'])
+            && ($row?->revision ?? 0) === (int) $data['revision'], ChangedElsewhere::class,
             'The evidence or checklist changed in another session. Reload the review before continuing.');
     }
 
@@ -106,7 +108,7 @@ class OwnerVerificationChecklistService
         $data = $request->validate(['evidence_hash' => 'required|string|size:64', 'revision' => 'required|integer|min:1']);
         $row = $this->row($business, $part);
         $this->assertVersion($business, $part, $row, $data);
-        abort_unless($row && $this->current($business, $part, $row) && $row->decision === null, 409, 'Save the current evidence checklist before deciding.');
+        throw_unless($row && $this->current($business, $part, $row) && $row->decision === null, ChangedElsewhere::class, 'Save the current evidence checklist before deciding.');
 
         if ($approve) {
             $blockers = Checklist::blockers($business, $part);

@@ -2,13 +2,16 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentServiceStatus;
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
 use App\Models\Appointment;
 use App\Models\Attendance;
 use App\Models\BranchSchedule;
 use App\Models\Staff;
 use App\Models\StaffTimeOff;
 use App\Models\TherapistAssignment;
-use App\Support\BusinessDay;
+use App\Support\Branches\BusinessDay;
 use Carbon\Carbon;
 
 // The warnings shown next to a booking's assigned staff on the front desk: the assigned person is on
@@ -68,7 +71,7 @@ class AssignmentWarningService
 
         foreach ($appointments as $appointment) {
             $memo[$appointment->id] = [];
-            if (! in_array($appointment->status, [Appointment::STATUS_SCHEDULED, Appointment::STATUS_CHECKED_IN], true)
+            if (! in_array($appointment->status, [AppointmentStatus::Scheduled->value, AppointmentStatus::CheckedIn->value], true)
                 || $appointment->appointment_date->format('Y-m-d') < $today) {
                 continue;
             }
@@ -168,12 +171,12 @@ class AssignmentWarningService
     {
         $rows = [];
         foreach ($appointment->services as $service) {
-            if ($service->status !== 'Pending') {
+            if ($service->status !== AppointmentServiceStatus::Pending->value) {
                 continue;
             }
             foreach ($service->therapistAssignments as $assignment) {
                 /** @var TherapistAssignment $assignment */
-                if ($assignment->assignment_status === 'Assigned' && $assignment->staff) {
+                if ($assignment->assignment_status === AssignmentStatus::Assigned->value && $assignment->staff) {
                     $rows[] = ['staff' => $assignment->staff, 'service_uuid' => $service->uuid];
                 }
             }

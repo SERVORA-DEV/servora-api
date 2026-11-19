@@ -2,6 +2,7 @@
 
 namespace App\Repository\Business;
 
+use App\Enums\QueueStatus;
 use App\Models\Queue;
 use App\Service\Business\HomeServiceRules;
 use Illuminate\Database\Eloquent\Builder;
@@ -41,7 +42,7 @@ class QueueRepository
     {
         return Queue::where('spa_branch_id', $spaBranchId)
             ->where('appointment_date', $date)
-            ->whereIn('queue_status', ['Waiting', 'Called'])
+            ->whereIn('queue_status', [QueueStatus::Waiting->value, QueueStatus::Called->value])
             ->count();
     }
 
@@ -83,7 +84,7 @@ class QueueRepository
         $query = Queue::with('appointment.services.serviceVariant')
             ->where('spa_branch_id', $queue->spa_branch_id)
             ->where('appointment_date', $queue->appointment_date->format('Y-m-d'))
-            ->whereIn('queue_status', ['Waiting', 'Called'])
+            ->whereIn('queue_status', [QueueStatus::Waiting->value, QueueStatus::Called->value])
             ->where('id', '!=', $queue->id);
         $this->atTheSpa($query);
 
@@ -112,7 +113,7 @@ class QueueRepository
 
         $query = Queue::where('spa_branch_id', $queue->spa_branch_id)
             ->where('appointment_date', $queue->appointment_date->format('Y-m-d'))
-            ->whereIn('queue_status', ['Waiting', 'Called'])
+            ->whereIn('queue_status', [QueueStatus::Waiting->value, QueueStatus::Called->value])
             ->where('id', '!=', $queue->id)
             ->where(fn ($q) => $q->whereRaw("{$key} > ?", [$queue->lineTime()])
                 ->orWhere(fn ($tie) => $tie->whereRaw("{$key} = ?", [$queue->lineTime()])->where('id', '>', $queue->id)))
@@ -138,7 +139,7 @@ class QueueRepository
         $query = Queue::with('appointment.client')
             ->where('spa_branch_id', $queue->spa_branch_id)
             ->where('appointment_date', $queue->appointment_date->format('Y-m-d'))
-            ->whereIn('queue_status', ['Waiting', 'Called'])
+            ->whereIn('queue_status', [QueueStatus::Waiting->value, QueueStatus::Called->value])
             ->where('id', '!=', $queue->id)
             ->where(fn ($q) => $q->whereRaw("{$key} > ?", [$queue->lineTime()])
                 ->orWhere(fn ($tie) => $tie->whereRaw("{$key} = ?", [$queue->lineTime()])->where('id', '>', $queue->id)))

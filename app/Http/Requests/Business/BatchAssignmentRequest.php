@@ -4,7 +4,7 @@ namespace App\Http\Requests\Business;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-// Several of one booking's services given staff and/or a facility at once (AppointmentService::assignBatch).
+// Several of one booking's services given staff and/or a facility at once (VisitAssignmentService::assignBatch).
 class BatchAssignmentRequest extends FormRequest
 {
     public function authorize(): bool

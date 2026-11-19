@@ -2,12 +2,12 @@
 
 namespace App\Rules;
 
-use App\Support\SocialLinks;
+use App\Support\Branches\SocialLinks;
 use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
 
 // A Facebook page, Instagram handle or website that makes a link people can
-// open (App\Support\SocialLinks). Empty is fine.
+// open (App\Support\Branches\SocialLinks). Empty is fine.
 class SocialLink implements ValidationRule
 {
     private const MESSAGES = [

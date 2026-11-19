@@ -2,13 +2,14 @@
 
 namespace App\Service\System;
 
+use App\Exceptions\ActionRefused;
 use App\Models\SystemSetting;
 use App\Repository\AuditLogRepository;
 use App\Support\AppCache;
 use App\Repository\NotificationRepository;
 use App\Service\Business\StaffNotifier;
-use App\Support\ListingPolicy;
-use App\Support\PlatformSettingImpact;
+use App\Support\Platform\ListingPolicy;
+use App\Support\Platform\PlatformSettingImpact;
 use Illuminate\Support\Facades\Schema;
 
 class SystemSettingService
@@ -55,7 +56,7 @@ class SystemSettingService
         $policyAudit = [[], []];
         if (array_key_exists('listing_policy', $payload)) {
             if (! Schema::hasColumn('system_settings', 'listing_policy')) {
-                abort(422, 'The marketplace policy can\'t be saved yet: the database is behind the code. Run `php artisan migrate` first.');
+                throw new ActionRefused('The marketplace policy can\'t be saved yet: the database is behind the code. Run `php artisan migrate` first.');
             }
             $before = $settings->listingPolicy();
             $after = ListingPolicy::normalize(array_merge($before, $payload['listing_policy']));

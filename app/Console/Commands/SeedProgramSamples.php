@@ -2,6 +2,8 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\MembershipStatus;
+use App\Enums\VoucherStatus;
 use App\Models\Billing;
 use App\Models\Client;
 use App\Models\ClientMembership;
@@ -41,8 +43,8 @@ class SeedProgramSamples extends Command
 
     protected $description = 'Fill a business with sample customer-program data (programs, clients with points and vouchers, membership sales) for testing.';
 
-    // The same definitions DemoBusinessSeeder uses, plus one voucher that is
-    // for one category of services ("every 5th massage, 50% off a massage").
+    // A typical spa's programs, plus one voucher that is for one category of
+    // services ("every 5th massage, 50% off a massage").
     // Loyalty is left out on purpose: the owner's own points rules are never
     // overwritten.
     private const PROGRAMS = [
@@ -240,8 +242,8 @@ class SeedProgramSamples extends Command
             ['Programs', collect(['loyalty', 'voucher', 'discount', 'membership'])->map(fn ($t) => ($byType[$t] ?? 0) . " {$t}")->implode(', ')],
             ['Clients', (clone $clients)->count() . ' (' . $samples->count() . ' sample)'],
             ['Points held', number_format((int) (clone $clients)->sum('current_points'))],
-            ['Vouchers in wallets', ClientVoucher::whereIn('client_id', $ids)->where('status', 'available')->count()],
-            ['Active memberships', ClientMembership::whereIn('client_id', $ids)->where('status', 'active')->where('ends_at', '>', now())->count()],
+            ['Vouchers in wallets', ClientVoucher::whereIn('client_id', $ids)->where('status', VoucherStatus::Available->value)->count()],
+            ['Active memberships', ClientMembership::whereIn('client_id', $ids)->where('status', MembershipStatus::Active->value)->where('ends_at', '>', now())->count()],
             ['Membership bills', Billing::where('spa_business_id', $business->id)->where('billing_type', 'Membership')->count()
                 . ' (₱' . number_format((float) Billing::where('spa_business_id', $business->id)->where('billing_type', 'Membership')->sum('amount'), 2) . ')'],
         ]);

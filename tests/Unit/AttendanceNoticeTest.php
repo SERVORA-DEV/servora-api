@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\AttendanceNotice;
+use App\Support\Staff\AttendanceNotice;
 use Tests\TestCase;
 
 // What managers read when someone's attendance is marked, corrected or cleared.

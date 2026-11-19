@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Enums\AttendanceStatus;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -21,7 +22,7 @@ class AttendanceCorrectionRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'status' => ['sometimes', Rule::in(['Present', 'Late', 'Absent', 'Half Day', 'On Leave', 'Holiday'])],
+            'status' => ['sometimes', Rule::in([AttendanceStatus::Present->value, AttendanceStatus::Late->value, AttendanceStatus::Absent->value, AttendanceStatus::HalfDay->value, AttendanceStatus::OnLeave->value, AttendanceStatus::Holiday->value])],
             'check_in_at' => ['sometimes', 'nullable', 'date_format:H:i'],
             'check_out_at' => ['sometimes', 'nullable', 'date_format:H:i'],
             'remarks' => ['sometimes', 'nullable', 'string'],

@@ -1,6 +1,6 @@
 <?php
 
-// Pop-ups for new notifications while Servora isn't open (App\Service\PushSender).
+// Pop-ups for new notifications while Servora isn't open (App\Service\Notifications\PushSender).
 // Each half stays off until its keys are set.
 return [
     // Browsers (Web Push). Make a key pair once with `php artisan push:vapid`.

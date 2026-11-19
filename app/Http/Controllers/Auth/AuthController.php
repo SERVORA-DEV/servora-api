@@ -5,105 +5,95 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\ForgetPasswordRequest;
 use App\Http\Requests\Auth\GoogleLoginRequest;
+use App\Http\Requests\Auth\LoginRequest;
 use App\Http\Requests\Auth\TwoFactorLoginEmailCodeRequest;
 use App\Http\Requests\Auth\TwoFactorLoginVerifyRequest;
 use App\Http\Requests\Auth\ResendRegistrationOtpRequest;
 use App\Http\Requests\Auth\ResetPasswordRequest;
+use App\Http\Requests\Auth\VerificationStatusRequest;
 use App\Http\Requests\Auth\VerifyPasswordResetOtpRequest;
 use App\Http\Requests\Auth\VerifyRegistrationOtpRequest;
-use App\Rules\NoEmoji;
-use App\Service\UserService;
+use App\Service\Auth\GoogleSignInService;
+use App\Service\Auth\PasswordResetService;
+use App\Service\Auth\RegistrationService;
+use App\Service\Auth\SignInService;
 use Illuminate\Http\Request;
 
 class AuthController extends Controller
 {
-    private $userService;
-
-    public function __construct(UserService $userService)
-    {
-        $this->userService = $userService;
-    }
+    public function __construct(
+        private SignInService $signIn,
+        private GoogleSignInService $googleSignIn,
+        private PasswordResetService $passwordReset,
+        private RegistrationService $registration,
+    ) {}
 
     public function getUser(Request $request)
     {
-        return $this->userService->getUser($request->user()->uuid);
+        return $this->signIn->getUser($request->user()->uuid);
     }
 
-    // The sign-in has no form request of its own: its two credentials are held
-    // to the same no-emoji rule as the forms that set them.
-    private function plainCredentials(Request $request): void
+    public function login(LoginRequest $request)
     {
-        $request->validate([
-            'email' => [new NoEmoji()],
-            'password' => [new NoEmoji()],
-        ]);
+        return $this->signIn->login($request);
     }
 
-    public function login(Request $request)
-    {
-        $this->plainCredentials($request);
-
-        return $this->userService->login($request);
-    }
-
-    // The administrators' own door (see UserService::login): the same checks,
+    // The administrators' own door (see SignInService::login): the same checks,
     // but only an administrator account gets in, and only here.
-    public function adminLogin(Request $request)
+    public function adminLogin(LoginRequest $request)
     {
-        $this->plainCredentials($request);
-
-        return $this->userService->login($request, asAdmin: true);
+        return $this->signIn->login($request, asAdmin: true);
     }
 
     public function loginWithGoogle(GoogleLoginRequest $request)
     {
-        return $this->userService->loginWithGoogle($request);
+        return $this->googleSignIn->loginWithGoogle($request);
     }
 
-    public function verificationStatus(Request $request)
+    public function verificationStatus(VerificationStatusRequest $request)
     {
-        $data = $request->validate(['status_token' => ['required', 'string', 'max:100']]);
+        $data = $request->validated();
 
-        return $this->userService->verificationStatus($data['status_token']);
+        return $this->registration->verificationStatus($data['status_token']);
     }
 
     public function verifyTwoFactorLogin(TwoFactorLoginVerifyRequest $request)
     {
-        return $this->userService->verifyTwoFactorLogin($request);
+        return $this->signIn->verifyTwoFactorLogin($request);
     }
 
     public function requestTwoFactorEmailCode(TwoFactorLoginEmailCodeRequest $request)
     {
-        return $this->userService->requestTwoFactorEmailCode($request);
+        return $this->signIn->requestTwoFactorEmailCode($request);
     }
 
     public function logout(Request $request)
     {
-        return $this->userService->logoutUser($request->user(), $request);
+        return $this->signIn->logoutUser($request->user(), $request);
     }
 
     public function forgetPassword(ForgetPasswordRequest $request)
     {
-        return $this->userService->forgetPassword($request->validated());
+        return $this->passwordReset->forgetPassword($request->validated());
     }
 
     public function verifyForgetPasswordOtp(VerifyPasswordResetOtpRequest $request)
     {
-        return $this->userService->verifyForgetPasswordOtp($request->validated());
+        return $this->passwordReset->verifyForgetPasswordOtp($request->validated());
     }
 
     public function resetPassword(ResetPasswordRequest $request)
     {
-        return $this->userService->resetPassword($request->validated());
+        return $this->passwordReset->resetPassword($request->validated());
     }
 
     public function verifyRegistrationOtp(VerifyRegistrationOtpRequest $request)
     {
-        return $this->userService->verifyRegistrationOtp($request->validated());
+        return $this->registration->verifyRegistrationOtp($request->validated());
     }
 
     public function resendRegistrationOtp(ResendRegistrationOtpRequest $request)
     {
-        return $this->userService->resendRegistrationOtp($request->validated());
+        return $this->registration->resendRegistrationOtp($request->validated());
     }
 }

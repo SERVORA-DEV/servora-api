@@ -7,8 +7,8 @@ use App\Http\Resources\PackageResource;
 use App\Http\Resources\ServiceResource;
 use App\Http\Resources\SpaBranchResource;
 use App\Http\Resources\SubscriptionResource;
-use App\Services\DocumentUploadService;
-use App\Services\ImageUploadService;
+use App\Service\Uploads\DocumentUploadService;
+use App\Service\Uploads\ImageUploadService;
 use Illuminate\Http\Request;
 
 // Full "view everything" shape for a single business on the system admin

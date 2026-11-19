@@ -2,14 +2,14 @@
 
 namespace App\Models;
 
-use App\Support\PackagePlan;
+use App\Support\Catalog\PackagePlan;
 use Illuminate\Database\Eloquent\Model;
 
 // Maps to the package_services table — named ...Item (not PackageService) to
 // avoid colliding with App\Service\Business\PackageService, the business
 // logic class for the packages resource itself.
 //
-// One service in a package (App\Support\PackagePlan): which service, how long
+// One service in a package (App\Support\Catalog\PackagePlan): which service, how long
 // it runs in this package, and how many. A row saved before packages named
 // services still pins a menu length (service_variant_id) and reads through
 // it — theService() / minutes() / guideVariant() answer for both.

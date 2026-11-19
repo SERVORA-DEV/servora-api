@@ -8,12 +8,9 @@ use Illuminate\Http\Request;
 
 class QueueController extends Controller
 {
-    private QueueService $queueService;
-
-    public function __construct(QueueService $queueService)
-    {
-        $this->queueService = $queueService;
-    }
+    public function __construct(
+        private QueueService $queueService,
+    ) {}
 
     public function index(Request $request)
     {

@@ -92,7 +92,7 @@ class HomeServiceBookingTest extends TestCase
             'appointment_date' => self::DATE,
             'appointment_time' => '10:00',
             'services' => [['service_variant_uuid' => $this->variant->uuid]],
-            'client' => ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => '0917'.random_int(1000000, 9999999)],
+            'client' => ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => '0917'.random_int(1000000, 9999999), 'gender' => 'Female'],
             'service_location' => 'Home Service',
             'home_address' => '12 Acacia St, Davao City',
             'home_address_notes' => 'Blue gate',
@@ -115,8 +115,8 @@ class HomeServiceBookingTest extends TestCase
             ->assertSuccessful()
             ->assertJsonPath('data.is_home_service', true)
             ->assertJsonPath('data.home_address', '12 Acacia St, Davao City')
-            ->assertJsonPath('data.home_service_fee', 0.0)
-            ->assertJsonPath('data.total_amount', 700.0);
+            ->assertJsonPath('data.home_service_fee', 0)
+            ->assertJsonPath('data.total_amount', 700);
 
         $appointment = Appointment::sole();
         $this->assertSame('Home Service', $appointment->service_location);
@@ -155,8 +155,8 @@ class HomeServiceBookingTest extends TestCase
         $this->bookHome(self::NEAR, ['service_location' => 'In Spa'])
             ->assertSuccessful()
             ->assertJsonPath('data.is_home_service', false)
-            ->assertJsonPath('data.home_service_fee', 0.0)
-            ->assertJsonPath('data.total_amount', 700.0);
+            ->assertJsonPath('data.home_service_fee', 0)
+            ->assertJsonPath('data.total_amount', 700);
     }
 
     // There is no shortest home visit any more: the trip is counted as travel time instead.
@@ -177,7 +177,7 @@ class HomeServiceBookingTest extends TestCase
             'appointment_date' => self::DATE,
             'appointment_time' => '10:00',
             'appointment_type' => 'Reservation',
-            'client' => ['first_name' => 'Mia', 'last_name' => 'Reyes'],
+            'client' => ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => '09171234567', 'gender' => 'Female'],
             'services' => [['service_variant_uuid' => $this->variant->uuid]],
             'service_location' => 'Home Service',
             'home_address' => '12 Acacia St, Davao City',
@@ -220,7 +220,7 @@ class HomeServiceBookingTest extends TestCase
         $this->getJson("/api/spas/{$this->branch->uuid}")
             ->assertOk()
             ->assertJsonPath('data.home_service.enabled', true)
-            ->assertJsonPath('data.home_service.fee', 0.0)
+            ->assertJsonPath('data.home_service.fee', 0)
             ->assertJsonPath('data.home_service.radius_km', 8)
             ->assertJsonPath('data.home_service.travel_minutes', 20)
             ->assertJsonPath('data.services.0.home_service_available', true);

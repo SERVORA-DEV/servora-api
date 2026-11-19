@@ -2,6 +2,7 @@
 
 namespace App\Repository\System;
 
+use App\Enums\VerificationStatus;
 use App\Models\OwnerIdentityVerification;
 use App\Models\SpaBusiness;
 use App\Models\User;
@@ -15,9 +16,9 @@ class OwnerVerificationRepository
     {
         return SpaBusiness::with(['owner.ownerIdentityVerification', 'verifier'])
             ->where(function ($query) {
-                $query->where('verification_status', 'Pending')
+                $query->where('verification_status', VerificationStatus::Pending->value)
                     ->orWhereHas('owner.ownerIdentityVerification', function ($identityQuery) {
-                        $identityQuery->where('status', 'Pending');
+                        $identityQuery->where('status', VerificationStatus::Pending->value);
                     });
             })
             ->latest()

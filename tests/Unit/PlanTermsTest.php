@@ -3,7 +3,7 @@
 namespace Tests\Unit;
 
 use App\Models\SubscriptionPlan;
-use App\Support\PlanTerms;
+use App\Support\Platform\PlanTerms;
 use Tests\TestCase;
 
 class PlanTermsTest extends TestCase

@@ -96,14 +96,4 @@ class Billing extends Model
     {
         return $this->hasMany(Payment::class, 'billing_id');
     }
-
-    public function discountProgram()
-    {
-        return $this->belongsTo(CustomerProgram::class, 'discount_program_id')->withTrashed();
-    }
-
-    public function clientVoucher()
-    {
-        return $this->belongsTo(ClientVoucher::class, 'client_voucher_id');
-    }
 }

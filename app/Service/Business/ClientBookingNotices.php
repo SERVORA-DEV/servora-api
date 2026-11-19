@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentStatus;
 use App\Models\Appointment;
 use App\Models\BranchSchedule;
 use App\Models\Notification;
@@ -35,7 +36,7 @@ class ClientBookingNotices
     public function bookingsInside(SpaBranch $branch, Carbon $start, Carbon $end): Collection
     {
         return Appointment::where('spa_branch_id', $branch->id)
-            ->where('status', Appointment::STATUS_SCHEDULED)
+            ->where('status', AppointmentStatus::Scheduled->value)
             // A day early, for a visit that started the evening before.
             ->whereBetween('appointment_date', [$start->copy()->subDay()->toDateString(), $end->toDateString()])
             ->with(['client', 'services.serviceVariant'])
@@ -75,7 +76,7 @@ class ClientBookingNotices
         $week = BranchSchedule::where('spa_branch_id', $branch->id)->get()->keyBy('day_of_week');
 
         $outside = Appointment::where('spa_branch_id', $branch->id)
-            ->where('status', Appointment::STATUS_SCHEDULED)
+            ->where('status', AppointmentStatus::Scheduled->value)
             ->whereDate('appointment_date', '>=', now()->toDateString())
             ->with(['client', 'services.serviceVariant'])
             ->get()

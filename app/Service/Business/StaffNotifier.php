@@ -85,8 +85,8 @@ class StaffNotifier
         }
 
         // The logins given this branch: 'manager' = Management there,
-        // 'frontdesk' = Operation there (App\Support\AccountScope).
-        $recipients = collect(\App\Support\AccountScope::userIdsAt([$branch->id], $roles))
+        // 'frontdesk' = Operation there (App\Support\Access\AccountScope).
+        $recipients = collect(\App\Support\Access\AccountScope::userIdsAt([$branch->id], $roles))
             ->when($includeOwner, fn ($ids) => $ids->push($business->owner_id))
             ->filter()
             ->unique()

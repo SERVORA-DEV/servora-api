@@ -4,10 +4,10 @@ namespace Tests\Unit;
 
 use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
-use App\Service\PlanSwitchService;
-use App\Service\SubscriptionAddonService;
-use App\Support\PlanTerms;
-use App\Support\SlotProration;
+use App\Service\Subscription\PlanSwitchService;
+use App\Service\Subscription\SubscriptionAddonService;
+use App\Support\Platform\PlanTerms;
+use App\Support\Platform\SlotProration;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;

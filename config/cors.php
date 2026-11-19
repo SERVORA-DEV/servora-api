@@ -39,7 +39,7 @@ return [
         // "https://*.example.com" in CORS_ALLOWED_ORIGINS: the * is one host
         // label (preview deployments, a staging subdomain) — in production too.
         array_map(
-            fn ($o) => \App\Support\AllowedOrigin::wildcardPattern($o),
+            fn ($o) => \App\Support\Access\AllowedOrigin::wildcardPattern($o),
             array_values(array_filter($configured, fn ($o) => str_contains($o, '*'))),
         ),
         $isProduction ? [] : [

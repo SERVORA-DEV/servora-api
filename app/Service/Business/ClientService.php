@@ -11,14 +11,10 @@ use App\Http\Resources\ClientResource;
 
 class ClientService
 {
-    private ClientRepository $clientRepository;
-    private SpaBusinessRepository $spaBusinessRepository;
-
-    public function __construct(ClientRepository $clientRepository, SpaBusinessRepository $spaBusinessRepository)
-    {
-        $this->clientRepository = $clientRepository;
-        $this->spaBusinessRepository = $spaBusinessRepository;
-    }
+    public function __construct(
+        private ClientRepository $clientRepository,
+        private SpaBusinessRepository $spaBusinessRepository,
+    ) {}
 
     // Owner: the whole business (null = no branch limit). Manager / front
     // officer: only their own branch's clients.
@@ -29,7 +25,11 @@ class ClientService
             : $this->spaBusinessRepository->branchIdsForUser($user);
     }
 
-    public function search(User $user, ?string $query, int $perPage = 15)
+    /**
+     * One page of clients. `$filters` (the owner's Clients page): segment, branch_uuid, sort —
+     * see ClientRepository::search.
+     */
+    public function search(User $user, ?string $query, int $perPage = 15, array $filters = [])
     {
         $business = $this->spaBusinessRepository->findForUser($user);
 
@@ -37,7 +37,11 @@ class ClientService
             return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
-        $clients = $this->clientRepository->search($business->id, $query, $perPage, $this->branchScope($user));
+        // The branch a client is listed at: one of this business's own.
+        if (! empty($filters['branch_uuid'])) {
+            $filters['branch_id'] = \App\Models\SpaBranch::where('spa_business_id', $business->id)->where('uuid', $filters['branch_uuid'])->value('id') ?? 0;
+        }
+        $clients = $this->clientRepository->search($business->id, $query, $perPage, $this->branchScope($user), $filters);
         // Each client's branch for the list: where they last came, else where they were added.
         // One read for the page's branches.
         $ids = $clients->getCollection()->map(fn (Client $c) => $c->last_branch_id ?: $c->spa_branch_id)->filter()->unique()->values()->all();
@@ -48,6 +52,17 @@ class ClientService
         });
 
         return ClientResource::collection($clients);
+    }
+
+    /** The Clients page's figures over every client in the caller's scope. */
+    public function summary(User $user)
+    {
+        $business = $this->spaBusinessRepository->findForUser($user);
+        if (! $business) {
+            return response()->json(['message' => 'No spa business found for this account.'], 422);
+        }
+
+        return response()->json(['data' => $this->clientRepository->summary($business->id, $this->branchScope($user))]);
     }
 
     public function show(User $user, string $uuid)

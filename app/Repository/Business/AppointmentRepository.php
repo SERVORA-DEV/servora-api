@@ -30,24 +30,28 @@ class AppointmentRepository
             : self::EAGER;
     }
 
-    public function paginateForBranches(array $spaBranchIds, array $filters, int $perPage = 15)
+    /**
+     * One page of the branches' visits. `$list`: only what a table shows
+     * (AppointmentListResource), so none of the bill, rooms or requested staff is loaded.
+     * `$sort`: 'booked' for the latest booked first, else by the visit's day and time.
+     */
+    public function paginateForBranches(array $spaBranchIds, array $filters, int $perPage = 15, bool $list = false, string $sort = 'date')
     {
-        return Appointment::with([
-            'client', 'branch',
-            'services.serviceVariant.service',
-            'services.therapistAssignments.staff',
-            'services.therapistAssignments.facility',
-            // billing.payments: the board's "Collect ₱…" needs the balance
-            // actually due, not the pre-discount appointment price.
-            'queue', 'billing.payments',
-        ])
-            ->when(Appointment::remembersRequests(), fn ($q) => $q->with('requestedStaff'))
+        $with = $list
+            ? ['client', 'branch', 'services.serviceVariant.service', 'services.therapistAssignments.staff', 'queue']
+            : [
+                'client', 'branch',
+                'services.serviceVariant.service',
+                'services.therapistAssignments.staff',
+                'services.therapistAssignments.facility',
+                // billing.payments: the board's "Collect ₱…" needs the balance
+                // actually due, not the pre-discount appointment price.
+                'queue', 'billing.payments',
+            ];
+
+        return AppointmentListQuery::apply(Appointment::with($with), $filters)
+            ->when(! $list && Appointment::remembersRequests(), fn ($q) => $q->with('requestedStaff'))
             ->whereIn('spa_branch_id', $spaBranchIds)
-            ->when($filters['date'] ?? null, fn ($q, $date) => $q->where('appointment_date', $date))
-            // The front desk's working window (a week back, two months ahead).
-            ->when($filters['date_from'] ?? null, fn ($q, $date) => $q->where('appointment_date', '>=', $date))
-            ->when($filters['date_to'] ?? null, fn ($q, $date) => $q->where('appointment_date', '<=', $date))
-            ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
             ->when($filters['client_uuid'] ?? null, fn ($q, $uuid) => $q->whereHas('client', fn ($c) => $c->where('uuid', $uuid)))
             // One staff member's bookings (the employee page): the ones they
             // are assigned to, and the ones that asked for them by name even
@@ -61,8 +65,10 @@ class AppointmentRepository
                     ->whereHas('services.therapistAssignments', fn ($t) => $t->where('staff_id', $staffId))
                     ->when(Appointment::remembersRequests(), fn ($r) => $r->orWhere('requested_staff_id', $staffId)));
             })
+            ->when($sort === 'booked', fn ($q) => $q->orderByDesc('created_at'))
             ->orderByDesc('appointment_date')
             ->orderByDesc('appointment_time')
+            ->orderByDesc('id')
             ->paginate($perPage);
     }
 

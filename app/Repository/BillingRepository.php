@@ -2,6 +2,8 @@
 
 namespace App\Repository;
 
+use App\Enums\BillingStatus;
+use App\Enums\PaymentStatus;
 use App\Models\Billing;
 use Illuminate\Support\Str;
 
@@ -40,16 +42,69 @@ class BillingRepository
     // "Transaction" page. Payments are eager-loaded newest-first so
     // TransactionResource can grab payments->first() as the latest attempt
     // (a billing can have more than one, e.g. a retry after a failed charge).
-    public function paginateSubscriptionTransactions(int $perPage = 100)
+    //
+    // Filtered by the API (the admin Transaction page): search (invoice, business, owner, payment
+    // or gateway reference), status (paid, pending, …), plan (its category), date_from / date_to
+    // (the day it was paid), sort (newest, oldest, amount-desc, amount-asc; by payment date).
+    public function paginateSubscriptionTransactions(int $perPage = 100, array $filters = [])
     {
-        return Billing::with([
-            'subscription.plan',
-            'subscription.business.owner',
-            'payments' => fn ($query) => $query->latest('paid_at'),
-        ])
-            ->where('billing_type', 'Subscription')
-            ->orderByDesc('issued_at')
+        $sort = $filters['sort'] ?? null;
+
+        return $this->subscriptionTransactions($filters)
+            ->with([
+                'subscription.plan',
+                'subscription.business.owner',
+                'payments' => fn ($query) => $query->latest('paid_at'),
+            ])
+            ->when($sort === null, fn ($q) => $q->orderByDesc('issued_at'))
+            ->when($sort === 'newest', fn ($q) => $q->orderByRaw('paid_at desc nulls last'))
+            ->when($sort === 'oldest', fn ($q) => $q->orderByRaw('paid_at asc nulls first'))
+            ->when($sort === 'amount-desc', fn ($q) => $q->orderByDesc('amount'))
+            ->when($sort === 'amount-asc', fn ($q) => $q->orderBy('amount'))
+            ->orderByDesc('id')
             ->paginate($perPage);
+    }
+
+    /** The subscription bills, with the Transaction page's filters. */
+    public function subscriptionTransactions(array $filters = [])
+    {
+        $search = is_string($filters['search'] ?? null) ? trim($filters['search']) : '';
+
+        return Billing::query()
+            ->where('billing_type', 'Subscription')
+            ->when($search !== '', fn ($q) => $q->where(fn ($w) => $w
+                ->whereLike('billing_number', "%{$search}%")
+                ->orWhereHas('subscription.business', fn ($b) => $b->whereLike('business_name', "%{$search}%")
+                    ->orWhereHas('owner', fn ($o) => $o->whereLike('email', "%{$search}%")
+                        ->orWhereRaw("LOWER(COALESCE(first_name, '') || ' ' || COALESCE(last_name, '')) LIKE ?", ['%' . mb_strtolower($search) . '%'])))
+                ->orWhereHas('payments', fn ($p) => $p->whereLike('reference_number', "%{$search}%")->orWhereLike('gateway_reference', "%{$search}%"))))
+            ->when($filters['status'] ?? null, fn ($q, $s) => $q->whereRaw('LOWER(status) = ?', [strtolower($s)]))
+            ->when($filters['plan'] ?? null, fn ($q, $p) => $q->whereHas('subscription.plan', fn ($pl) => $pl->where('category', $p)))
+            ->when($filters['date_from'] ?? null, fn ($q, $d) => $q->where('paid_at', '>=', \Illuminate\Support\Carbon::parse($d)->startOfDay()))
+            ->when($filters['date_to'] ?? null, fn ($q, $d) => $q->where('paid_at', '<=', \Illuminate\Support\Carbon::parse($d)->endOfDay()));
+    }
+
+    /**
+     * The Transaction page's overview, over every subscription bill: revenue and how many were
+     * paid, how many renewals (a subscription's bills after its first), and the bills per status.
+     */
+    public function subscriptionTransactionTotals(): array
+    {
+        $bills = Billing::query()->where('billing_type', 'Subscription');
+        $row = (clone $bills)->toBase()->selectRaw(
+            'count(*) as bills, count(distinct subscription_id) as subscriptions, sum(case when subscription_id is not null then 1 else 0 end) as linked,'
+            . " coalesce(sum(case when status = '" . BillingStatus::Paid->value . "' then amount else 0 end), 0) as revenue,"
+            . " sum(case when status = '" . BillingStatus::Paid->value . "' then 1 else 0 end) as paid"
+        )->first();
+        $byStatus = (clone $bills)->toBase()->groupBy('status')->selectRaw('LOWER(status) as s, count(*) as n')->pluck('n', 's');
+
+        return [
+            'total_revenue' => round((float) $row->revenue, 2),
+            'paid_count' => (int) $row->paid,
+            'renewals_count' => max(0, (int) $row->linked - (int) $row->subscriptions),
+            'status_counts' => array_merge(['paid' => 0, 'pending' => 0, 'overdue' => 0, 'cancelled' => 0, 'refunded' => 0],
+                collect($byStatus)->map(fn ($n) => (int) $n)->all()),
+        ];
     }
 
     // Top-N for the system dashboard's "Recent Transactions" card — same
@@ -69,7 +124,7 @@ class BillingRepository
     }
 
     // One appointment has at most one Billing row — enforced in
-    // AppointmentService::proceedToBilling (422 if one already exists), not
+    // VisitBillingService::proceedToBilling (422 if one already exists), not
     // at the DB level, since appointment_id stays nullable/shared with
     // Subscription billing.
     public function findForAppointment(int $appointmentId)
@@ -97,25 +152,10 @@ class BillingRepository
         ])
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->where('billing_type', 'Appointment')
-            // 'unpaid' / 'partially_paid' aren't stored — both are Pending,
-            // told apart by whether anything has been paid yet.
-            ->when($filters['status'] ?? null, fn ($q, $status) => match ($status) {
-                'unpaid' => $q->where('status', 'Pending')->whereDoesntHave('payments', fn ($p) => $p->where('payment_status', 'Paid')),
-                'partially_paid' => $q->where('status', 'Pending')->whereHas('payments', fn ($p) => $p->where('payment_status', 'Paid')),
-                default => $q->where('status', $status),
-            })
-            ->when($filters['payment_method'] ?? null, fn ($q, $method) => $q->whereHas('payments', fn ($p) => $p->where('payment_method', $method)))
-            ->when($filters['date_from'] ?? null, fn ($q, $date) => $q->whereDate('issued_at', '>=', $date))
-            ->when($filters['date_to'] ?? null, fn ($q, $date) => $q->whereDate('issued_at', '<=', $date))
-            // whereLike, not where(..., 'like', ...): it defaults to
-            // case-insensitive and compiles to ilike on PostgreSQL, where a
-            // plain LIKE would make "ana cruz" stop matching "Ana Cruz".
-            ->when($filters['search'] ?? null, fn ($q, $search) => $q->where(fn ($qq) => $qq
-                ->whereLike('billing_number', "%{$search}%")
-                ->orWhereHas('appointment', fn ($a) => $a->whereLike('appointment_number', "%{$search}%"))
-                ->orWhereHas('appointment.client', fn ($c) => $c->whereLike('first_name', "%{$search}%")
-                    ->orWhereLike('last_name', "%{$search}%"))))
-            ->orderByDesc('issued_at')
+            // Status, method, dates and search: BillingListQuery, shared with the counts and totals.
+            ->tap(fn ($q) => BillingListQuery::apply($q, $filters))
+            // Latest issued first, or the oldest first.
+            ->when(($filters['sort'] ?? null) === 'oldest', fn ($q) => $q->orderBy('issued_at')->orderBy('id'), fn ($q) => $q->orderByDesc('issued_at')->orderByDesc('id'))
             ->paginate($perPage);
     }
 }

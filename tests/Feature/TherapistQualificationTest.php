@@ -79,6 +79,10 @@ class TherapistQualificationTest extends TestCase
 
         [$this->massage, $this->massageVariant] = $this->service('Swedish Massage');
         [$this->facial, $this->facialVariant] = $this->service('Classic Facial');
+
+        // These book on fixed 2027 dates: lift the "book up to N days ahead" limit (BookingPolicy).
+        \App\Models\SpaBusinessSetting::updateOrCreate(['spa_business_id' => $this->business->id], ['booking_defaults' => ['max_advance_booking_days' => 0]]);
+        \App\Service\Client\BookingPolicy::flush();
     }
 
     /** @return array{0: Service, 1: ServiceVariant} */
@@ -218,7 +222,7 @@ class TherapistQualificationTest extends TestCase
 
         $this->assertInstanceOf(JsonResponse::class, $result);
         $this->assertSame(422, $result->getStatusCode());
-        $this->assertSame('This therapist is not qualified to perform this service.', $this->msg($result));
+        $this->assertSame('This staff member is not qualified to perform this service.', $this->msg($result));
     }
 
     // ── The manager sub-resource ─────────────────────────────────────────

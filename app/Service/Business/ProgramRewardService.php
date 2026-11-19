@@ -2,6 +2,10 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentServiceStatus;
+use App\Enums\BillingStatus;
+use App\Enums\MembershipStatus;
+use App\Enums\VoucherStatus;
 use App\Models\Appointment;
 use App\Models\Billing;
 use App\Models\Client;
@@ -10,10 +14,10 @@ use App\Models\ClientPointEntry;
 use App\Models\ClientVoucher;
 use App\Models\CustomerProgram;
 use App\Support\AppCache;
-use App\Support\AppOnlyPrograms;
-use App\Support\LoyaltyEarning;
-use App\Support\ProgramChannel;
-use App\Support\VoucherTarget;
+use App\Support\Programs\AppOnlyPrograms;
+use App\Support\Programs\LoyaltyEarning;
+use App\Support\Programs\ProgramChannel;
+use App\Support\Programs\VoucherTarget;
 use App\Models\User;
 use App\Repository\NotificationRepository;
 use Carbon\CarbonInterface;
@@ -26,7 +30,7 @@ use Illuminate\Support\Facades\DB;
 //                     — nothing is added per service or package) and any
 //                     vouchers whose condition it meets (spend in one visit,
 //                     every Nth visit — or every Nth visit with certain
-//                     services, see App\Support\VoucherTarget — first visit)
+//                     services, see App\Support\Programs\VoucherTarget — first visit)
 //   onBillReopened()  a voided/refunded bill gives those back
 //   redeemPoints()    points → a "Redeem loyalty points" voucher
 //   issueMembershipVouchers()  the vouchers a membership bundles, per period
@@ -101,7 +105,7 @@ class ProgramRewardService
         // earns only for visits from there.
         $where = ProgramChannel::whereOf($appointment);
 
-        // Points are for clients who use the app (App\Support\LoyaltyEarning),
+        // Points are for clients who use the app (App\Support\Programs\LoyaltyEarning),
         // and so is everything else here (checked above).
         $loyalty = $programs->firstWhere('type', 'loyalty');
         if ($loyalty && ProgramChannel::allows(ProgramChannel::of($loyalty), $where) && LoyaltyEarning::earns($client->usesApp()) && ($points = $this->creditPoints($client, $billing, $loyalty)) > 0) {
@@ -115,7 +119,7 @@ class ProgramRewardService
             }
             $due = match ($voucher->condition_kind) {
                 'min_spend' => $voucher->condition_value && (float) $billing->amount + 0.004 >= $voucher->condition_value
-                    && ! ClientVoucher::where('customer_program_id', $voucher->id)->where('source_billing_id', $billing->id)->where('status', '!=', 'cancelled')->exists() ? 1 : 0,
+                    && ! ClientVoucher::where('customer_program_id', $voucher->id)->where('source_billing_id', $billing->id)->where('status', '!=', VoucherStatus::Cancelled->value)->exists() ? 1 : 0,
                 'visits' => $voucher->condition_value
                     ? max(0, intdiv(VoucherTarget::visits(VoucherTarget::of($voucher->values, 'earn'), $visits), $voucher->condition_value) - $this->issuedCount($client, $voucher, 'visits'))
                     : 0,
@@ -164,13 +168,13 @@ class ProgramRewardService
         }
 
         ClientVoucher::where('source_billing_id', $billing->id)
-            ->where('status', 'available')
-            ->update(['status' => 'cancelled']);
+            ->where('status', VoucherStatus::Available->value)
+            ->update(['status' => VoucherStatus::Cancelled->value]);
 
         if ($refunded && $billing->client_voucher_id) {
             ClientVoucher::whereKey($billing->client_voucher_id)
-                ->where('status', 'used')
-                ->update(['status' => 'available', 'used_at' => null, 'used_billing_id' => null, 'used_by' => null]);
+                ->where('status', VoucherStatus::Used->value)
+                ->update(['status' => VoucherStatus::Available->value, 'used_at' => null, 'used_billing_id' => null, 'used_by' => null]);
         }
     }
 
@@ -336,7 +340,7 @@ class ProgramRewardService
             'client_membership_id' => $membership?->id,
             'issued_at' => now(),
             'expires_at' => $expiresAt ?? $this->addPeriod(now(), $voucher->value('validDays', '3 months')),
-            'status' => 'available',
+            'status' => VoucherStatus::Available->value,
         ]);
     }
 
@@ -408,7 +412,7 @@ class ProgramRewardService
         $held = ClientVoucher::where('client_id', $client->id)
             ->where('customer_program_id', $voucher->id)
             ->where('source', 'first_visit')
-            ->where('status', 'available')
+            ->where('status', VoucherStatus::Available->value)
             ->first();
         if ($held) {
             return $held;
@@ -449,11 +453,11 @@ class ProgramRewardService
             ->join('appointments', 'appointments.id', '=', 'billings.appointment_id')
             ->leftJoin('appointment_services', fn ($join) => $join
                 ->on('appointment_services.appointment_id', '=', 'appointments.id')
-                ->where('appointment_services.status', '!=', 'Cancelled'))
+                ->where('appointment_services.status', '!=', AppointmentServiceStatus::Cancelled->value))
             ->leftJoin('service_variants', 'service_variants.id', '=', 'appointment_services.service_variant_id')
             ->leftJoin('services', 'services.id', '=', 'service_variants.service_id')
             ->where('billings.billing_type', 'Appointment')
-            ->where('billings.status', 'Paid')
+            ->where('billings.status', BillingStatus::Paid->value)
             ->whereNull('billings.deleted_at')
             ->whereNull('appointments.deleted_at')
             ->where('appointments.client_id', $client->id)
@@ -486,7 +490,7 @@ class ProgramRewardService
         return ClientVoucher::where('client_id', $client->id)
             ->where('customer_program_id', $voucher->id)
             ->where('source', $source)
-            ->where('status', '!=', 'cancelled')
+            ->where('status', '!=', VoucherStatus::Cancelled->value)
             ->count();
     }
 
@@ -496,8 +500,8 @@ class ProgramRewardService
     {
         $counts = ['memberships' => 0, 'vouchers' => 0, 'points' => 0, 'birthday' => 0];
 
-        $counts['memberships'] = ClientMembership::where('status', 'active')->where('ends_at', '<=', now())->update(['status' => 'expired']);
-        $counts['vouchers'] = ClientVoucher::where('status', 'available')->whereNotNull('expires_at')->where('expires_at', '<=', now())->update(['status' => 'expired']);
+        $counts['memberships'] = ClientMembership::where('status', MembershipStatus::Active->value)->where('ends_at', '<=', now())->update(['status' => MembershipStatus::Expired->value]);
+        $counts['vouchers'] = ClientVoucher::where('status', VoucherStatus::Available->value)->whereNotNull('expires_at')->where('expires_at', '<=', now())->update(['status' => VoucherStatus::Expired->value]);
 
         ClientPointEntry::where('type', 'earn')->where('remaining', '>', 0)->whereNotNull('expires_at')->where('expires_at', '<=', now())
             ->orderBy('id')->chunkById(200, function ($entries) use (&$counts) {

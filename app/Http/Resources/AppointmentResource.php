@@ -28,7 +28,7 @@ class AppointmentResource extends JsonResource
             'home_longitude' => $this->home_longitude,
             'home_distance_km' => $this->home_distance_km,
             'home_service_fee' => (float) $this->home_service_fee,
-            // Starting a home visit by scanning (App\Support\HomeVisitStart):
+            // Starting a home visit by scanning (App\Support\Visits\HomeVisitStart):
             // the code the staff can type into their scanner, and when a
             // scan started the visit. Null until they exist.
             'home_start_code' => \App\Models\Appointment::hasHomeStart() && $this->isHomeService() ? $this->home_start_code : null,
@@ -51,7 +51,7 @@ class AppointmentResource extends JsonResource
                 array_key_exists('covered_by', $this->resource->getAttributes()) || $this->resource->relationLoaded('packages'),
                 fn () => array_key_exists('covered_by', $this->resource->getAttributes())
                     ? $this->resource->getAttribute('covered_by')
-                    : (\App\Support\SharedPackages::coveredByFor([$this->resource->id])[$this->resource->id] ?? null),
+                    : (\App\Support\Catalog\SharedPackages::coveredByFor([$this->resource->id])[$this->resource->id] ?? null),
             ),
             // Reuses AppointmentAvailabilityService's own overlap-checking
             // math (sum of non-cancelled services' variant durations) so

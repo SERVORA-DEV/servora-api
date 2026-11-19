@@ -2,15 +2,17 @@
 
 namespace App\Service\Business;
 
+use App\Enums\ProgramRequestStatus;
 use App\Http\Resources\CustomerProgramResource;
 use App\Models\CustomerProgram;
 use App\Models\ProgramRequest;
 use App\Models\User;
 use App\Repository\SpaBusinessRepository;
-use App\Service\NotificationService;
+use App\Service\Notifications\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 // Customer programs are the owner's. A manager who wants a new voucher,
 // discount or membership for their branch fills it in here and sends it; the
@@ -54,13 +56,13 @@ class ProgramRequestService
             ->where('spa_business_id', $business->id);
 
         if ($user->role === 'business_owner') {
-            $query->where('status', ProgramRequest::PENDING);
+            $query->where('status', ProgramRequestStatus::Pending->value);
         } else {
             $query->whereIn('spa_branch_id', $this->spaBusinessRepository->branchIdsForUser($user))
                 ->where(function ($q) {
-                    $q->where('status', ProgramRequest::PENDING)
+                    $q->where('status', ProgramRequestStatus::Pending->value)
                         ->orWhere(function ($decided) {
-                            $decided->whereIn('status', [ProgramRequest::APPROVED, ProgramRequest::DECLINED])
+                            $decided->whereIn('status', [ProgramRequestStatus::Approved->value, ProgramRequestStatus::Declined->value])
                                 ->where('decided_at', '>=', now()->subDays(self::KEEP_DECIDED_DAYS));
                         });
                 });
@@ -76,13 +78,11 @@ class ProgramRequestService
 
     public function create(User $user, array $payload)
     {
-        if ($user->role !== 'manager') {
-            return $this->refuse('Only a branch manager sends a request. The owner creates programs directly.', 403);
-        }
+        Gate::forUser($user)->authorize('create', ProgramRequest::class);
 
         $business = $this->spaBusinessRepository->findForUser($user);
-        // The branch they are working in (App\Support\AccountScope::workingBranch).
-        $branch = \App\Support\AccountScope::workingBranch($user);
+        // The branch they are working in (App\Support\Access\AccountScope::workingBranch).
+        $branch = \App\Support\Access\AccountScope::workingBranch($user);
         if (! $business || ! $branch) {
             return $this->refuse('No branch found for this account.');
         }
@@ -108,7 +108,7 @@ class ProgramRequestService
             return $this->refuse("A {$type} called \"{$name}\" already exists. Use another name.");
         }
 
-        $waiting = ProgramRequest::where('spa_branch_id', $branch->id)->where('status', ProgramRequest::PENDING);
+        $waiting = ProgramRequest::where('spa_branch_id', $branch->id)->where('status', ProgramRequestStatus::Pending->value);
 
         if ((clone $waiting)->where('type', $type)->whereRaw('LOWER(name) = ?', [$lower])->exists()) {
             return $this->refuse("\"{$name}\" has already been requested and is waiting for the owner.");
@@ -132,7 +132,7 @@ class ProgramRequestService
             'name' => $name,
             'payload' => $parts,
             'note' => trim($payload['note'] ?? '') ?: null,
-            'status' => ProgramRequest::PENDING,
+            'status' => ProgramRequestStatus::Pending->value,
         ]);
 
         if ($business->owner) {
@@ -153,11 +153,9 @@ class ProgramRequestService
             return $this->refuse('This request has already been answered or withdrawn.');
         }
 
-        if ($user->role !== 'business_owner' && $request->requested_by_user_id !== $user->id) {
-            return $this->refuse('Only the person who made this request can withdraw it.', 403);
-        }
+        Gate::forUser($user)->authorize('withdraw', $request);
 
-        $request->update(['status' => ProgramRequest::WITHDRAWN]);
+        $request->update(['status' => ProgramRequestStatus::Withdrawn->value]);
 
         return response()->json(['message' => 'Request withdrawn.']);
     }
@@ -166,9 +164,7 @@ class ProgramRequestService
     // (name and parts) when they changed it first; null creates it as asked.
     public function approve(User $user, string $uuid, ?array $changed = null)
     {
-        if ($user->role !== 'business_owner') {
-            return $this->refuse('Only the owner can answer a request.', 403);
-        }
+        Gate::forUser($user)->authorize('decide', ProgramRequest::class);
 
         return DB::transaction(function () use ($user, $uuid, $changed) {
             $request = $this->findPending($user, $uuid, lock: true);
@@ -192,7 +188,7 @@ class ProgramRequestService
             }
 
             $request->update([
-                'status' => ProgramRequest::APPROVED,
+                'status' => ProgramRequestStatus::Approved->value,
                 'decided_by_user_id' => $user->id,
                 'decided_at' => now(),
                 'customer_program_id' => $created->resource->id,
@@ -212,9 +208,7 @@ class ProgramRequestService
 
     public function decline(User $user, string $uuid, ?string $reason)
     {
-        if ($user->role !== 'business_owner') {
-            return $this->refuse('Only the owner can answer a request.', 403);
-        }
+        Gate::forUser($user)->authorize('decide', ProgramRequest::class);
 
         $request = $this->findPending($user, $uuid);
         if (! $request) {
@@ -224,7 +218,7 @@ class ProgramRequestService
         $reason = trim($reason ?? '') ?: null;
 
         $request->update([
-            'status' => ProgramRequest::DECLINED,
+            'status' => ProgramRequestStatus::Declined->value,
             'decided_by_user_id' => $user->id,
             'decided_at' => now(),
             'decision_note' => $reason,
@@ -250,7 +244,7 @@ class ProgramRequestService
         return ProgramRequest::with(['branch', 'requester.staff'])
             ->where('uuid', $uuid)
             ->whereIn('spa_branch_id', $this->spaBusinessRepository->branchIdsForUser($user))
-            ->where('status', ProgramRequest::PENDING)
+            ->where('status', ProgramRequestStatus::Pending->value)
             ->when($lock, fn ($q) => $q->lockForUpdate())
             ->first();
     }

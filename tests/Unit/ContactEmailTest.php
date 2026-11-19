@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\ContactEmail;
+use App\Support\Branches\ContactEmail;
 use PHPUnit\Framework\TestCase;
 
 // The email put in Settings for the business or a branch is confirmed by a

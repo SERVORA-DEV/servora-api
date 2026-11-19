@@ -13,7 +13,7 @@ use App\Models\SubscriptionPlan;
 use App\Models\User;
 use App\Service\Business\BranchCloneService;
 use App\Service\Business\SpaBranchService;
-use App\Service\PlanFitService;
+use App\Service\Subscription\PlanFitService;
 use App\Support\AppCache;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -223,7 +223,8 @@ class BranchCloneTest extends TestCase
 
         $response = $this->postJson($this->url(), $payload)->assertCreated()
             ->assertJsonPath('data.verification_status', 'Unregistered')
-            ->assertJsonPath('data.code', 'NEW-Copy')
+            // The branch area is kept in capitals, as when a branch is added or edited.
+            ->assertJsonPath('data.code', 'NEW-COPY')
             ->assertJsonPath('copied.facilities', 1)->assertJsonPath('copied.offerings', 2)
             ->assertJsonPath('copied.hours', 1)->assertJsonPath('copied.programs', 1);
         $target = SpaBranch::where('uuid', $response->json('data.uuid'))->sole();

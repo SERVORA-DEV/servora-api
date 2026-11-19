@@ -8,15 +8,16 @@ use App\Models\SpaBusinessSetting;
 use App\Models\StaffRefundCharge;
 use App\Models\User;
 use App\Repository\SpaBusinessRepository;
-use App\Support\RefundCharge;
-use App\Support\RefundPolicyRule;
+use App\Support\Billing\RefundCharge;
+use App\Support\Billing\RefundPolicyRule;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Gate;
 
 // The owner's refund policies (Business Defaults → Refunds): the reasons a
 // paid bill can be refunded for, how much each gives back
-// (App\Support\RefundPolicyRule), and who it comes out of — the business,
-// the staff who did the visit, or equally (App\Support\RefundCharge). The
+// (App\Support\Billing\RefundPolicyRule), and who it comes out of — the business,
+// the staff who did the visit, or equally (App\Support\Billing\RefundCharge). The
 // front desk picks one when it refunds a paid bill (BillingAdjustmentService).
 // Plus one switch: whether a refund that fits none of them may be given
 // (payments.allow_custom_refunds) — the giver then says who it comes out of.
@@ -200,8 +201,9 @@ class RefundPolicyService
 
     private function ownerBusiness(User $user, bool $needsTable = true): SpaBusiness|JsonResponse
     {
-        if ($user->role !== 'business_owner') {
-            return $this->refuse('Only the owner sets the refund policies.', 403);
+        $may = Gate::forUser($user)->inspect('manage', RefundPolicy::class);
+        if ($may->denied()) {
+            return $this->refuse($may->message(), $may->status() ?? 403);
         }
         if ($needsTable && ! RefundPolicy::ready()) {
             return $this->refuse('Refund policies aren\'t set up on this server yet.');

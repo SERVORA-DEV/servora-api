@@ -8,12 +8,9 @@ use App\Http\Controllers\Controller;
 
 class DashboardController extends Controller
 {
-    private DashboardService $dashboardService;
-
-    public function __construct(DashboardService $dashboardService)
-    {
-        $this->dashboardService = $dashboardService;
-    }
+    public function __construct(
+        private DashboardService $dashboardService,
+    ) {}
 
     public function index(Request $request)
     {

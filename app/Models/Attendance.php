@@ -3,12 +3,11 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class Attendance extends Model
 {
-    use HasFactory, HasUuids;
+    use HasUuids;
 
     protected $table = 'attendances';
 
@@ -24,7 +23,7 @@ class Attendance extends Model
         'remarks',
         'created_by',
         'updated_by',
-        // How the day turned out, kept as it was (App\Support\History):
+        // How the day turned out, kept as it was (App\Support\Activity\History):
         // the shift and lateness from the check-in, the hours from the
         // check-out. Written by AttendanceStatusCalculator::keep().
         'scheduled_start',
@@ -71,7 +70,7 @@ class Attendance extends Model
         return $this->belongsTo(SpaBranch::class, 'spa_branch_id');
     }
 
-    /** Where it happened: its own branch, else the one the person is at now (App\Support\History). */
+    /** Where it happened: its own branch, else the one the person is at now (App\Support\Activity\History). */
     public function ownBranch(): ?SpaBranch
     {
         return $this->spa_branch_id ? $this->branch : $this->staff?->branch;

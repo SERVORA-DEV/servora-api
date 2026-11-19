@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\RoomCapacity;
+use App\Support\Visits\RoomCapacity;
 use PHPUnit\Framework\TestCase;
 
 // How full a facility is at its busiest moment. No database.

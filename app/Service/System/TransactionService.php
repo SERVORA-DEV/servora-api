@@ -9,18 +9,15 @@ use App\Models\SystemSetting;
 
 class TransactionService
 {
-    private BillingRepository $billingRepository;
-    private SubscriptionRepository $subscriptionRepository;
+    public function __construct(
+        private BillingRepository $billingRepository,
+        private SubscriptionRepository $subscriptionRepository,
+    ) {}
 
-    public function __construct(BillingRepository $billingRepository, SubscriptionRepository $subscriptionRepository)
+    /** One page of subscription bills, filtered by the API, with the page's overview (`analytics`). */
+    public function listSubscriptionTransactions(int $perPage = 100, array $filters = [])
     {
-        $this->billingRepository = $billingRepository;
-        $this->subscriptionRepository = $subscriptionRepository;
-    }
-
-    public function listSubscriptionTransactions(int $perPage = 100)
-    {
-        $collection = $this->billingRepository->paginateSubscriptionTransactions($perPage);
+        $collection = $this->billingRepository->paginateSubscriptionTransactions($perPage, $filters);
 
         // A billing row only ever exists once a payment has succeeded (see
         // SubscriptionService::activateSubscriptionFromPayment), so a lapsed
@@ -32,6 +29,7 @@ class TransactionService
         return TransactionResource::collection($collection)->additional([
             'overdue_subscriptions_count' => $this->subscriptionRepository->countOverdue($gracePeriodDays),
             'subscription_grace_period_days' => $gracePeriodDays,
+            'analytics' => $this->billingRepository->subscriptionTransactionTotals(),
         ]);
     }
 }

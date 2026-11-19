@@ -12,11 +12,11 @@ use App\Models\UserPermission;
 use App\Repository\AuditLogRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Repository\System\OwnerVerificationRepository;
-use App\Service\NotificationService;
+use App\Service\Notifications\NotificationService;
 use App\Service\System\OwnerVerificationChecklistService;
 use App\Service\System\OwnerVerificationService;
-use App\Services\DocumentUploadService;
-use App\Support\OwnerVerificationChecklist as Checklist;
+use App\Service\Uploads\DocumentUploadService;
+use App\Support\Platform\OwnerVerificationChecklist as Checklist;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -65,7 +65,7 @@ class OwnerVerificationReviewTest extends TestCase
             $t->string('action'); $t->json('old_values')->nullable(); $t->json('new_values')->nullable();
             $t->string('ip_address')->nullable(); $t->text('user_agent')->nullable(); $t->timestamp('created_at')->nullable();
         });
-        (require database_path('migrations/2026_11_03_120000_create_owner_verification_reviews_table.php'))->up();
+        (require database_path('migrations/2026_01_01_000260_create_owner_verification_reviews_table.php'))->up();
 
         $this->admin = User::create(['role' => 'system_administrator', 'first_name' => 'Review', 'last_name' => 'Admin']);
         $this->owner = User::create(['role' => 'business_owner', 'first_name' => 'Alex', 'last_name' => 'Owner', 'email' => 'owner@example.test']);

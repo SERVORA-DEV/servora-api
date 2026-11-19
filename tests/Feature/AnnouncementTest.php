@@ -13,7 +13,7 @@ use App\Models\SubscriptionPlan;
 use App\Models\User;
 use App\Models\UserPermission;
 use App\Repository\NotificationRepository;
-use App\Support\AdminPermissions;
+use App\Support\Access\AdminPermissions;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
@@ -79,6 +79,8 @@ class AnnouncementTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Two-factor for administrators is its own subject (RequireAdminTwoFactor).
+        config(['admin_access.require_two_factor' => false, 'admin_access.allowed_ips' => []]);
 
         $this->admin = $this->admin();
         $this->otherAdmin = $this->admin();
@@ -316,6 +318,7 @@ class AnnouncementTest extends TestCase
         $this->assertTrue($ids->contains($this->clientOne->uuid));
         $this->assertFalse($ids->contains($this->suspendedClient->uuid));
         $this->assertStringNotContainsString($this->clientOne->email, $res->getContent());
-        $this->assertStringContainsString('•', $res->getContent());
+        // The JSON escapes it (•), so look in the decoded list.
+        $this->assertStringContainsString('•', collect($res->json('data'))->pluck('sub')->implode(' '));
     }
 }

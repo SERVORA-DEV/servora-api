@@ -4,10 +4,9 @@ namespace App\Http\Requests\Business;
 
 use App\Rules\ValidEmail;
 use App\Rules\SocialLink;
-use App\Support\SocialLinks;
+use App\Support\Branches\SocialLinks;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 use App\Rules\NoEmoji;
 use App\Rules\PhMobile;
 
@@ -39,7 +38,7 @@ class SpaBranchUpdateRequest extends FormRequest
             'branch_name' => ['sometimes', 'required', 'string', 'max:150', new NoEmoji()],
 
             // The area this branch is in ("Mandug"). Not unique on its own: what tells branches apart
-            // is the name and the area together (App\Support\BranchIdentity, checked in after()).
+            // is the name and the area together (App\Support\Branches\BranchIdentity, checked in after()).
             'code' => ['nullable', 'string', 'max:50'],
 
             'email' => ['nullable', 'email', new ValidEmail(), 'max:255', new NoEmoji()],
@@ -47,7 +46,7 @@ class SpaBranchUpdateRequest extends FormRequest
 
             // Branch Settings → Branch Details → Social links.
             // Each branch's own links; any left empty show the company's
-            // (App\Support\SocialLinks).
+            // (App\Support\Branches\SocialLinks).
             'facebook_url' => ['nullable', 'string', 'max:255', new SocialLink(SocialLinks::FACEBOOK)],
             'instagram_handle' => ['nullable', 'string', 'max:100', new SocialLink(SocialLinks::INSTAGRAM)],
             'website_url' => ['nullable', 'string', 'max:255', new SocialLink(SocialLinks::WEBSITE)],
@@ -74,8 +73,8 @@ class SpaBranchUpdateRequest extends FormRequest
             $existing = \App\Models\SpaBranch::where('uuid', $uuid)->first(['branch_name', 'code']);
             $name = $this->has('branch_name') ? $this->input('branch_name') : $existing?->branch_name;
             $area = $this->has('code') ? $this->input('code') : $existing?->code;
-            if (\App\Support\BranchIdentity::taken($this->resolvedBusinessId(), $name, $area, $uuid)) {
-                $validator->errors()->add('branch_name', \App\Support\BranchIdentity::message($area));
+            if (\App\Support\Branches\BranchIdentity::taken($this->resolvedBusinessId(), $name, $area, $uuid)) {
+                $validator->errors()->add('branch_name', \App\Support\Branches\BranchIdentity::message($area));
             }
         }];
     }
@@ -108,6 +107,6 @@ class SpaBranchUpdateRequest extends FormRequest
             return \App\Models\SpaBusiness::where('owner_id', $user->id)->value('id');
         }
 
-        return \App\Support\AccountScope::business($user)?->id;
+        return \App\Support\Access\AccountScope::business($user)?->id;
     }
 }

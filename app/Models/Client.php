@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\MembershipStatus;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -94,22 +95,11 @@ class Client extends Model
      * Whether this client uses the Servora app: their record here is linked
      * to an app account (made the first time they book from the app). The
      * front desk sees it as the "App user" label, and only an app user earns
-     * loyalty points (App\Support\LoyaltyEarning).
+     * loyalty points (App\Support\Programs\LoyaltyEarning).
      */
     public function usesApp(): bool
     {
         return $this->user_id !== null;
-    }
-
-    /**
-     * 'Male' | 'Female' | null: what the spa recorded, or else what the
-     * client's own account says.
-     */
-    public function genderValue(): ?string
-    {
-        $own = self::hasProfile() ? ClientProfile::gender($this->gender) : null;
-
-        return $own ?? ($this->user_id ? ClientProfile::gender($this->user?->gender) : null);
     }
 
     /**
@@ -165,17 +155,12 @@ class Client extends Model
     {
         return $this->hasOne(ClientMembership::class)->ofMany(
             ['ends_at' => 'max', 'id' => 'max'],
-            fn ($q) => $q->where('status', 'active')->where('ends_at', '>', now()),
+            fn ($q) => $q->where('status', MembershipStatus::Active->value)->where('ends_at', '>', now()),
         );
     }
 
     public function vouchers()
     {
         return $this->hasMany(ClientVoucher::class);
-    }
-
-    public function pointEntries()
-    {
-        return $this->hasMany(ClientPointEntry::class);
     }
 }

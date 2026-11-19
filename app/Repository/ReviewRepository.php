@@ -2,6 +2,7 @@
 
 namespace App\Repository;
 
+use App\Enums\ReviewStatus;
 use App\Models\Review;
 use Illuminate\Support\Collection;
 
@@ -19,7 +20,7 @@ class ReviewRepository
 
         return Review::query()
             ->join('appointments', 'appointments.id', '=', 'reviews.appointment_id')
-            ->where('reviews.status', 'Published')
+            ->where('reviews.status', ReviewStatus::Published->value)
             ->whereIn('appointments.spa_branch_id', $branchIds)
             ->groupBy('appointments.spa_branch_id')
             ->selectRaw('appointments.spa_branch_id as branch_id, avg(reviews.rating) as avg_rating, count(*) as review_count')
@@ -51,7 +52,7 @@ class ReviewRepository
         $query = Review::query()
             ->select('reviews.*')
             ->join('appointments', 'appointments.id', '=', 'reviews.appointment_id')
-            ->where('reviews.status', 'Published')
+            ->where('reviews.status', ReviewStatus::Published->value)
             ->where('appointments.spa_branch_id', $branchId)
             ->with(['client', 'appointment.services.serviceVariant.service']);
 

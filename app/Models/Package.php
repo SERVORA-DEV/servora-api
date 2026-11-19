@@ -2,7 +2,7 @@
 
 namespace App\Models;
 
-use App\Support\PackagePlan;
+use App\Support\Catalog\PackagePlan;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -165,7 +165,7 @@ class Package extends Model
 
     /**
      * The package's fixed duration: its services' minutes and its add-ons'
-     * time (App\Support\PackagePlan). The stored figure when what is in it
+     * time (App\Support\Catalog\PackagePlan). The stored figure when what is in it
      * isn't loaded.
      */
     public function totalMinutes(bool $home = false): int

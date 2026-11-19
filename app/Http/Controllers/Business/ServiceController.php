@@ -11,19 +11,13 @@ use Illuminate\Http\Request;
 
 class ServiceController extends Controller
 {
-    private ServiceService $serviceService;
-    private ServiceTemplateService $serviceTemplateService;
-
     public function __construct(
-        ServiceService $serviceService,
+        private ServiceService $serviceService,
         // The admin catalog isn't business-scoped, so there's no business-side
         // service wrapping it - this controller reads the System one directly
         // for templates() below.
-        ServiceTemplateService $serviceTemplateService,
-    ) {
-        $this->serviceService = $serviceService;
-        $this->serviceTemplateService = $serviceTemplateService;
-    }
+        private ServiceTemplateService $serviceTemplateService,
+    ) {}
 
     public function index(Request $request)
     {

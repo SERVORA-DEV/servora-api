@@ -5,16 +5,16 @@ namespace App\Service\Business;
 use App\Models\Appointment;
 use App\Models\User;
 use App\Repository\AuditLogRepository;
-use App\Support\AppCache;
-use App\Support\PolicyOverride;
+use App\Support\Visits\PolicyOverride;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 
 // Where the front desk meets the owner's and manager's booking rules.
 //
 // Every front desk action that a rule can stand in the way of passes what it
-// found (App\Support\FrontDeskPolicy) through check():
+// found (App\Support\Visits\FrontDeskPolicy) through check():
 //   - nothing broken              → carry on;
 //   - a rule broken               → 422 with the rule(s) and whether this
 //                                   person may override:
@@ -48,22 +48,10 @@ class PolicyGate
         return $ready;
     }
 
+    // Whether this person may go ahead anyway: the "override-booking-rules" ability (BookingRulesPolicy).
     public function mayOverride(User $user): bool
     {
-        if ($user->role === 'business_owner') {
-            return true;
-        }
-        if (! in_array('policy_override', config("permission.{$user->role}", []), true)) {
-            return false;
-        }
-        // Before the permission has a column to live in, it is the manager's.
-        $byDefault = $user->role === 'manager';
-        if (! self::ready()) {
-            return $byDefault;
-        }
-        $row = $user->relationLoaded('permission') ? $user->permission : AppCache::permission($user->id);
-
-        return $row ? $row->getAttribute('policy_override') === true : $byDefault;
+        return Gate::forUser($user)->allows('override-booking-rules');
     }
 
     /**

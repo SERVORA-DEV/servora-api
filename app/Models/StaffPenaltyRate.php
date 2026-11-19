@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Schema;
 // What a late day and an absent day cost from `effective_from` on (Staff
 // Policies → Penalties). A day is charged at the row in force on it, so a
 // change applies from that day forward and earlier days keep what they were
-// (App\Support\AttendancePenalty).
+// (App\Support\Staff\AttendancePenalty).
 class StaffPenaltyRate extends Model
 {
     protected $table = 'staff_penalty_rates';

@@ -3,8 +3,9 @@
 namespace Tests\Unit;
 
 use App\Http\Controllers\System\ProfilePhotoController;
+use App\Http\Requests\System\ProfilePhotoRequest;
 use App\Models\User;
-use App\Services\ImageUploadService;
+use App\Service\Uploads\ImageUploadService;
 use Cloudinary\Cloudinary;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -31,6 +32,17 @@ class AdminProfilePhotoTest extends TestCase
         return $request;
     }
 
+    // What the router hands store(): the upload as a ProfilePhotoRequest, already validated
+    // (a non-image stops here with a ValidationException, before anything is uploaded).
+    private function photoRequest(User $user, bool $valid = true): ProfilePhotoRequest
+    {
+        $request = ProfilePhotoRequest::createFrom($this->request($user, $valid));
+        $request->setUserResolver(fn () => $user);
+        $request->setContainer(app())->setRedirector(app('redirect'));
+        $request->validateResolved();
+        return $request;
+    }
+
     public function test_it_saves_the_authenticated_accounts_photo_before_deleting_the_old_file(): void
     {
         app()->instance(Cloudinary::class, new Cloudinary(['cloud' => ['cloud_name' => 'demo']]));
@@ -41,7 +53,7 @@ class AdminProfilePhotoTest extends TestCase
         $images->shouldReceive('delete')->once()->with('administrators/old')->andReturnUsing(function () use ($user) {
             $this->assertSame('administrators/new', $user->profile_photo);
         });
-        $response = (new ProfilePhotoController($images))->store($this->request($user));
+        $response = (new ProfilePhotoController($images))->store($this->photoRequest($user));
         $this->assertStringContainsString('administrators/new', $response->getData(true)['data']['profile_photo']);
     }
 
@@ -53,7 +65,7 @@ class AdminProfilePhotoTest extends TestCase
         $images->shouldReceive('store')->once()->andReturn('administrators/new');
         $images->shouldReceive('delete')->once()->with('administrators/new');
         $this->expectException(\RuntimeException::class);
-        (new ProfilePhotoController($images))->store($this->request($user));
+        (new ProfilePhotoController($images))->store($this->photoRequest($user));
     }
 
     public function test_non_images_are_rejected_before_upload(): void
@@ -61,7 +73,7 @@ class AdminProfilePhotoTest extends TestCase
         $images = Mockery::mock(ImageUploadService::class);
         $images->shouldNotReceive('store');
         $this->expectException(ValidationException::class);
-        (new ProfilePhotoController($images))->store($this->request($this->actor(), false));
+        (new ProfilePhotoController($images))->store($this->photoRequest($this->actor(), false));
     }
 
     public function test_removal_clears_the_account_before_deleting_its_stored_image(): void

@@ -4,7 +4,7 @@ namespace Tests\Feature;
 
 use App\Mail\RegistrationLinkMail;
 use App\Models\User;
-use App\Support\LegalDocuments;
+use App\Support\Platform\LegalDocuments;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;

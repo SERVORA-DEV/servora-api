@@ -14,14 +14,10 @@ use App\Repository\SpaBusinessRepository;
 // serves the Queue tab's list view.
 class QueueService
 {
-    private QueueRepository $queueRepository;
-    private SpaBusinessRepository $spaBusinessRepository;
-
-    public function __construct(QueueRepository $queueRepository, SpaBusinessRepository $spaBusinessRepository)
-    {
-        $this->queueRepository = $queueRepository;
-        $this->spaBusinessRepository = $spaBusinessRepository;
-    }
+    public function __construct(
+        private QueueRepository $queueRepository,
+        private SpaBusinessRepository $spaBusinessRepository,
+    ) {}
 
     public function listForBranchToday(User $user, array $filters)
     {

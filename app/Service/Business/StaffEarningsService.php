@@ -3,7 +3,6 @@
 namespace App\Service\Business;
 
 use App\Models\User;
-use App\Repository\Business\StaffRepository;
 use App\Repository\SpaBusinessRepository;
 use Carbon\Carbon;
 
@@ -19,7 +18,6 @@ class StaffEarningsService
 
     public function __construct(
         private SpaBusinessRepository $spaBusinessRepository,
-        private StaffRepository $staffRepository,
         private CommissionCalculator $commissionCalculator,
         private AttendancePenaltyReader $penalties,
         private StaffEarningsReport $report,
@@ -57,7 +55,7 @@ class StaffEarningsService
         $penalties = $this->penalties->forStaff($business, [$staff->spa_branch_id], [$staff->id], $start, $end)[$staff->id] ?? [];
         $penalties = collect($penalties)->concat($this->refundCharges->forStaff($business->id, [$staff->id], $start, $end)[$staff->id] ?? [])
             ->sortBy('date')->values()->all();
-        $settled = \App\Support\AttendancePenalty::settle($ledger['total'], array_sum(array_column($penalties, 'amount')));
+        $settled = \App\Support\Staff\AttendancePenalty::settle($ledger['total'], array_sum(array_column($penalties, 'amount')));
 
         return ['data' => [
             'from' => $start->format('Y-m-d'),

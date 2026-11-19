@@ -2,9 +2,10 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AttendanceStatus;
 use App\Models\Attendance;
 use App\Models\Staff;
-use App\Support\BusinessDay;
+use App\Support\Branches\BusinessDay;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 
@@ -12,7 +13,7 @@ use Illuminate\Support\Facades\DB;
 // still timed in when the branch opens the next day is timed out at that opening,
 // and timed in for the new working day at the same moment — on the floor without a
 // gap: in 4 PM Oct 24 → out 2 PM Oct 25 (the branch opens), in 2 PM Oct 25 → and so
-// on, day after day, until someone times them out. (App\Support\BusinessDay says when
+// on, day after day, until someone times them out. (App\Support\Branches\BusinessDay says when
 // a day ends.) An older day left open is only closed at its next opening.
 //
 // Runs where the day's attendance is read (the front desk's roster and its time
@@ -85,7 +86,7 @@ class AttendanceRollover
 
                 $existing = Attendance::where('staff_id', $staff->id)->where('attendance_date', $date)->first();
                 // They were already timed in (or marked) for the new day: nothing to carry into it.
-                if ($existing && ($existing->check_in_at || $existing->status === 'On Leave')) {
+                if ($existing && ($existing->check_in_at || $existing->status === AttendanceStatus::OnLeave->value)) {
                     return null;
                 }
 
@@ -96,7 +97,7 @@ class AttendanceRollover
                     [
                         'check_in_at' => $opens,
                         'check_out_at' => null,
-                        'status' => $hasShift ? 'Present' : 'Fill In',
+                        'status' => $hasShift ? AttendanceStatus::Present->value : AttendanceStatus::FillIn->value,
                         'left_early' => false,
                         'remarks' => self::note($existing?->remarks, 'Still on the floor from ' . \Carbon\Carbon::parse($from)->format('M j') . ': timed in when the branch opened'),
                         'created_by' => $existing?->created_by ?? $attendance->created_by,

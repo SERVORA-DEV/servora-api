@@ -2,8 +2,8 @@
 
 namespace App\Http\Resources;
 
-use App\Support\BusinessActivityDescriber;
-use App\Support\UserAgentParser;
+use App\Support\Activity\BusinessActivityDescriber;
+use App\Support\Access\UserAgentParser;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 

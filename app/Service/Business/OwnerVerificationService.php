@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Enums\VerificationStatus;
 use App\Http\Resources\OwnerVerificationResource;
 use App\Models\OwnerIdentityVerification;
 use App\Models\User;
@@ -10,8 +11,8 @@ use App\Repository\Business\OwnerVerificationRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Repository\System\AdminUsersRepository;
 use App\Repository\UserRepository;
-use App\Service\NotificationService;
-use App\Services\DocumentUploadService;
+use App\Service\Notifications\NotificationService;
+use App\Service\Uploads\DocumentUploadService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -81,7 +82,7 @@ class OwnerVerificationService
     {
         $business = $this->spaBusinessRepository->findForUser($user);
 
-        if ($business && ! in_array($business->verification_status, ['Unregistered', 'Rejected'], true)) {
+        if ($business && ! in_array($business->verification_status, [VerificationStatus::Unregistered->value, VerificationStatus::Rejected->value], true)) {
             return response()->json([
                 'message' => 'Business verification is already submitted or verified.',
             ], 422);
@@ -96,13 +97,13 @@ class OwnerVerificationService
             $this->spaBusinessRepository->update($business, $payload);
         } else {
             $payload['owner_id'] = $user->id;
-            $payload['verification_status'] = 'Unregistered';
+            $payload['verification_status'] = VerificationStatus::Unregistered->value;
             // The business starts with the owner's own sign-up email, already
             // proved by signing up. They can put another in Business Settings
             // (which is then confirmed by the button in an email).
             if (! \App\Models\SpaBusiness::withTrashed()->where('business_email', $user->email)->exists()) {
                 $payload['business_email'] = $user->email;
-                if (\App\Support\ContactEmail::ready()) {
+                if (\App\Support\Branches\ContactEmail::ready()) {
                     $payload['business_email_verified_at'] = now();
                 }
             }
@@ -124,7 +125,7 @@ class OwnerVerificationService
     {
         $identity = $this->ownerVerificationRepository->findOrCreateIdentity($user);
 
-        if (! in_array($identity->status, ['Unregistered', 'Rejected'], true)) {
+        if (! in_array($identity->status, [VerificationStatus::Unregistered->value, VerificationStatus::Rejected->value], true)) {
             return response()->json([
                 'message' => 'Identity verification is already submitted or verified.',
             ], 422);
@@ -185,7 +186,7 @@ class OwnerVerificationService
     {
         $identity = $this->ownerVerificationRepository->findOrCreateIdentity($user);
 
-        if (! in_array($identity->status, ['Unregistered', 'Rejected'], true)) {
+        if (! in_array($identity->status, [VerificationStatus::Unregistered->value, VerificationStatus::Rejected->value], true)) {
             return response()->json([
                 'message' => 'Identity verification is already submitted or verified.',
             ], 422);
@@ -239,7 +240,7 @@ class OwnerVerificationService
      */
     private function resolveIdentityIfComplete(OwnerIdentityVerification $identity, User $user, ?Request $request): void
     {
-        if ($identity->status !== 'Rejected') {
+        if ($identity->status !== VerificationStatus::Rejected->value) {
             return;
         }
 
@@ -254,7 +255,7 @@ class OwnerVerificationService
         $oldValues = $identity->only(['status']);
 
         $identity = $this->ownerVerificationRepository->updateIdentity($user, [
-            'status' => 'Pending',
+            'status' => VerificationStatus::Pending->value,
             'rejection_reason' => null,
             'rejected_field' => null,
             'verified_by' => null,
@@ -288,13 +289,13 @@ class OwnerVerificationService
             return response()->json(['message' => 'Please complete your business details first.'], 422);
         }
 
-        if (! in_array($business->verification_status, ['Unregistered', 'Rejected'], true)) {
+        if (! in_array($business->verification_status, [VerificationStatus::Unregistered->value, VerificationStatus::Rejected->value], true)) {
             return response()->json([
                 'message' => 'Business verification is already submitted or verified.',
             ], 422);
         }
 
-        $wasRejected = $business->verification_status === 'Rejected';
+        $wasRejected = $business->verification_status === VerificationStatus::Rejected->value;
         $oldValues = $business->only(['business_type', 'verification_status']);
 
         // No new file: the details are being corrected, and the certificate on
@@ -330,7 +331,7 @@ class OwnerVerificationService
         ];
 
         if ($wasRejected) {
-            $payload['verification_status'] = 'Pending';
+            $payload['verification_status'] = VerificationStatus::Pending->value;
             $payload['rejection_reason'] = null;
             $payload['verified_by'] = null;
             $payload['verified_at'] = null;
@@ -371,7 +372,7 @@ class OwnerVerificationService
 
         $identity = $this->ownerVerificationRepository->findOrCreateIdentity($user);
 
-        if ($identity->status !== 'Unregistered' || $business->verification_status !== 'Unregistered') {
+        if ($identity->status !== VerificationStatus::Unregistered->value || $business->verification_status !== VerificationStatus::Unregistered->value) {
             return response()->json([
                 'message' => 'Your identity and business verification have already been submitted.',
             ], 422);
@@ -411,8 +412,8 @@ class OwnerVerificationService
         $businessOld = $business->only(['verification_status']);
 
         DB::transaction(function () use ($user, $business) {
-            $this->ownerVerificationRepository->updateIdentity($user, ['status' => 'Pending']);
-            $this->spaBusinessRepository->update($business, ['verification_status' => 'Pending']);
+            $this->ownerVerificationRepository->updateIdentity($user, ['status' => VerificationStatus::Pending->value]);
+            $this->spaBusinessRepository->update($business, ['verification_status' => VerificationStatus::Pending->value]);
         });
 
         $identity = $this->ownerVerificationRepository->findOrCreateIdentity($user);

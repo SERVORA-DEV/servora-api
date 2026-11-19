@@ -2,21 +2,17 @@
 
 namespace App\Http\Controllers;
 
-use App\Service\SubscriptionService;
+use App\Service\Subscription\SubscriptionService;
 use App\Http\Requests\SubscriptionRequest;
 use App\Http\Requests\PlanChangeDecisionRequest;
 use App\Http\Requests\PlanSwitchRequest;
 use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
 
 class SubscriptionController extends Controller
 {
-    private SubscriptionService $subscriptionService;
-
-    public function __construct(SubscriptionService $subscriptionService)
-    {
-        $this->subscriptionService = $subscriptionService;
-    }
+    public function __construct(
+        private SubscriptionService $subscriptionService,
+    ) {}
 
     public function index(Request $request)
     {
@@ -70,24 +66,4 @@ class SubscriptionController extends Controller
         return $this->subscriptionService->cancelScheduledPlanChange($request->user());
     }
 
-    public function show(string $uuid)
-    {
-        return $this->subscriptionService->getSubscription($uuid);
-    }
-
-    public function update(Request $request, string $uuid)
-    {
-        return $this->subscriptionService->updateSubscription($uuid, $request->all());
-    }
-
-    public function destroy(string $uuid)
-    {
-        $this->subscriptionService->deleteSubscription($uuid);
-        return response()->json(['message' => 'Deleted successfully'], 200);
-    }
-    
-    public function restore(string $uuid)
-    {
-        return $this->subscriptionService->restoreSubscription($uuid);
-    }
 }

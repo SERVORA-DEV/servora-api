@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Enums\FacilityStatus;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -30,7 +31,7 @@ class FacilityResource extends JsonResource
             'is_available' => (bool) $this->is_available,
             // The stored setting, which 'Occupied' above hides while a client is in the
             // room: it is under maintenance and stops being used once they are done.
-            'under_maintenance' => $this->status === 'Maintenance',
+            'under_maintenance' => $this->status === FacilityStatus::Maintenance->value,
             'amenities' => $this->amenities ?? [],
             'services' => $this->whenLoaded('services', fn () => $this->services->map(fn ($s) => [
                 'uuid' => $s->uuid,

@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 
 // A stretch of time a branch is closed outside its weekly hours. The rules
-// (what it blocks, how it reads) live in App\Support\BranchClosures.
+// (what it blocks, how it reads) live in App\Support\Branches\BranchClosures.
 class BranchClosure extends Model
 {
     use HasUuids;

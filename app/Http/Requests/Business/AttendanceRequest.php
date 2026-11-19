@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Enums\AttendanceStatus;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -23,7 +24,7 @@ class AttendanceRequest extends FormRequest
         return [
             'staff_uuid' => ['required', 'uuid', 'exists:staff,uuid'],
             'attendance_date' => ['required', 'date'],
-            'status' => ['required', Rule::in(['Present', 'Late', 'Absent', 'Half Day', 'On Leave', 'Holiday', 'Fill In'])],
+            'status' => ['required', Rule::in([AttendanceStatus::Present->value, AttendanceStatus::Late->value, AttendanceStatus::Absent->value, AttendanceStatus::HalfDay->value, AttendanceStatus::OnLeave->value, AttendanceStatus::Holiday->value, AttendanceStatus::FillIn->value])],
             'check_in_at' => ['nullable', 'date_format:H:i'],
             'check_out_at' => ['nullable', 'date_format:H:i', 'after:check_in_at'],
             'remarks' => ['nullable', 'string'],

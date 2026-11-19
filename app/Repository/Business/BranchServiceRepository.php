@@ -6,16 +6,6 @@ use App\Models\BranchService;
 
 class BranchServiceRepository
 {
-    // Rows for one service variant, restricted to the caller's own
-    // accessible branches — same SpaBusinessRepository::branchesForUser
-    // scoping every other branch-aware lookup uses.
-    public function forVariantAndBranches(int $serviceVariantId, array $spaBranchIds)
-    {
-        return BranchService::with('branch')
-            ->where('service_variant_id', $serviceVariantId)
-            ->whereIn('spa_branch_id', $spaBranchIds)
-            ->get();
-    }
 
     // Wholesale-replace idiom (same as PackageService::syncPackageServices)
     // but upsert rather than delete+recreate: branch_service_facilities FKs

@@ -2,12 +2,14 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\CheckoutStatus;
+use App\Enums\SubscriptionStatus;
 use App\Models\SpaBusiness;
 use App\Models\Subscription;
 use App\Models\User;
-use App\Service\CheckoutService;
-use App\Service\SubscriptionRenewalService;
-use App\Service\XenditService;
+use App\Service\Subscription\CheckoutService;
+use App\Service\Subscription\SubscriptionRenewalService;
+use App\Service\Subscription\XenditService;
 use Illuminate\Console\Command;
 
 // Scheduled hourly (bootstrap/app.php) — charges the saved payment method of
@@ -50,7 +52,7 @@ class AutoRenewSubscriptions extends Command
         $business = $owner ? SpaBusiness::where('owner_id', $owner->id)->first() : null;
         $subscription = $business
             ? Subscription::with(['plan', 'scheduledPlan', 'pendingPlan', 'paymentMethod', 'business.owner'])
-                ->where('spa_business_id', $business->id)->where('status', 'Active')->orderByDesc('id')->first()
+                ->where('spa_business_id', $business->id)->where('status', SubscriptionStatus::Active->value)->orderByDesc('id')->first()
             : null;
         if (! $subscription) {
             $this->error("No business owner with an active plan was found for {$email}.");
@@ -72,7 +74,7 @@ class AutoRenewSubscriptions extends Command
         }
 
         // A test charge usually settles at once; give a slow one a moment.
-        for ($i = 0; $i < 5 && $session->fresh()->status === 'pending'; $i++) {
+        for ($i = 0; $i < 5 && $session->fresh()->status === CheckoutStatus::Pending->value; $i++) {
             sleep(3);
             $checkout->refresh($session->fresh());
         }
@@ -84,6 +86,6 @@ class AutoRenewSubscriptions extends Command
             default => $this->error('The test charge failed: ' . ($session->failure_reason ?? 'no reason given') . '.'),
         };
 
-        return $session->status === 'failed' ? self::FAILURE : self::SUCCESS;
+        return $session->status === CheckoutStatus::Failed->value ? self::FAILURE : self::SUCCESS;
     }
 }

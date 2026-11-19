@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Enums\StaffStatus;
 use App\Rules\ValidEmail;
 use App\Rules\PersonName;
 use Illuminate\Foundation\Http\FormRequest;
@@ -46,8 +47,8 @@ class StaffRequest extends FormRequest
             // What they do — for the people who perform services (the
             // 'therapist' role, shown as "Staff"). The first is their main
             // one. StaffService settles it against the role.
-            'specialties' => ['sometimes', 'array', 'max:' . count(\App\Support\StaffSpecialty::ALL)],
-            'specialties.*' => ['string', 'distinct', Rule::in(\App\Support\StaffSpecialty::ALL)],
+            'specialties' => ['sometimes', 'array', 'max:' . count(\App\Support\Staff\StaffSpecialty::ALL)],
+            'specialties.*' => ['string', 'distinct', Rule::in(\App\Support\Staff\StaffSpecialty::ALL)],
             // Whether they can be sent to a client's home (HomeServiceRules).
             // Only kept for the people who perform services.
             'home_service_available' => 'sometimes|boolean',
@@ -58,7 +59,7 @@ class StaffRequest extends FormRequest
             // The commission plan they are on (App\Models\CommissionPlan); blank: Standard.
             'commission_plan_uuid' => 'sometimes|nullable|uuid',
             'employment_type' => [$isCreate ? 'required' : 'sometimes', Rule::in(['Full-Time', 'Part-Time'])],
-            'status' => ['sometimes', Rule::in(['active', 'inactive', 'on-leave', 'terminated'])],
+            'status' => ['sometimes', Rule::in([StaffStatus::Active->value, StaffStatus::Inactive->value, StaffStatus::OnLeave->value, StaffStatus::Terminated->value])],
 
             'emergency_contact_name' => ['nullable', 'string', 'max:150', new PersonName()],
             'emergency_contact_number' => ['nullable', 'string', 'max:20', new NoEmoji(), new PhMobile()],

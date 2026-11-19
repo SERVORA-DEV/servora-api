@@ -4,7 +4,7 @@ namespace App\Service\Business;
 
 use App\Models\SpaBusiness;
 use App\Models\StaffPenaltyRate;
-use App\Support\AttendancePenalty;
+use App\Support\Staff\AttendancePenalty;
 use Carbon\Carbon;
 
 // The late and absent days that cost staff something (Staff Policies →

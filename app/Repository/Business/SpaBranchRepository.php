@@ -2,20 +2,19 @@
 
 namespace App\Repository\Business;
 
+use App\Enums\AppointmentStatus;
+use App\Enums\OperatingStatus;
+use App\Enums\StaffStatus;
+use App\Enums\VerificationStatus;
 use App\Models\BranchPackage;
 use App\Models\BranchService;
 use App\Models\SpaBranch;
 use App\Models\Staff;
 use App\Service\Business\MarketplaceReadiness;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Collection;
 
 class SpaBranchRepository
 {
-    public function paginate(int $perPage = 15)
-    {
-        return SpaBranch::latest()->paginate($perPage);
-    }
 
     // Backs GET /spas/nearby — only branches a client should ever be able to
     // browse to (Verified + Active, with a pin actually set). Distance is
@@ -36,8 +35,8 @@ class SpaBranchRepository
                 )))) as distance_km',
                 [$lat, $lng, $lat]
             )
-            ->where('verification_status', 'Verified')
-            ->where('operating_status', 'Active')
+            ->where('verification_status', VerificationStatus::Verified->value)
+            ->where('operating_status', OperatingStatus::Active->value)
             ->where('listing_visible', true)
             ->whereNotNull('latitude')
             ->whereNotNull('longitude');
@@ -72,8 +71,8 @@ class SpaBranchRepository
     {
         return MarketplaceReadiness::scope(SpaBranch::query())
             ->whereIn('id', $ids)
-            ->where('verification_status', 'Verified')
-            ->where('operating_status', 'Active')
+            ->where('verification_status', VerificationStatus::Verified->value)
+            ->where('operating_status', OperatingStatus::Active->value)
             ->where('listing_visible', true)
             ->with([
                 'business',
@@ -95,8 +94,8 @@ class SpaBranchRepository
     public function publicFindByUuid(string $uuid, array $with = ['business', 'schedules', 'coverPhoto', 'photos']): SpaBranch
     {
         return SpaBranch::where('uuid', $uuid)
-            ->where('verification_status', 'Verified')
-            ->where('operating_status', 'Active')
+            ->where('verification_status', VerificationStatus::Verified->value)
+            ->where('operating_status', OperatingStatus::Active->value)
             ->where('listing_visible', true)
             ->with($with)
             ->firstOrFail();
@@ -168,20 +167,12 @@ class SpaBranchRepository
     {
         return Staff::where('spa_branch_id', $branchId)
             ->where('role', 'therapist')
-            ->where('status', 'active')
+            ->where('status', StaffStatus::Active->value)
             ->get(array_merge(
                 ['id', 'uuid', 'first_name', 'last_name', 'role'],
                 Staff::hasSpecialties() ? ['specialties'] : [],
                 Staff::hasHomeService() ? ['home_service_available'] : [],
             ));
-    }
-
-    // Scoped listing for the owner's own "Branches" page — paginate() above
-    // has no business filter, so every owner would see every business's
-    // branches.
-    public function paginateForBusiness(int $spaBusinessId, int $perPage = 15)
-    {
-        return SpaBranch::where('spa_business_id', $spaBusinessId)->latest()->paginate($perPage);
     }
 
     // Scoped to a specific set of branch ids — what listSpaBranch() actually
@@ -206,29 +197,29 @@ class SpaBranchRepository
         $lastStart = now()->startOfMonth()->subMonthNoOverflow()->toDateString();
         $lastEnd = now()->startOfMonth()->subDay()->toDateString();
         $visits = fn () => \App\Models\Appointment::query()->whereColumn('spa_branch_id', 'spa_branches.id');
-        $kept = fn ($q) => $q->whereNotIn('status', ['cancelled', 'no_show']);
+        $kept = fn ($q) => $q->whereNotIn('status', [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value]);
 
         return SpaBranch::whereIn('id', $spaBranchIds)
             ->addSelect([
                 'month_visits' => $kept($visits()->selectRaw('count(*)')->whereBetween('appointment_date', [$monthStart, $today])),
-                'month_completed' => $visits()->selectRaw('count(*)')->where('status', 'completed')->whereBetween('appointment_date', [$monthStart, $today]),
-                'month_revenue' => $visits()->selectRaw('coalesce(sum(total_amount), 0)')->where('status', 'completed')->whereBetween('appointment_date', [$monthStart, $today]),
-                'month_clients' => $visits()->selectRaw('count(distinct client_id)')->where('status', 'completed')->whereBetween('appointment_date', [$monthStart, $today]),
-                'last_month_revenue' => $visits()->selectRaw('coalesce(sum(total_amount), 0)')->where('status', 'completed')->whereBetween('appointment_date', [$lastStart, $lastEnd]),
+                'month_completed' => $visits()->selectRaw('count(*)')->where('status', AppointmentStatus::Completed->value)->whereBetween('appointment_date', [$monthStart, $today]),
+                'month_revenue' => $visits()->selectRaw('coalesce(sum(total_amount), 0)')->where('status', AppointmentStatus::Completed->value)->whereBetween('appointment_date', [$monthStart, $today]),
+                'month_clients' => $visits()->selectRaw('count(distinct client_id)')->where('status', AppointmentStatus::Completed->value)->whereBetween('appointment_date', [$monthStart, $today]),
+                'last_month_revenue' => $visits()->selectRaw('coalesce(sum(total_amount), 0)')->where('status', AppointmentStatus::Completed->value)->whereBetween('appointment_date', [$lastStart, $lastEnd]),
                 'today_visits' => $kept($visits()->selectRaw('count(*)')->where('appointment_date', $today)),
             ])
-            ->with(\App\Support\BranchClosures::ready()
-                ? ['schedules', 'closures' => \App\Support\BranchClosures::upcomingScope()]
+            ->with(\App\Support\Branches\BranchClosures::ready()
+                ? ['schedules', 'closures' => \App\Support\Branches\BranchClosures::upcomingScope()]
                 : ['schedules'])
             ->withCount([
-                'staff' => fn ($query) => $query->where('status', '!=', 'terminated'),
+                'staff' => fn ($query) => $query->where('status', '!=', StaffStatus::Terminated->value),
                 'facilities',
             ])
             ->addSelect(['manager_name' => \App\Models\Staff::query()
                 ->selectRaw("concat(first_name, ' ', last_name)")
                 ->whereColumn('spa_branch_id', 'spa_branches.id')
                 ->where('role', 'manager')
-                ->whereIn('status', ['active', 'on-leave'])
+                ->whereIn('status', [StaffStatus::Active->value, StaffStatus::OnLeave->value])
                 ->orderBy('id')
                 ->limit(1),
             ])
@@ -267,11 +258,6 @@ class SpaBranchRepository
             ->firstOrFail();
     }
 
-    public function findByField(string $field, $value)
-    {
-        return SpaBranch::where($field, $value)->firstOrFail();
-    }
-
     public function update(string $uuid, array $payload)
     {
         $model = $this->findByUuid($uuid);
@@ -283,12 +269,5 @@ class SpaBranchRepository
     {
         $model = $this->findByUuid($uuid);
         return $model->delete();
-    }
-
-    public function restore(string $uuid)
-    {
-        $model = SpaBranch::withTrashed()->where('uuid', $uuid)->firstOrFail();
-        $model->restore();
-        return $model;
     }
 }

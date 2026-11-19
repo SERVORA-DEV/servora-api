@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Business\CatalogRequestRequest;
+use App\Http\Requests\Business\DeclineRequest;
 use App\Service\Business\CatalogRequestService;
 use Illuminate\Http\Request;
 
@@ -34,9 +35,9 @@ class CatalogRequestController extends Controller
         return $this->catalogRequestService->markAdded($request->user(), $uuid);
     }
 
-    public function decline(Request $request, string $uuid)
+    public function decline(DeclineRequest $request, string $uuid)
     {
-        $reason = $request->validate(['reason' => 'nullable|string|max:500'])['reason'] ?? null;
+        $reason = $request->validated()['reason'] ?? null;
 
         return $this->catalogRequestService->decline($request->user(), $uuid, $reason);
     }

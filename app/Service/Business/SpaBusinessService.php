@@ -9,12 +9,9 @@ use App\Http\Resources\PublicSpaBusinessResource;
 
 class SpaBusinessService
 {
-    private SpaBusinessRepository $spaBusinessRepository;
-
-    public function __construct(SpaBusinessRepository $spaBusinessRepository)
-    {
-        $this->spaBusinessRepository = $spaBusinessRepository;
-    }
+    public function __construct(
+        private SpaBusinessRepository $spaBusinessRepository,
+    ) {}
 
     // Backs GET /business/me — the owner's own business, used by
     // Account Management to build the /login/{business_uuid} link to hand

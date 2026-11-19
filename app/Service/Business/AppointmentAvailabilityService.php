@@ -2,6 +2,12 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentServiceStatus;
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
+use App\Enums\AttendanceStatus;
+use App\Enums\FacilityStatus;
+use App\Enums\QueueStatus;
 use App\Models\Appointment;
 use App\Models\Attendance;
 use App\Models\BranchSchedule;
@@ -11,11 +17,11 @@ use App\Models\StaffSchedule;
 use App\Models\StaffTimeOff;
 use App\Models\TherapistAssignment;
 use App\Repository\Business\StaffServiceRepository;
-use App\Support\BranchClosures;
-use App\Support\BranchOpenWindows;
-use App\Support\ReservationHold;
-use App\Support\RoomCapacity;
-use App\Support\StaleVisit;
+use App\Support\Branches\BranchClosures;
+use App\Support\Branches\BranchOpenWindows;
+use App\Support\Visits\ReservationHold;
+use App\Support\Visits\RoomCapacity;
+use App\Support\Visits\StaleVisit;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -46,12 +52,9 @@ use Illuminate\Support\Collection;
 // Progress elsewhere right now.
 class AppointmentAvailabilityService
 {
-    private StaffServiceRepository $staffServiceRepository;
-
-    public function __construct(StaffServiceRepository $staffServiceRepository)
-    {
-        $this->staffServiceRepository = $staffServiceRepository;
-    }
+    public function __construct(
+        private StaffServiceRepository $staffServiceRepository,
+    ) {}
 
     public function isStaffQualified(int $staffId, int $serviceId): array
     {
@@ -81,7 +84,7 @@ class AppointmentAvailabilityService
         }
         $onLeave = Attendance::where('staff_id', $staffId)
             ->whereDate('attendance_date', $date)
-            ->where('status', 'On Leave')
+            ->where('status', AttendanceStatus::OnLeave->value)
             ->exists();
 
         return $onLeave ? 'On leave' : null;
@@ -136,7 +139,7 @@ class AppointmentAvailabilityService
         }
 
         // Distinguishes "explicitly not working today" from "just doesn't fit
-        // this window" — AppointmentService::therapistOptions() relies on
+        // this window" — VisitAssignmentService::therapistOptions() relies on
         // this same day-off signal (via AttendanceStatusCalculator) to hard-
         // block picking a day-off therapist even if they're checked in; this
         // gives the explicit Assign action (assignTherapistInternal) the
@@ -167,7 +170,7 @@ class AppointmentAvailabilityService
         // Marked "On leave" on the attendance roster (only read).
         $leaveDays = Attendance::where('staff_id', $staffId)
             ->whereBetween('attendance_date', [$from, $to])
-            ->where('status', 'On Leave')
+            ->where('status', AttendanceStatus::OnLeave->value)
             ->get()
             ->map(fn ($a) => $a->attendance_date->toDateString())
             ->all();
@@ -245,7 +248,7 @@ class AppointmentAvailabilityService
 
         // The first hours of a date can be the end of last night's: a branch open until 3 AM on
         // Friday takes bookings 12:00 – 3:00 AM on Saturday, whether or not it opens that Saturday
-        // (App\Support\BranchOpenWindows). Those hours are checked against Friday's closing time.
+        // (App\Support\Branches\BranchOpenWindows). Those hours are checked against Friday's closing time.
         $yesterday = BranchSchedule::where('spa_branch_id', $branchId)
             ->where('day_of_week', Carbon::parse($date)->subDay()->format('l'))
             ->first();
@@ -326,7 +329,7 @@ class AppointmentAvailabilityService
 
         $assignments = TherapistAssignment::with('appointmentService.appointment.services.serviceVariant')
             ->where('staff_id', $staffId)
-            ->whereIn('assignment_status', ['Assigned', 'In Progress'])
+            ->whereIn('assignment_status', [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value])
             ->get();
 
         foreach ($assignments as $assignment) {
@@ -360,7 +363,7 @@ class AppointmentAvailabilityService
     {
         $appointments = Appointment::where('spa_branch_id', $branchId)
             ->where('appointment_date', $date)
-            ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW, Appointment::STATUS_COMPLETED])
+            ->whereNotIn('status', [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value, AppointmentStatus::Completed->value])
             ->with('services.serviceVariant')
             ->get();
 
@@ -379,7 +382,7 @@ class AppointmentAvailabilityService
     public function isStaffCurrentlyBusy(int $staffId, ?int $excludeAssignmentId = null, array $exceptServiceIds = []): array
     {
         $busy = TherapistAssignment::where('staff_id', $staffId)
-            ->where('assignment_status', 'In Progress')
+            ->where('assignment_status', AssignmentStatus::InProgress->value)
             // Not one left running from a day that is over (StaleVisit): it would hold the person up for good.
             ->whereHas('appointmentService.appointment', fn ($q) => $q->where('appointment_date', '>=', StaleVisit::today()))
             ->when($excludeAssignmentId, fn ($q) => $q->where('id', '!=', $excludeAssignmentId))
@@ -397,7 +400,7 @@ class AppointmentAvailabilityService
         return ['ok' => true, 'reason' => null];
     }
 
-    // Held for a reservation (App\Support\ReservationHold): a staff member
+    // Held for a reservation (App\Support\Visits\ReservationHold): a staff member
     // assigned to another client's reservation today that hasn't checked in
     // yet can't start a service now that would still be running at its booked
     // time — until that reservation is cancelled (or marked a no-show) or its
@@ -406,10 +409,10 @@ class AppointmentAvailabilityService
     {
         $held = TherapistAssignment::with('appointmentService.appointment.client', 'staff')
             ->where('staff_id', $staffId)
-            ->where('assignment_status', 'Assigned')
+            ->where('assignment_status', AssignmentStatus::Assigned->value)
             ->whereHas('appointmentService.appointment', fn ($q) => $q
                 ->where('id', '!=', $exceptAppointmentId)
-                ->where('status', Appointment::STATUS_SCHEDULED)
+                ->where('status', AppointmentStatus::Scheduled->value)
                 ->where('appointment_type', '!=', 'Walk-in')
                 ->whereDate('appointment_date', $now->toDateString()))
             ->get();
@@ -447,9 +450,9 @@ class AppointmentAvailabilityService
     public function aheadOfBooking(Appointment $mine, \Carbon\CarbonInterface $from): ?string
     {
         $myStart = Carbon::parse($mine->appointment_date->format('Y-m-d') . ' ' . $mine->appointment_time);
-        $staffIds = TherapistAssignment::where('assignment_status', 'Assigned')
+        $staffIds = TherapistAssignment::where('assignment_status', AssignmentStatus::Assigned->value)
             ->whereNotNull('staff_id')
-            ->whereHas('appointmentService', fn ($q) => $q->where('appointment_id', $mine->id)->where('status', 'Pending'))
+            ->whereHas('appointmentService', fn ($q) => $q->where('appointment_id', $mine->id)->where('status', AppointmentServiceStatus::Pending->value))
             ->pluck('staff_id')->unique()->all();
         if (! $staffIds) {
             return null;
@@ -457,11 +460,11 @@ class AppointmentAvailabilityService
 
         $other = TherapistAssignment::with('appointmentService.appointment.client', 'staff')
             ->whereIn('staff_id', $staffIds)
-            ->where('assignment_status', 'Assigned')
-            ->whereHas('appointmentService', fn ($q) => $q->where('status', 'Pending'))
+            ->where('assignment_status', AssignmentStatus::Assigned->value)
+            ->whereHas('appointmentService', fn ($q) => $q->where('status', AppointmentServiceStatus::Pending->value))
             ->whereHas('appointmentService.appointment', fn ($q) => $q
                 ->where('id', '!=', $mine->id)
-                ->whereIn('status', [Appointment::STATUS_SCHEDULED, Appointment::STATUS_CHECKED_IN])
+                ->whereIn('status', [AppointmentStatus::Scheduled->value, AppointmentStatus::CheckedIn->value])
                 ->where('appointment_type', '!=', 'Walk-in')
                 ->whereDate('appointment_date', $mine->appointment_date->toDateString()))
             ->get()
@@ -489,11 +492,11 @@ class AppointmentAvailabilityService
 
         $earlier = TherapistAssignment::with('appointmentService.appointment.client', 'staff')
             ->where('staff_id', $staffId)
-            ->where('assignment_status', 'Assigned')
-            ->whereHas('appointmentService', fn ($q) => $q->where('status', 'Pending'))
+            ->where('assignment_status', AssignmentStatus::Assigned->value)
+            ->whereHas('appointmentService', fn ($q) => $q->where('status', AppointmentServiceStatus::Pending->value))
             ->whereHas('appointmentService.appointment', fn ($q) => $q
                 ->where('id', '!=', $mine->id)
-                ->where('status', Appointment::STATUS_CHECKED_IN)
+                ->where('status', AppointmentStatus::CheckedIn->value)
                 ->where('appointment_type', '!=', 'Walk-in')
                 ->whereDate('appointment_date', $mine->appointment_date->toDateString()))
             ->get()
@@ -527,16 +530,16 @@ class AppointmentAvailabilityService
         $iAmWalkIn = $mine->appointment_type === 'Walk-in';
 
         $rows = TherapistAssignment::with('appointmentService.appointment.queue', 'appointmentService.appointment.client', 'staff', 'facility')
-            ->where('assignment_status', 'Assigned')
+            ->where('assignment_status', AssignmentStatus::Assigned->value)
             ->where(fn ($q) => $q
                 ->when($staffId, fn ($w) => $w->orWhere('staff_id', $staffId))
                 ->when($facilityId, fn ($w) => $w->orWhere('facility_id', $facilityId)))
-            ->whereHas('appointmentService', fn ($q) => $q->where('status', 'Pending'))
+            ->whereHas('appointmentService', fn ($q) => $q->where('status', AppointmentServiceStatus::Pending->value))
             ->whereHas('appointmentService.appointment', fn ($q) => $q
                 ->where('id', '!=', $mine->id)
                 ->where('spa_branch_id', $mine->spa_branch_id)
                 ->whereDate('appointment_date', $mine->appointment_date->toDateString())
-                ->whereHas('queue', fn ($qq) => $qq->whereIn('queue_status', ['Waiting', 'Called'])))
+                ->whereHas('queue', fn ($qq) => $qq->whereIn('queue_status', [QueueStatus::Waiting->value, QueueStatus::Called->value])))
             ->get();
 
         $ahead = $rows->filter(function (TherapistAssignment $a) use ($myAt, $iAmWalkIn, $walkInsFirst) {
@@ -575,7 +578,7 @@ class AppointmentAvailabilityService
 
     // $excludeAppointmentId: the visit a service is being started for — its
     // own service already running in the room isn't "someone else" (whether
-    // the two may run together is App\Support\ServiceStartRules' call).
+    // the two may run together is App\Support\Visits\ServiceStartRules' call).
     public function isFacilityCurrentlyOccupied(int $facilityId, ?int $excludeAssignmentId = null, ?int $excludeAppointmentId = null): array
     {
         $limit = Facility::clientLimits([$facilityId])[$facilityId] ?? 1;
@@ -594,7 +597,7 @@ class AppointmentAvailabilityService
     private function visitsRunningIn(int $facilityId, ?int $excludeAppointmentId = null, ?int $excludeAssignmentId = null): int
     {
         return TherapistAssignment::where('facility_id', $facilityId)
-            ->where('assignment_status', 'In Progress')
+            ->where('assignment_status', AssignmentStatus::InProgress->value)
             ->whereHas('appointmentService.appointment', fn ($q) => $q->where('appointment_date', '>=', StaleVisit::today()))
             ->when($excludeAssignmentId, fn ($q) => $q->where('id', '!=', $excludeAssignmentId))
             ->when($excludeAppointmentId, fn ($q) => $q->whereDoesntHave(
@@ -628,7 +631,7 @@ class AppointmentAvailabilityService
 
         $assignments = TherapistAssignment::with('appointmentService.appointment.services.serviceVariant')
             ->where('facility_id', $facilityId)
-            ->whereIn('assignment_status', ['Assigned', 'In Progress'])
+            ->whereIn('assignment_status', [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value])
             ->when($excludeAssignmentId, fn ($q) => $q->where('id', '!=', $excludeAssignmentId))
             ->get();
 
@@ -661,12 +664,12 @@ class AppointmentAvailabilityService
     public function facilityOutOfUse(int $facilityId, ?int $appointmentId = null): ?string
     {
         $facility = \App\Models\Facility::find($facilityId, ['id', 'name', 'status', 'is_available']);
-        if (! $facility || ($facility->is_available && $facility->status !== 'Maintenance')) {
+        if (! $facility || ($facility->is_available && $facility->status !== FacilityStatus::Maintenance->value)) {
             return null;
         }
 
         $herePresently = $appointmentId && TherapistAssignment::where('facility_id', $facilityId)
-            ->where('assignment_status', 'In Progress')
+            ->where('assignment_status', AssignmentStatus::InProgress->value)
             ->whereHas('appointmentService', fn ($q) => $q->where('appointment_id', $appointmentId))
             ->exists();
         if ($herePresently) {
@@ -676,20 +679,6 @@ class AppointmentAvailabilityService
         return $facility->is_available
             ? "{$facility->name} is under maintenance, so nobody new can use it. Pick another facility."
             : "{$facility->name} is not in use. Pick another facility.";
-    }
-
-    public function suggestTherapists(int $branchId, int $serviceId, string $date, string $startTime, int $durationMinutes): Collection
-    {
-        return Staff::where('spa_branch_id', $branchId)
-            ->where('role', 'therapist')
-            ->where('status', 'active')
-            ->get()
-            ->filter(function (Staff $staff) use ($serviceId, $date, $startTime, $durationMinutes) {
-                return $this->isStaffQualified($staff->id, $serviceId)['ok']
-                    && $this->staffMatchesSchedule($staff->id, $date, $startTime, $durationMinutes)['ok']
-                    && $this->isStaffAvailable($staff->id, $date, $startTime, $durationMinutes)['ok'];
-            })
-            ->values();
     }
 
     private function overlapsAppointment(TherapistAssignment $assignment, string $date, Carbon $start, Carbon $end): bool
@@ -716,7 +705,7 @@ class AppointmentAvailabilityService
             return null;
         }
 
-        if (in_array($appointment->status, [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW, Appointment::STATUS_COMPLETED], true)) {
+        if (in_array($appointment->status, [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value, AppointmentStatus::Completed->value], true)) {
             return null;
         }
 
@@ -744,7 +733,7 @@ class AppointmentAvailabilityService
             return [];
         }
 
-        return $this->conflictsOn('staff_id', $staffIds, $date, $startTime, $durationMinutes, $excludeAppointmentId, $includeRunning ? ['Assigned', 'In Progress'] : ['Assigned']);
+        return $this->conflictsOn('staff_id', $staffIds, $date, $startTime, $durationMinutes, $excludeAppointmentId, $includeRunning ? [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value] : [AssignmentStatus::Assigned->value]);
     }
 
     /**
@@ -792,7 +781,7 @@ class AppointmentAvailabilityService
     }
 
     /** @return array<int, string> */
-    private function conflictsOn(string $column, array $ids, string $date, string $startTime, int $durationMinutes, ?int $excludeAppointmentId, array $statuses = ['Assigned', 'In Progress']): array
+    private function conflictsOn(string $column, array $ids, string $date, string $startTime, int $durationMinutes, ?int $excludeAppointmentId, array $statuses = [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value]): array
     {
         $start = Carbon::parse("{$date} {$startTime}");
         $end = (clone $start)->addMinutes($durationMinutes);
@@ -802,7 +791,7 @@ class AppointmentAvailabilityService
             ->whereIn('assignment_status', $statuses)
             ->whereHas('appointmentService.appointment', fn ($q) => $q
                 ->whereDate('appointment_date', $date)
-                ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW, Appointment::STATUS_COMPLETED]))
+                ->whereNotIn('status', [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value, AppointmentStatus::Completed->value]))
             ->get();
 
         $first = [];
@@ -863,7 +852,7 @@ class AppointmentAvailabilityService
         $windows = [];
         $assignments = TherapistAssignment::with('appointmentService.appointment.services.serviceVariant')
             ->whereIn('facility_id', $shared)
-            ->whereIn('assignment_status', ['Assigned', 'In Progress'])
+            ->whereIn('assignment_status', [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value])
             ->get();
         foreach ($assignments as $assignment) {
             $other = $this->overlappedAppointment($assignment, $date, $start, $end);
@@ -885,7 +874,7 @@ class AppointmentAvailabilityService
     public function estimatedDurationMinutes(Appointment $appointment): int
     {
         return $appointment->services
-            ->where('status', '!=', 'Cancelled')
+            ->where('status', '!=', AppointmentServiceStatus::Cancelled->value)
             ->sum(fn ($service) => $service->lengthMinutes() ?? 30);
     }
 
@@ -898,7 +887,7 @@ class AppointmentAvailabilityService
     public function remainingDurationMinutes(Appointment $appointment): int
     {
         return $appointment->services
-            ->whereIn('status', ['Pending', 'In Progress'])
+            ->whereIn('status', [AppointmentServiceStatus::Pending->value, AppointmentServiceStatus::InProgress->value])
             ->sum(fn ($service) => $service->lengthMinutes() ?? 30);
     }
 
@@ -967,15 +956,15 @@ class AppointmentAvailabilityService
             return null;
         }
 
-        $services = $appointment->services()->with('therapistAssignments')->whereIn('status', ['Pending', 'In Progress'])->get();
+        $services = $appointment->services()->with('therapistAssignments')->whereIn('status', [AppointmentServiceStatus::Pending->value, AppointmentServiceStatus::InProgress->value])->get();
         $now = now();
-        $running = $services->where('status', 'In Progress')->map(function ($service) use ($now) {
+        $running = $services->where('status', AppointmentServiceStatus::InProgress->value)->map(function ($service) use ($now) {
             $started = $service->therapistAssignments->pluck('started_at')->filter()->min();
             $length = $service->lengthMinutes() ?? 30;
 
             return $started ? max(0, (int) ceil($now->diffInMinutes(Carbon::parse($started)->addMinutes($length), false))) : $length;
         })->max() ?? 0;
-        $waiting = $services->where('status', 'Pending')->sum(fn ($service) => $service->lengthMinutes() ?? 30);
+        $waiting = $services->where('status', AppointmentServiceStatus::Pending->value)->sum(fn ($service) => $service->lengthMinutes() ?? 30);
 
         $from = Carbon::parse("{$date} {$appointment->appointment_time}");
         $ends = ($now->gt($from) ? $now->copy() : $from)->addMinutes($running + $waiting);

@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Enums\AppointmentStatus;
+use App\Enums\VoucherStatus;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 
@@ -16,7 +18,7 @@ class ClientVoucher extends Model
         'client_id',
         'customer_program_id',
         // The deal it was issued with — its own copy of the program's name
-        // and values (App\Support\History): editing or removing the program
+        // and values (App\Support\Activity\History): editing or removing the program
         // afterwards changes vouchers issued from then on, not this one.
         'program_name',
         'deal',
@@ -59,7 +61,7 @@ class ClientVoucher extends Model
     protected static function booted(): void
     {
         static::saving(function (self $voucher) {
-            if (\App\Support\History::ready() && (! $voucher->exists || $voucher->isDirty('customer_program_id') || $voucher->program_name === null)) {
+            if (\App\Support\Activity\History::ready() && (! $voucher->exists || $voucher->isDirty('customer_program_id') || $voucher->program_name === null)) {
                 $program = CustomerProgram::withTrashed()->find($voucher->customer_program_id);
                 $voucher->program_name = $program?->name;
                 $voucher->deal = $program?->values;
@@ -83,7 +85,7 @@ class ClientVoucher extends Model
         }
 
         $held = clone $live;
-        $held->name = \App\Support\History::own($this->program_name, $live->name);
+        $held->name = \App\Support\Activity\History::own($this->program_name, $live->name);
         if (is_array($this->deal)) {
             $held->values = $this->deal;
         }
@@ -110,13 +112,13 @@ class ClientVoucher extends Model
         return Appointment::whereIn('client_voucher_id', $ids)
             ->when($exceptAppointmentId, fn ($q) => $q->where('id', '!=', $exceptAppointmentId))
             ->where(fn ($q) => $q
-                ->whereIn('status', [Appointment::STATUS_SCHEDULED, Appointment::STATUS_CHECKED_IN, Appointment::STATUS_IN_SERVICE])
-                ->orWhere(fn ($done) => $done->where('status', Appointment::STATUS_COMPLETED)->whereDoesntHave('billing')))
+                ->whereIn('status', [AppointmentStatus::Scheduled->value, AppointmentStatus::CheckedIn->value, AppointmentStatus::InService->value])
+                ->orWhere(fn ($done) => $done->where('status', AppointmentStatus::Completed->value)->whereDoesntHave('billing')))
             ->pluck('client_voucher_id')->unique()->values()->all();
     }
 
     public function isUsable(): bool
     {
-        return $this->status === 'available' && (! $this->expires_at || $this->expires_at->isFuture());
+        return $this->status === VoucherStatus::Available->value && (! $this->expires_at || $this->expires_at->isFuture());
     }
 }

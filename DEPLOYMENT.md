@@ -44,12 +44,12 @@ After the first successful deploy, from **Render → your service → Shell**:
 
 ```
 php artisan db:seed --force
-php artisan db:seed --class=SubscriptionPlanSeeder --force
 ```
 
-`DatabaseSeeder` covers the admin user plus `FacilitySeeder`,
-`ServicePackageSeeder` and `StaffSeeder`. Run these **once**. They are not
-idempotent, and they must never go into the entrypoint.
+`DatabaseSeeder` covers the admin user, the subscription plans
+(`SubscriptionPlanSeeder`) and the starter service templates
+(`ServiceTemplateSeeder`). It is safe to run again, but keep it out of the
+entrypoint all the same.
 
 ## 4. Verify
 

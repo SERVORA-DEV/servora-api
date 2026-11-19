@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Enums\FacilityStatus;
 use App\Models\Service;
 use App\Models\User;
 use App\Repository\Business\FacilityRepository;
@@ -11,20 +12,12 @@ use App\Http\Resources\FacilityResource;
 
 class FacilityService
 {
-    private FacilityRepository $facilityRepository;
-    private SpaBranchRepository $spaBranchRepository;
-    private SpaBusinessRepository $spaBusinessRepository;
-
     public function __construct(
-        FacilityRepository $facilityRepository,
-        SpaBranchRepository $spaBranchRepository,
-        SpaBusinessRepository $spaBusinessRepository,
+        private FacilityRepository $facilityRepository,
+        private SpaBranchRepository $spaBranchRepository,
+        private SpaBusinessRepository $spaBusinessRepository,
         private ManagerChangeNotifier $managerChanges,
-    ) {
-        $this->facilityRepository = $facilityRepository;
-        $this->spaBranchRepository = $spaBranchRepository;
-        $this->spaBusinessRepository = $spaBusinessRepository;
-    }
+    ) {}
 
     // business_owner's branch ids cover the whole business; manager's cover
     // only their own staff record's branch — see
@@ -65,7 +58,7 @@ class FacilityService
         $branch = $this->spaBranchRepository->findByUuidForBranches($payload['spa_branch_uuid'], $this->branchIds($user));
 
         $payload['spa_branch_id'] = $branch->id;
-        $payload['status'] = $payload['status'] ?? 'Available';
+        $payload['status'] = $payload['status'] ?? FacilityStatus::Available->value;
         $serviceUuids = $payload['service_ids'] ?? null;
         unset($payload['spa_branch_uuid'], $payload['service_ids']);
 

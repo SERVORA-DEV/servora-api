@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Enums\StaffStatus;
 use App\Models\BranchService;
 use App\Models\Service;
 use App\Models\SpaBranch;
@@ -55,7 +56,7 @@ class HomeServiceReadiness
         $staff = $ids
             ? Staff::whereIn('spa_branch_id', $ids)
                 ->where('role', 'therapist')
-                ->where('status', 'active')
+                ->where('status', StaffStatus::Active->value)
                 ->orderBy('first_name')->orderBy('last_name')
                 ->get(array_merge(['id', 'uuid', 'first_name', 'last_name', 'role', 'spa_branch_id'], $staffSetting ? ['home_service_available'] : []))
                 ->groupBy('spa_branch_id')

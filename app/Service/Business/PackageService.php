@@ -15,32 +15,19 @@ use App\Repository\Business\BranchPackageRepository;
 use App\Repository\Business\PackageRepository;
 use App\Repository\Business\SpaBranchRepository;
 use App\Repository\SpaBusinessRepository;
-use App\Support\PackagePlan;
-use App\Support\ServiceAddon;
+use App\Support\Catalog\PackagePlan;
+use App\Support\Catalog\ServiceAddon;
 use Illuminate\Support\Facades\DB;
 
 class PackageService
 {
-    private PackageRepository $packageRepository;
-
-    private SpaBusinessRepository $spaBusinessRepository;
-
-    private SpaBranchRepository $spaBranchRepository;
-
-    private BranchPackageRepository $branchPackageRepository;
-
     public function __construct(
-        PackageRepository $packageRepository,
-        SpaBusinessRepository $spaBusinessRepository,
-        SpaBranchRepository $spaBranchRepository,
-        BranchPackageRepository $branchPackageRepository,
+        private PackageRepository $packageRepository,
+        private SpaBusinessRepository $spaBusinessRepository,
+        private SpaBranchRepository $spaBranchRepository,
+        private BranchPackageRepository $branchPackageRepository,
         private ManagerChangeNotifier $managerChanges,
-    ) {
-        $this->packageRepository = $packageRepository;
-        $this->spaBusinessRepository = $spaBusinessRepository;
-        $this->spaBranchRepository = $spaBranchRepository;
-        $this->branchPackageRepository = $branchPackageRepository;
-    }
+    ) {}
 
     // Same convention as ServiceService::branchIds()/FacilityService::branchIds().
     private function branchIds(User $user): array
@@ -63,7 +50,7 @@ class PackageService
 
     /**
      * payload['services'] is [{service_uuid, duration_minutes, quantity,
-     * addon_uuids}, ...] (App\Support\PackagePlan) — each service and add-on
+     * addon_uuids}, ...] (App\Support\Catalog\PackagePlan) — each service and add-on
      * must be this same business's, checked before anything is written. Like
      * createService, the new package starts with no BranchPackage rows — the
      * owner is prompted right after create to explicitly assign branches
@@ -242,12 +229,12 @@ class PackageService
         return new PackageResource($package);
     }
 
-    // What to save for each line of the package (App\Support\PackagePlan),
+    // What to save for each line of the package (App\Support\Catalog\PackagePlan),
     // worked out and checked before anything is written — or the refusal, as
     // a 422. A line is a service of this business with the minutes it runs
     // in the package (the menu's shortest length when none are given), how
     // many, and the add-ons that come with it: each this business's own,
-    // switched on, and available for that service (App\Support\ServiceAddon).
+    // switched on, and available for that service (App\Support\Catalog\ServiceAddon).
     //
     // The older shape — a pinned menu length, service_variant_uuid — is read
     // as that length's service for that length's minutes.

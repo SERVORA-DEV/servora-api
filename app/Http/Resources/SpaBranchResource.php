@@ -2,9 +2,10 @@
 
 namespace App\Http\Resources;
 
-use App\Services\DocumentUploadService;
-use App\Services\ImageUploadService;
-use App\Support\SocialLinks;
+use App\Enums\VerificationStatus;
+use App\Service\Uploads\DocumentUploadService;
+use App\Service\Uploads\ImageUploadService;
+use App\Support\Branches\SocialLinks;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -32,7 +33,7 @@ class SpaBranchResource extends JsonResource
             'branch_name' => $this->branch_name,
             'code' => $this->code,
             'email' => $this->email,
-            'email_verified' => \App\Support\ContactEmail::isVerified($this->resource),
+            'email_verified' => \App\Support\Branches\ContactEmail::isVerified($this->resource),
             'phone_number' => $this->phone_number,
             'facebook_url' => $this->facebook_url,
             'instagram_handle' => $this->instagram_handle,
@@ -75,7 +76,7 @@ class SpaBranchResource extends JsonResource
             'reopens_at' => $this->reopens_at,
             // The temporary closure running now, or the next one coming up
             // (only on the lists that load it).
-            'closure' => $this->relationLoaded('closures') ? \App\Support\BranchClosures::notice($this->closures) : null,
+            'closure' => $this->relationLoaded('closures') ? \App\Support\Branches\BranchClosures::notice($this->closures) : null,
 
             'verified_by' => $this->verified_by,
             'verified_at' => $this->verified_at,
@@ -98,8 +99,8 @@ class SpaBranchResource extends JsonResource
                         // Whether the owner is verified, on the administrator's branch review.
                         'verified' => $this->when(
                             $this->business->owner->relationLoaded('ownerIdentityVerification'),
-                            fn () => $this->business->verification_status === 'Verified'
-                                && $this->business->owner->ownerIdentityVerification?->status === 'Verified',
+                            fn () => $this->business->verification_status === VerificationStatus::Verified->value
+                                && $this->business->owner->ownerIdentityVerification?->status === VerificationStatus::Verified->value,
                         ),
                     ] : null,
                 ];
@@ -168,7 +169,7 @@ class SpaBranchResource extends JsonResource
                     'service_uuid' => $bs->serviceVariant?->service?->uuid,
                     'service_name' => $bs->serviceVariant?->service?->name,
                     'category' => $bs->serviceVariant?->service?->category,
-                    'service_type' => \App\Support\ServiceKind::of($bs->serviceVariant?->service?->service_type),
+                    'service_type' => \App\Support\Catalog\ServiceKind::of($bs->serviceVariant?->service?->service_type),
                     'duration_minutes' => $bs->serviceVariant?->duration_minutes,
                     'price' => $bs->custom_price !== null
                         ? (float) $bs->custom_price

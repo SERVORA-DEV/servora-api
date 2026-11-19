@@ -29,10 +29,10 @@ class StaffResource extends JsonResource
             'birth_date' => optional($this->birth_date)->format('Y-m-d'),
             'hire_date' => optional($this->hire_date)->format('Y-m-d'),
             'role' => $this->role,
-            // What they do, main one first (App\Support\StaffSpecialty).
+            // What they do, main one first (App\Support\Staff\StaffSpecialty).
             'specialties' => $this->resource->specialtyList(),
             // Whether the owner lets them be sent to a client's home (HomeServiceRules).
-            'home_service_available' => $this->resource->role === \App\Support\StaffSpecialty::ROLE && $this->resource->takesHomeService(),
+            'home_service_available' => $this->resource->role === \App\Support\Staff\StaffSpecialty::ROLE && $this->resource->takesHomeService(),
             // Their own commission rate; null: the standard one (which comes
             // beside the list, as `commission` — StaffService). What someone
             // is paid is for the owner and managers only.

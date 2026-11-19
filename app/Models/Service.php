@@ -22,10 +22,10 @@ class Service extends Model
         'name',
         'code',
         'category',
-        // 'time' | 'procedure' | 'facility' — App\Support\ServiceKind.
+        // 'time' | 'procedure' | 'facility' — App\Support\Catalog\ServiceKind.
         'service_type',
         // A facility has to be chosen before the front desk may start it
-        // (App\Support\ServiceKind::needsFacility).
+        // (App\Support\Catalog\ServiceKind::needsFacility).
         'facility_required',
         'description',
         'image_path',
@@ -150,14 +150,6 @@ class Service extends Model
         $counts = ServicePart::whereIn('service_id', $ids)->selectRaw('service_id, count(*) as n')->groupBy('service_id')->pluck('n', 'service_id');
 
         return $ids->mapWithKeys(fn ($id) => [$id => max(1, (int) ($counts[$id] ?? 0))])->all();
-    }
-
-    // The admin-authored template this service was copied from, if any.
-    // Provenance only — the copy is fully independent, so nothing here is ever
-    // read back to update it (see ServiceService::createService).
-    public function sourceTemplate()
-    {
-        return $this->belongsTo(Service::class, 'source_template_id');
     }
 
     // Every business service copied from this template — powers the admin

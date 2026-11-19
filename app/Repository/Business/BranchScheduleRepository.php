@@ -3,16 +3,11 @@
 namespace App\Repository\Business;
 
 use App\Models\BranchSchedule;
-use App\Support\DayOfWeek;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
+use App\Support\Branches\DayOfWeek;
 use Illuminate\Support\Str;
 
 class BranchScheduleRepository
 {
-    public function paginate(int $perPage = 15)
-    {
-        return BranchSchedule::latest()->paginate($perPage);
-    }
 
     // All of one branch's schedule rows (at most 7 — one per day), in
     // calendar order. Caller is responsible for the branch-ownership check;
@@ -67,17 +62,6 @@ class BranchScheduleRepository
         return BranchSchedule::where('uuid', $uuid)->firstOrFail();
     }
 
-    // Scoped lookup used by show/update/destroy — 404s instead of returning
-    // another business's schedule row just because its uuid was
-    // guessed/known. Joins through the owning branch since schedules don't
-    // carry spa_business_id directly.
-    public function findByUuidForBusiness(string $uuid, int $spaBusinessId)
-    {
-        return BranchSchedule::where('uuid', $uuid)
-            ->whereHas('branch', fn ($query) => $query->where('spa_business_id', $spaBusinessId))
-            ->firstOrFail();
-    }
-
     // Same guard as findByUuidForBusiness, but scoped to a specific set of
     // branch ids rather than a whole business — what BranchScheduleService
     // uses for a manager, whose access is their own staff record's branch
@@ -88,11 +72,6 @@ class BranchScheduleRepository
         return BranchSchedule::where('uuid', $uuid)
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->firstOrFail();
-    }
-
-    public function findByField(string $field, $value)
-    {
-        return BranchSchedule::where($field, $value)->firstOrFail();
     }
 
     public function update(string $uuid, array $payload)
@@ -106,12 +85,5 @@ class BranchScheduleRepository
     {
         $model = $this->findByUuid($uuid);
         return $model->delete();
-    }
-
-    public function restore(string $uuid)
-    {
-        $model = BranchSchedule::withTrashed()->where('uuid', $uuid)->firstOrFail();
-        $model->restore();
-        return $model;
     }
 }

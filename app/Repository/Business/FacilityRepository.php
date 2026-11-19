@@ -2,6 +2,8 @@
 
 namespace App\Repository\Business;
 
+use App\Enums\AssignmentStatus;
+use App\Enums\FacilityStatus;
 use App\Models\Facility;
 
 class FacilityRepository
@@ -13,7 +15,7 @@ class FacilityRepository
     public function paginateForBranches(array $spaBranchIds, int $perPage = 15)
     {
         return Facility::with(['branch', 'services'])
-            ->withExists(['therapistAssignments as is_occupied' => fn ($q) => $q->where('assignment_status', 'In Progress')])
+            ->withExists(['therapistAssignments as is_occupied' => fn ($q) => $q->where('assignment_status', AssignmentStatus::InProgress->value)])
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->latest()
             ->paginate($perPage);
@@ -42,7 +44,7 @@ class FacilityRepository
         return Facility::with('services:id,uuid')
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->where('is_available', true)
-            ->when(! $withMaintenance, fn ($q) => $q->where('status', '!=', 'Maintenance'))
+            ->when(! $withMaintenance, fn ($q) => $q->where('status', '!=', FacilityStatus::Maintenance->value))
             ->when($serviceId, fn ($q) => $q->where(fn ($q2) => $q2
                 ->doesntHave('services')
                 ->orWhereHas('services', fn ($sq) => $sq->where('services.id', $serviceId))
@@ -62,7 +64,7 @@ class FacilityRepository
     public function findByUuidForBranches(string $uuid, array $spaBranchIds)
     {
         return Facility::with(['branch', 'services'])
-            ->withExists(['therapistAssignments as is_occupied' => fn ($q) => $q->where('assignment_status', 'In Progress')])
+            ->withExists(['therapistAssignments as is_occupied' => fn ($q) => $q->where('assignment_status', AssignmentStatus::InProgress->value)])
             ->where('uuid', $uuid)
             ->whereIn('spa_branch_id', $spaBranchIds)
             ->firstOrFail();

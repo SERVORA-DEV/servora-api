@@ -2,6 +2,8 @@
 
 namespace App\Http\Resources\Client;
 
+use App\Enums\AppointmentServiceStatus;
+use App\Enums\PaymentStatus;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -12,7 +14,7 @@ class ClientTransactionResource extends JsonResource
     public function toArray(Request $request): array
     {
         $appointment = $this->appointment;
-        $payments = $this->payments->where('payment_status', 'Paid');
+        $payments = $this->payments->where('payment_status', PaymentStatus::Paid->value);
         $paid = (float) $payments->sum('amount');
 
         return [
@@ -30,7 +32,7 @@ class ClientTransactionResource extends JsonResource
             'branch_name' => $appointment?->branch?->branch_name,
             'business_name' => $appointment?->branch?->business?->business_name,
             'services' => $appointment
-                ? $appointment->services->where('status', '!=', 'Cancelled')->map(fn ($s) => [
+                ? $appointment->services->where('status', '!=', AppointmentServiceStatus::Cancelled->value)->map(fn ($s) => [
                     'name' => $s->displayName(),
                     'price' => (float) $s->subtotal,
                 ])->values()

@@ -9,12 +9,9 @@ use Illuminate\Http\Request;
 
 class BranchRegistrationController extends Controller
 {
-    private BranchRegistrationService $branchRegistrationService;
-
-    public function __construct(BranchRegistrationService $branchRegistrationService)
-    {
-        $this->branchRegistrationService = $branchRegistrationService;
-    }
+    public function __construct(
+        private BranchRegistrationService $branchRegistrationService,
+    ) {}
 
     public function index(Request $request)
     {

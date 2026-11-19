@@ -24,7 +24,7 @@ class SpaBusinessSetting extends Model
             'gcash_number' => null,
             'paymaya_number' => null,
             // Business Defaults → Refunds: a refund of a paid bill that fits
-            // none of the owner's refund policies (App\Support\RefundPolicyRule).
+            // none of the owner's refund policies (App\Support\Billing\RefundPolicyRule).
             'allow_custom_refunds' => true,
         ],
 
@@ -37,7 +37,7 @@ class SpaBusinessSetting extends Model
             'commission_includes_extension' => true,
             'commission_includes_tips' => false,
             // A service done on a home visit earns this instead of the staff
-            // member's plan rate (App\Support\CommissionShare); the home
+            // member's plan rate (App\Support\Staff\CommissionShare); the home
             // service fee still goes to the therapist. Off unless the owner asks.
             'home_commission_enabled' => false,
             'home_commission_type' => 'percentage',
@@ -54,7 +54,7 @@ class SpaBusinessSetting extends Model
             'allow_overtime' => false,
 
             // What lateness and absences take off a staff member's earnings
-            // for the pay period (App\Support\AttendancePenalty): a fixed
+            // for the pay period (App\Support\Staff\AttendancePenalty): a fixed
             // amount per late day and per absent day, never below zero. Each
             // change applies from that day on (StaffPenaltyRate). Off unless
             // the owner asks.
@@ -89,7 +89,7 @@ class SpaBusinessSetting extends Model
             // Bookings one client may have on the same day (client app).
             'max_bookings_per_client_per_day' => 1,
             // Reservations accepted in one clock hour (a booking at 8:34 PM is in
-            // the 8 PM hour). 0 = no limit. See App\Support\HourlyCapacity.
+            // the 8 PM hour). 0 = no limit. See App\Support\Branches\HourlyCapacity.
             'max_bookings_per_hour' => 0,
             // How many hours ahead a booking has to be made (0 = any time from now on).
             // The app is stopped by it; the front desk needs a reason to book sooner.
@@ -110,7 +110,7 @@ class SpaBusinessSetting extends Model
             'no_show_policy' => 'warn',
             'no_show_suspend_after' => 3,
             // How long after its booked time a reservation is still held
-            // (App\Support\ReservationHold): its staff can't be started on
+            // (App\Support\Visits\ReservationHold): its staff can't be started on
             // anyone else, and arriving in time keeps the booked place in the
             // line. Arriving later puts the client at the back.
             'reservation_grace_minutes' => 15,

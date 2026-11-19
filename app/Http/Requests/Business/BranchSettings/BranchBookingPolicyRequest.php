@@ -3,7 +3,7 @@
 namespace App\Http\Requests\Business\BranchSettings;
 
 use App\Http\Requests\Business\Settings\BookingDefaultsSettingsRequest;
-use App\Support\ReminderPolicy;
+use App\Support\Visits\ReminderPolicy;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -16,11 +16,11 @@ class BranchBookingPolicyRequest extends FormRequest
         'max_advance_booking_days', 'max_services_per_booking', 'max_bookings_per_client_per_day', 'max_bookings_per_hour', 'booking_lead_time_hours',
         // What a missed booking does at this branch, and how many pause booking.
         'no_show_policy', 'no_show_suspend_after',
-        // How long a late reservation is still held (App\Support\ReservationHold).
+        // How long a late reservation is still held (App\Support\Visits\ReservationHold).
         'reservation_grace_minutes',
         'max_service_minutes_per_booking', 'allow_booking_overlap',
         'allow_cancellation', 'cancellation_window_hours',
-        // The branch's own client reminders (App\Support\ReminderPolicy); the
+        // The branch's own client reminders (App\Support\Visits\ReminderPolicy); the
         // defaults and limits are Business Settings → Notifications'.
         'send_client_reminder', 'reminder_timing', 'send_payment_reminder',
     ];

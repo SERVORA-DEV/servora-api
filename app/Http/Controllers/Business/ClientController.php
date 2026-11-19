@@ -3,22 +3,31 @@
 namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Business\ClientListRequest;
 use App\Http\Requests\Business\ClientRequest;
 use App\Service\Business\ClientService;
+use App\Support\PerPage;
 use Illuminate\Http\Request;
 
 class ClientController extends Controller
 {
-    private ClientService $clientService;
+    public function __construct(
+        private ClientService $clientService,
+    ) {}
 
-    public function __construct(ClientService $clientService)
+    // Client search (name, phone, email: `q`), and the owner's Clients list with its segment,
+    // branch and sort (ClientRepository::search).
+    public function index(ClientListRequest $request)
     {
-        $this->clientService = $clientService;
+        $filters = $request->only(['segment', 'branch_uuid', 'sort']);
+
+        return $this->clientService->search($request->user(), $request->input('q'), PerPage::from($request), $filters);
     }
 
-    public function index(Request $request)
+    // The Clients page's figures (how many, new, regulars, booked ahead, not back lately, spent).
+    public function summary(Request $request)
     {
-        return $this->clientService->search($request->user(), $request->input('q'), $request->input('per_page', 15));
+        return $this->clientService->summary($request->user());
     }
 
     public function show(Request $request, string $uuid)

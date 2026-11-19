@@ -2,8 +2,9 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\BillingStatus;
 use App\Models\Billing;
-use App\Support\ReminderPolicy;
+use App\Support\Visits\ReminderPolicy;
 use App\Repository\PaymentRepository;
 use App\Service\Business\ClientNotifier;
 use App\Service\Business\StaffNotifier;
@@ -25,7 +26,7 @@ class SendPaymentReminders extends Command
 
         Billing::query()
             ->where('billing_type', 'Appointment')
-            ->where('status', 'Pending')
+            ->where('status', BillingStatus::Pending->value)
             ->whereNotNull('appointment_id')
             ->whereNull('payment_reminder_sent_at')
             ->where(fn ($q) => $q->where('due_at', '<=', now())

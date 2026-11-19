@@ -7,16 +7,6 @@ use App\Models\Package;
 
 class BranchPackageRepository
 {
-    // Rows for one package, restricted to the caller's own accessible
-    // branches — same SpaBusinessRepository::branchesForUser scoping every
-    // other branch-aware lookup uses.
-    public function forPackageAndBranches(int $packageId, array $spaBranchIds)
-    {
-        return BranchPackage::with('branch')
-            ->where('package_id', $packageId)
-            ->whereIn('spa_branch_id', $spaBranchIds)
-            ->get();
-    }
 
     // Flat bookable-and-priced list for the front-office package picker —
     // mirrors BranchServiceRepository::listBookableForBranches.

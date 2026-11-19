@@ -8,7 +8,7 @@ use App\Models\AuditLog;
 use App\Models\SubscriptionPlan;
 use App\Repository\AuditLogRepository;
 use App\Repository\System\SubscriptionPlanRepository;
-use App\Service\PlanChangeService;
+use App\Service\Subscription\PlanChangeService;
 use App\Service\System\SubscriptionPlanService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
@@ -144,7 +144,7 @@ class TrialDurationTest extends TestCase
             return (new \App\Models\Subscription())->forceFill(['id' => 1, ...$payload]);
         });
         // Exercise startTrial itself; unrelated payment/checkout dependencies are unused.
-        $reflection = new \ReflectionClass(\App\Service\SubscriptionService::class);
+        $reflection = new \ReflectionClass(\App\Service\Subscription\SubscriptionService::class);
         $service = $reflection->newInstanceWithoutConstructor();
         $reflection->getProperty('businessRepository')->setValue($service, $businesses);
         $reflection->getProperty('subscriptionRepository')->setValue($service, $subscriptions);
@@ -154,19 +154,5 @@ class TrialDurationTest extends TestCase
         $this->assertTrue($captured['expires_at']->equalTo($captured['starts_at']->copy()->addDays(7)));
         $this->assertNotNull($owner->fresh()->trial_started_at);
         $this->assertSame(7, $response->getData(true)['trial']['days']);
-    }
-
-    public function test_migration_retains_legacy_offer_and_expiry_and_can_roll_back(): void
-    {
-        $plan = $this->plan(14);
-        $expiry = now()->addDays(5)->toDateTimeString();
-        DB::table('subscriptions')->insert(['subscription_plan_id' => $plan->id, 'expires_at' => $expiry]);
-        Schema::table('subscription_plans', fn (Blueprint $table) => $table->dropColumn('trial_days'));
-        $migration = require base_path('database/migrations/2026_11_18_090000_add_trial_days_to_subscription_plans.php');
-        $migration->up();
-        $this->assertSame(14, $plan->fresh()->trial_days);
-        $this->assertSame($expiry, DB::table('subscriptions')->value('expires_at'));
-        $migration->down();
-        $this->assertFalse(Schema::hasColumn('subscription_plans', 'trial_days'));
     }
 }

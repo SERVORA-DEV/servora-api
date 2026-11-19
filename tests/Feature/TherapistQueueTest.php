@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\AppointmentStatus;
 use App\Models\Appointment;
 use App\Models\AppointmentServiceItem;
 use App\Models\Attendance;
@@ -27,7 +28,7 @@ use Tests\TestCase;
 //
 // The pairing is the point, same as TherapistQualificationTest: the branch
 // board (TherapistQueueCalculator) and the appointment picker
-// (AppointmentService::therapistOptions) must agree on turn order, or the
+// (VisitAssignmentService::therapistOptions) must agree on turn order, or the
 // front desk sees two different answers to "whose turn is it?"
 //
 // Every test here pins wall-clock time with Carbon::setTestNow() before each
@@ -86,6 +87,10 @@ class TherapistQueueTest extends TestCase
             'spa_branch_id' => $this->branch->id,
             'service_variant_id' => $this->massageVariant->id,
         ]);
+
+        // These book on fixed 2027 dates: lift the "book up to N days ahead" limit (BookingPolicy).
+        \App\Models\SpaBusinessSetting::updateOrCreate(['spa_business_id' => $this->business->id], ['booking_defaults' => ['max_advance_booking_days' => 0]]);
+        \App\Service\Client\BookingPolicy::flush();
     }
 
     protected function tearDown(): void
@@ -150,7 +155,7 @@ class TherapistQueueTest extends TestCase
 
         $appointment = Appointment::where('uuid', $created->resource->uuid)->firstOrFail();
         // A service only starts for a client who is here.
-        $appointment->update(['status' => Appointment::STATUS_CHECKED_IN, 'check_in_at' => now()]);
+        $appointment->update(['status' => AppointmentStatus::CheckedIn->value, 'check_in_at' => now()]);
 
         $added = $this->appointmentService->addService($this->owner, $appointment->uuid, [
             'service_variant_uuid' => $this->massageVariant->uuid,
@@ -255,7 +260,10 @@ class TherapistQueueTest extends TestCase
 
         $item = $this->bookedService();
         $this->appointmentService->assignTherapist($this->owner, $item->uuid, ['staff_uuid' => $this->alice->uuid]);
-        $this->appointmentService->startService($this->owner, $item->uuid);
+        // On the day itself: Alice is timed in for it.
+        Carbon::setTestNow(Carbon::parse(self::DATE . ' 10:00:00'));
+        $started = $this->appointmentService->startService($this->owner, $item->uuid);
+        $this->assertNotInstanceOf(JsonResponse::class, $started, 'startService failed: ' . $this->msg($started));
 
         $rows = $this->calculator->forBranch($this->branch->id, self::DATE);
 

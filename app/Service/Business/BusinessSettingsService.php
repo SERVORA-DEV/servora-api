@@ -2,13 +2,14 @@
 
 namespace App\Service\Business;
 
+use App\Enums\VerificationStatus;
 use App\Http\Resources\BusinessSettingsResource;
 use App\Models\SpaBusiness;
 use App\Models\SpaBusinessSetting;
 use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\SpaBusinessRepository;
-use App\Services\ImageUploadService;
+use App\Service\Uploads\ImageUploadService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
@@ -21,7 +22,7 @@ class BusinessSettingsService
     // Registration details are what the Servora team reviews. Once a review
     // is under way or done they can only change through the verification
     // flow again — same gate OwnerVerificationService uses.
-    private const LEGAL_EDITABLE_STATUSES = ['Unregistered', 'Rejected'];
+    private const LEGAL_EDITABLE_STATUSES = [VerificationStatus::Unregistered->value, VerificationStatus::Rejected->value];
 
     public function __construct(
         private SpaBusinessRepository $spaBusinessRepository,
@@ -86,8 +87,8 @@ class BusinessSettingsService
         // A new email is confirmed by the button in the email Servora sends to it
         // (unless it is the owner's own sign-up address).
         if (array_key_exists('business_email', $payload)
-            && \App\Support\ContactEmail::normalize($payload['business_email']) !== \App\Support\ContactEmail::normalize($old['business_email'] ?? null)) {
-            \App\Support\ContactEmail::afterSave($business, $old['business_email'] ?? null);
+            && \App\Support\Branches\ContactEmail::normalize($payload['business_email']) !== \App\Support\Branches\ContactEmail::normalize($old['business_email'] ?? null)) {
+            \App\Support\Branches\ContactEmail::afterSave($business, $old['business_email'] ?? null);
             $business->refresh();
         }
 

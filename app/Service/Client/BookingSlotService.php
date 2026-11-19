@@ -2,6 +2,10 @@
 
 namespace App\Service\Client;
 
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
+use App\Enums\AttendanceStatus;
+use App\Enums\StaffStatus;
 use App\Models\Appointment;
 use App\Models\Attendance;
 use App\Models\BranchSchedule;
@@ -10,9 +14,9 @@ use App\Models\Staff;
 use App\Models\StaffSchedule;
 use App\Service\Business\AppointmentAvailabilityService;
 use App\Service\Business\HomeServiceRules;
-use App\Support\BranchClosures;
-use App\Support\BranchOpenWindows;
-use App\Support\HourlyCapacity;
+use App\Support\Branches\BranchClosures;
+use App\Support\Branches\BranchOpenWindows;
+use App\Support\Branches\HourlyCapacity;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -30,7 +34,7 @@ use Illuminate\Support\Collection;
 //    A requested therapist must also be on shift and not already booked;
 //  - the hour has room: the owner's "bookings per hour" limit counts the
 //    reservations whose start falls in the same clock hour (8:34 is in the
-//    8 PM hour — App\Support\HourlyCapacity).
+//    8 PM hour — App\Support\Branches\HourlyCapacity).
 //
 // Everything for the day is loaded once (a handful of queries) and checked
 // in memory, so listing a whole day of slots costs the same as one check.
@@ -276,7 +280,7 @@ class BookingSlotService
 
     // ── internals ────────────────────────────────────────────────────────
 
-    // The stretches of this date a client can book (App\Support\BranchOpenWindows): a branch open
+    // The stretches of this date a client can book (App\Support\Branches\BranchOpenWindows): a branch open
     // until 3 AM is open 12:00 – 3:00 AM on the NEXT date, which is listed there, not on the night
     // it opened, and that next date is bookable for it even if the branch is closed that day.
     private function dayWindow(int $branchId, string $date): array
@@ -342,20 +346,33 @@ class BookingSlotService
         return $closure ? BranchClosures::refusal($closure, 'spa') : null;
     }
 
-    // Therapists, their shifts and leave, and the day's bookings as busy
-    // windows (each tagged with the therapists assigned to it, if any).
-    private function loadDay(SpaBranch $branch, string $date, ?int $excludeAppointmentId, bool $home = false): array
+    // Which of these staff have a shift covering $time for $minutes on $date: the
+    // same test the slots and bookingProblem() make (a day with no shift set is not
+    // free, nor a day on leave; last night's shift running past midnight counts).
+    // The client's therapist picker asks this, so it never offers someone a booking
+    // would then refuse. Bookings aren't looked at here — only the shift.
+    //
+    // @param  list<int>  $staffIds
+    // @return array<int, bool>
+    public function onShiftFor(string $date, string $time, int $minutes, array $staffIds): array
     {
-        $all = Staff::where('spa_branch_id', $branch->id)
-            ->where('role', 'therapist')
-            ->where('status', 'active')
-            ->get(array_merge(['id', 'uuid', 'first_name', 'last_name', 'role'], Staff::hasHomeService() ? ['home_service_available'] : []));
-        // For a home visit only the staff who go out are counted; the rest
-        // are kept apart, as they still take the in-spa bookings.
-        $therapists = $home ? $all->filter(fn (Staff $s) => $s->takesHomeService())->values() : $all;
-        $others = $home ? $all->reject(fn (Staff $s) => $s->takesHomeService())->values() : collect();
-        $ids = $all->pluck('id')->all();
+        if (! $staffIds) {
+            return [];
+        }
+        $ctx = $this->shiftsOn($staffIds, $date);
+        $start = Carbon::parse("{$date} ".substr($time, 0, 5));
+        $end = $start->copy()->addMinutes(max($minutes, 1));
 
+        return collect($staffIds)->mapWithKeys(fn ($id) => [$id => $this->onShift($ctx, $id, $date, $start, $end)])->all();
+    }
+
+    // The shift rows (today's, and last night's that may run into this morning)
+    // and the leave that onShift() reads, for these staff on $date.
+    //
+    // @param  list<int>  $ids
+    // @return array{schedules: Collection, prevSchedules: Collection, onLeave: list<int>}
+    private function shiftsOn(array $ids, string $date): array
+    {
         $dayOfWeek = Carbon::parse($date)->format('l');
         $schedules = StaffSchedule::whereIn('staff_id', $ids)
             ->where('day_of_week', $dayOfWeek)
@@ -375,21 +392,41 @@ class BookingSlotService
 
         $onLeave = Attendance::whereIn('staff_id', $ids)
             ->whereDate('attendance_date', $date)
-            ->where('status', 'On Leave')
+            ->where('status', AttendanceStatus::OnLeave->value)
             ->pluck('staff_id')
             ->all();
+
+        return ['schedules' => $schedules, 'prevSchedules' => $prevSchedules, 'onLeave' => $onLeave];
+    }
+
+    // Therapists, their shifts and leave, and the day's bookings as busy
+    // windows (each tagged with the therapists assigned to it, if any).
+    private function loadDay(SpaBranch $branch, string $date, ?int $excludeAppointmentId, bool $home = false): array
+    {
+        $all = Staff::where('spa_branch_id', $branch->id)
+            ->where('role', 'therapist')
+            ->where('status', StaffStatus::Active->value)
+            ->get(array_merge(['id', 'uuid', 'first_name', 'last_name', 'role'], Staff::hasHomeService() ? ['home_service_available'] : []));
+        // For a home visit only the staff who go out are counted; the rest
+        // are kept apart, as they still take the in-spa bookings.
+        $therapists = $home ? $all->filter(fn (Staff $s) => $s->takesHomeService())->values() : $all;
+        $others = $home ? $all->reject(fn (Staff $s) => $s->takesHomeService())->values() : collect();
+        $ids = $all->pluck('id')->all();
+
+        ['schedules' => $schedules, 'prevSchedules' => $prevSchedules, 'onLeave' => $onLeave] = $this->shiftsOn($ids, $date);
+        $before = Carbon::parse($date)->subDay()->toDateString();
 
         // Last night's bookings too: one that runs past midnight still holds its staff this morning.
         $busy = Appointment::where('spa_branch_id', $branch->id)
             ->where(fn ($q) => $q->whereDate('appointment_date', $date)->orWhereDate('appointment_date', $before))
-            ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW, Appointment::STATUS_COMPLETED])
+            ->whereNotIn('status', [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value, AppointmentStatus::Completed->value])
             ->when($excludeAppointmentId, fn ($q) => $q->where('id', '!=', $excludeAppointmentId))
             ->with(['services.serviceVariant', 'services.therapistAssignments'])
             ->get();
         // How many staff each booking needs at once (a service done by several staff).
         $needs = \App\Models\Service::staffNeededFor($busy->flatMap(fn (Appointment $a) => $a->services->map(fn ($s) => $s->serviceVariant?->service_id)));
         // A package bought for several clients holds the staff for those not added yet.
-        $open = \App\Support\SharedPackages::openSlotsFor($busy->pluck('id'));
+        $open = \App\Support\Catalog\SharedPackages::openSlotsFor($busy->pluck('id'));
         $busy = $busy
             ->map(function (Appointment $a) use ($date, $needs, $open) {
                 // A home visit keeps its staff for the trip there and back too (HomeServiceRules).
@@ -402,7 +439,7 @@ class BookingSlotService
                     'end' => $end,
                     'home' => $a->isHomeService(),
                     'staff' => $a->services
-                        ->flatMap(fn ($s) => $s->therapistAssignments->whereIn('assignment_status', ['Assigned', 'In Progress'])->pluck('staff_id'))
+                        ->flatMap(fn ($s) => $s->therapistAssignments->whereIn('assignment_status', [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value])->pluck('staff_id'))
                         ->unique()->values()->all(),
                 ];
             });

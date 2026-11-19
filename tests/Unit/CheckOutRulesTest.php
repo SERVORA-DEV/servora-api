@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\CheckOutRules;
+use App\Support\Staff\CheckOutRules;
 use PHPUnit\Framework\TestCase;
 
 // A therapist performing a service can't be checked out.

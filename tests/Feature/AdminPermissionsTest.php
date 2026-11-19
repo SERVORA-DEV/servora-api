@@ -4,7 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\User;
 use App\Models\UserPermission;
-use App\Support\AdminPermissions;
+use App\Support\Access\AdminPermissions;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -17,6 +17,13 @@ use Tests\TestCase;
 class AdminPermissionsTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Two-factor for administrators is its own subject (RequireAdminTwoFactor).
+        config(['admin_access.require_two_factor' => false, 'admin_access.allowed_ips' => []]);
+    }
 
     private function admin(array $grant = null, string $status = 'Active'): User
     {
@@ -145,7 +152,8 @@ class AdminPermissionsTest extends TestCase
         $this->assertDatabaseHas('users', ['id' => $target->id, 'account_status' => 'Inactive']);
         $this->assertSame(0, $target->tokens()->count());
 
-        $this->postJson('/api/auth/login', ['email' => $target->email, 'password' => 'secret-pass'])
+        // Administrators sign in at their own door (the owner sign-in refuses them outright).
+        $this->postJson('/api/auth/admin/login', ['email' => $target->email, 'password' => 'secret-pass'])
             ->assertForbidden();
     }
 

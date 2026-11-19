@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use App\Support\LegalDocuments;
+use App\Support\Platform\LegalDocuments;
 use Illuminate\Support\Facades\Log;
 
 // GET /api/legal — the Terms of Service and Privacy Policy, for the web app's

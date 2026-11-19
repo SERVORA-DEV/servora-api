@@ -2,8 +2,8 @@
 
 namespace Tests\Unit;
 
-use App\Support\ServicePromotions;
-use App\Support\VoucherTarget;
+use App\Support\Programs\ServicePromotions;
+use App\Support\Programs\VoucherTarget;
 use PHPUnit\Framework\TestCase;
 
 // Which vouchers and discounts cover a service, for the mark on the front desk's service menu.

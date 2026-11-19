@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\System;
 
+use App\Http\Requests\System\BranchListRequest;
 use App\Http\Requests\System\SuspendReasonRequest;
 use App\Service\System\BranchService;
 use App\Http\Controllers\Controller;
@@ -9,16 +10,16 @@ use Illuminate\Http\Request;
 
 class BranchController extends Controller
 {
-    private BranchService $branchService;
+    public function __construct(
+        private BranchService $branchService,
+    ) {}
 
-    public function __construct(BranchService $branchService)
+    // One page of branches, filtered by the API (BranchRepository::paginateAll).
+    public function index(BranchListRequest $request)
     {
-        $this->branchService = $branchService;
-    }
+        $filters = array_filter($request->only(['search', 'business', 'status', 'operating']), fn ($v) => $v !== 'all');
 
-    public function index(Request $request)
-    {
-        return $this->branchService->listBranches($request->input('per_page', 100));
+        return $this->branchService->listBranches(\App\Support\PerPage::from($request), $filters);
     }
 
     public function show(string $uuid)

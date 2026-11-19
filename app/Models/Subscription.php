@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\PlanChangeStatus;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -111,7 +112,7 @@ class Subscription extends Model
     // moving to the updated plan — no grace period or reminders after that.
     public function isEndingByChoice(): bool
     {
-        return $this->plan_change_status === 'declined';
+        return $this->plan_change_status === PlanChangeStatus::Declined->value;
     }
 
     public function billings()

@@ -28,7 +28,7 @@ class AppointmentRequest extends FormRequest
     {
         return [
             // Optional — a front_officer/manager has exactly one accessible
-            // branch, so AppointmentService::createAppointment auto-resolves
+            // branch, so AppointmentBookingService::createAppointment auto-resolves
             // it when omitted (their UI has no branch picker at all). Only a
             // business_owner with more than one branch must specify this.
             'spa_branch_uuid' => 'sometimes|uuid|exists:spa_branches,uuid',

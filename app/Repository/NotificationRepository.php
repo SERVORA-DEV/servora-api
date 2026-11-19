@@ -3,7 +3,7 @@
 namespace App\Repository;
 
 use App\Models\Notification;
-use App\Service\PushSender;
+use App\Service\Notifications\PushSender;
 
 class NotificationRepository
 {

@@ -2,6 +2,10 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
+use App\Enums\AttendanceStatus;
+use App\Enums\StaffStatus;
 use App\Models\Appointment;
 use App\Models\Attendance;
 use App\Models\BranchSchedule;
@@ -11,15 +15,15 @@ use App\Models\StaffSchedule;
 use App\Models\User;
 use App\Repository\SpaBusinessRepository;
 use App\Service\Client\BookingPolicy;
-use App\Support\BookingBoard;
-use App\Support\BranchOpenWindows;
-use App\Support\BranchClosures;
-use App\Support\HourlyCapacity;
+use App\Support\Visits\BookingBoard;
+use App\Support\Branches\BranchOpenWindows;
+use App\Support\Branches\BranchClosures;
+use App\Support\Branches\HourlyCapacity;
 use Carbon\Carbon;
 
 // The front desk's New Appointment page: one day at their branch, with who
 // can take a visit of a given length at each start time. Read-only — it loads
-// the day (a handful of queries) and hands it to App\Support\BookingBoard,
+// the day (a handful of queries) and hands it to App\Support\Visits\BookingBoard,
 // where the rules are.
 //
 // It reads the same things the booking itself is checked against (the
@@ -52,7 +56,7 @@ class BookingBoardService
     {
         $step = in_array($step, self::STEPS, true) ? $step : self::STEP_MINUTES;
         // The branch the front desk is working in (the web sends it).
-        $branchId = \App\Support\AccountScope::workingBranchId($this->spaBusinessRepository->branchIdsForUser($user));
+        $branchId = \App\Support\Access\AccountScope::workingBranchId($this->spaBusinessRepository->branchIdsForUser($user));
         if (! $branchId) {
             return response()->json(['message' => 'No branch found for this account.'], 422);
         }
@@ -74,7 +78,7 @@ class BookingBoardService
 
         $therapists = Staff::where('spa_branch_id', $branchId)
             ->where('role', 'therapist')
-            ->where('status', 'active')
+            ->where('status', StaffStatus::Active->value)
             ->orderBy('first_name')->orderBy('last_name')
             ->get(array_merge(['id', 'uuid', 'first_name', 'last_name', 'role'], Staff::hasHomeService() ? ['home_service_available'] : []));
         $names = $therapists->mapWithKeys(fn (Staff $s) => [$s->uuid => trim("{$s->first_name} {$s->last_name}")]);
@@ -133,7 +137,7 @@ class BookingBoardService
 
     // The branch's hours for the date, in minutes from its midnight: the tail of last night's
     // hours (a branch open until 3 AM) is the first stretch of this date, and tonight's hours
-    // stop at midnight, the rest being tomorrow's (App\Support\BranchOpenWindows). A date the
+    // stop at midnight, the rest being tomorrow's (App\Support\Branches\BranchOpenWindows). A date the
     // branch doesn't open on still has that tail when the night before ran past midnight.
     private function dayWindow(int $branchId, string $date): array
     {
@@ -199,7 +203,7 @@ class BookingBoardService
 
         $onLeave = Attendance::whereIn('staff_id', $ids)
             ->whereDate('attendance_date', $date)
-            ->where('status', 'On Leave')
+            ->where('status', AttendanceStatus::OnLeave->value)
             ->pluck('staff_id')
             ->all();
 
@@ -248,7 +252,7 @@ class BookingBoardService
         // Last night's bookings too: one that runs past midnight still holds its staff this morning.
         return Appointment::where('spa_branch_id', $branchId)
             ->where(fn ($q) => $q->whereDate('appointment_date', $date)->orWhereDate('appointment_date', $midnight->copy()->subDay()->toDateString()))
-            ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW, Appointment::STATUS_COMPLETED])
+            ->whereNotIn('status', [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value, AppointmentStatus::Completed->value])
             ->when($excludeId, fn ($q) => $q->where('id', '!=', $excludeId))
             ->with(['services.serviceVariant', 'services.therapistAssignments'])
             ->get()
@@ -258,7 +262,7 @@ class BookingBoardService
                 [$from, $to] = HomeServiceRules::blockedWindow($a, max($this->availabilityService->estimatedDurationMinutes($a), 30));
                 $start = (int) $midnight->diffInMinutes($from, false);
                 $staff = $a->services
-                    ->flatMap(fn ($s) => $s->therapistAssignments->whereIn('assignment_status', ['Assigned', 'In Progress'])->pluck('staff_id'))
+                    ->flatMap(fn ($s) => $s->therapistAssignments->whereIn('assignment_status', [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value])->pluck('staff_id'))
                     ->unique()->values()->all();
                 if (! $staff && $remembers && $a->requested_staff_id) {
                     $staff = [(int) $a->requested_staff_id];

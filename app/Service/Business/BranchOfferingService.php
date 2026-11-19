@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Exceptions\NotFound;
 use App\Models\BranchPackage;
 use App\Models\BranchService;
 use App\Models\Package;
@@ -60,9 +61,9 @@ class BranchOfferingService
                 ->pluck('id', 'uuid')
             : collect();
 
-        abort_if(
+        throw_if(
             $variantIds->count() !== count($services) || $packageIds->count() !== count($packages),
-            404,
+            NotFound::class,
             'One of these services or packages is no longer in your catalog. Reload the page and try again.',
         );
 

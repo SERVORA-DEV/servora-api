@@ -2,6 +2,11 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
+use App\Enums\AttendanceStatus;
+use App\Enums\PaymentStatus;
+use App\Enums\QueueStatus;
 use App\Models\Appointment;
 use App\Models\Payment;
 use App\Models\Queue;
@@ -38,7 +43,7 @@ class FrontOfficeDashboardService
     {
         // The branch the front desk is working in (the web sends it).
         $branches = $this->spaBusinessRepository->branchesForUser($user);
-        $branch = $branches->firstWhere('id', \App\Support\AccountScope::workingBranchId($branches->pluck('id')->all()));
+        $branch = $branches->firstWhere('id', \App\Support\Access\AccountScope::workingBranchId($branches->pluck('id')->all()));
 
         if (! $branch) {
             return response()->json(['message' => 'No branch found for this account.'], 422);
@@ -115,8 +120,8 @@ class FrontOfficeDashboardService
     {
         $lastWeek = $today->copy()->subWeek()->toDateString();
         $day = $today->toDateString();
-        $gone = [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW];
-        $open = [Appointment::STATUS_SCHEDULED, Appointment::STATUS_CHECKED_IN, Appointment::STATUS_IN_SERVICE];
+        $gone = [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value];
+        $open = [AppointmentStatus::Scheduled->value, AppointmentStatus::CheckedIn->value, AppointmentStatus::InService->value];
 
         $row = Appointment::where('spa_branch_id', $branchId)
             ->whereIn(DB::raw('appointment_date::date'), [$day, $lastWeek])
@@ -142,7 +147,7 @@ class FrontOfficeDashboardService
     {
         $from = $today->copy()->subDays(6);
         $rows = Payment::where('spa_branch_id', $branchId)
-            ->where('payment_status', 'Paid')
+            ->where('payment_status', PaymentStatus::Paid->value)
             ->whereBetween('paid_at', [$from->copy()->startOfDay(), $today->copy()->endOfDay()])
             ->selectRaw('DATE(paid_at) as day, payment_method, SUM('.self::NET_AMOUNT.') as total, COUNT(*) as n')
             ->groupBy(DB::raw('DATE(paid_at)'), 'payment_method')
@@ -194,9 +199,9 @@ class FrontOfficeDashboardService
             ->pluck('n', 'queue_status');
 
         return [
-            'waiting' => (int) (($counts['Waiting'] ?? 0) + ($counts['Called'] ?? 0)),
-            'inService' => (int) ($counts['Serving'] ?? 0),
-            'completedToday' => (int) ($counts['Completed'] ?? 0),
+            'waiting' => (int) (($counts[QueueStatus::Waiting->value] ?? 0) + ($counts[QueueStatus::Called->value] ?? 0)),
+            'inService' => (int) ($counts[QueueStatus::Serving->value] ?? 0),
+            'completedToday' => (int) ($counts[QueueStatus::Completed->value] ?? 0),
         ];
     }
 
@@ -205,15 +210,15 @@ class FrontOfficeDashboardService
         $query = Appointment::where('spa_branch_id', $branchId)
             ->whereDate('appointment_date', $today)
             ->whereIn('status', [
-                Appointment::STATUS_SCHEDULED,
-                Appointment::STATUS_CHECKED_IN,
-                Appointment::STATUS_IN_SERVICE,
+                AppointmentStatus::Scheduled->value,
+                AppointmentStatus::CheckedIn->value,
+                AppointmentStatus::InService->value,
             ]);
 
         $rows = $query->with([
             'client',
             'services.serviceVariant.service',
-            'services.therapistAssignments' => fn ($q) => $q->where('assignment_status', '!=', 'Cancelled'),
+            'services.therapistAssignments' => fn ($q) => $q->where('assignment_status', '!=', AssignmentStatus::Cancelled->value),
             'services.therapistAssignments.staff',
             'services.therapistAssignments.facility',
             'queue',
@@ -265,7 +270,7 @@ class FrontOfficeDashboardService
         $roster = $this->attendanceService->today($user);
         $rows = is_array($roster) ? $roster['data'] : [];
 
-        $busyUuids = TherapistAssignment::where('assignment_status', 'In Progress')
+        $busyUuids = TherapistAssignment::where('assignment_status', AssignmentStatus::InProgress->value)
             ->whereHas('appointmentService.appointment', fn ($q) => $q
                 ->where('spa_branch_id', $branchId)
                 ->whereDate('appointment_date', $today))
@@ -286,7 +291,7 @@ class FrontOfficeDashboardService
         foreach ($rows as $row) {
             // Off today in Employees (leave, sick, absent) counts as on leave even when timed in
             // (a time in made before the leave was set): not on duty, not given clients.
-            $leave = $row['status'] === 'On Leave' || ! empty($row['time_off']);
+            $leave = $row['status'] === AttendanceStatus::OnLeave->value || ! empty($row['time_off']);
             $in = $row['check_in_at'] && ! $row['check_out_at'] && ! $leave;
             $scheduled = $row['scheduled_start'] && ! $row['is_day_off'];
 
@@ -320,7 +325,7 @@ class FrontOfficeDashboardService
                 'roleLabel' => $this->roleLabel($row['role']),
                 'status' => $state,
                 'checkInAt' => $row['check_in_at'],
-                'late' => $row['status'] === 'Late',
+                'late' => $row['status'] === AttendanceStatus::Late->value,
                 'coveringFor' => $row['covering_for_name'],
             ];
         }

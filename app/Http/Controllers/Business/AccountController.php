@@ -10,12 +10,9 @@ use Illuminate\Http\Request;
 
 class AccountController extends Controller
 {
-    private AccountService $accountService;
-
-    public function __construct(AccountService $accountService)
-    {
-        $this->accountService = $accountService;
-    }
+    public function __construct(
+        private AccountService $accountService,
+    ) {}
 
     public function index(Request $request)
     {

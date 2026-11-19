@@ -9,8 +9,7 @@ use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
 use App\Models\SystemSetting;
 use App\Models\User;
-use App\Service\SubscriptionService;
-use App\Service\XenditService;
+use App\Service\Subscription\XenditService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
 use Mockery;
@@ -83,25 +82,24 @@ class SubscriptionPlanSwitchTest extends TestCase
         return $this->{$method}('/api/business/subscription/change', ['subscription_plan_uuid' => $plan->uuid, 'billing_cycle' => $cycle]);
     }
 
-    public function test_an_upgrade_costs_the_difference_and_applies_once_paid(): void
+    // Paying it happens on Servora's checkout (CheckoutService, purpose upgrade), which applies the
+    // plan once the payment is confirmed; this endpoint only quotes it and sends the owner there.
+    public function test_an_upgrade_costs_the_difference_and_goes_to_checkout(): void
     {
         $this->getJson("/api/business/subscription/change/quote?subscription_plan_uuid={$this->pro->uuid}&billing_cycle=Monthly")
             ->assertOk()
             ->assertJsonPath('data.type', 'upgrade')
             ->assertJsonPath('data.amount_due', 1000);
 
-        $reference = $this->change($this->pro)->assertOk()->assertJsonPath('amount_due', 1000)->json('reference_id');
-        $expires = $this->subscription->expires_at;
+        $this->change($this->pro)->assertOk()
+            ->assertJsonPath('type', 'upgrade')
+            ->assertJsonPath('amount_due', 1000)
+            ->assertJsonPath('checkout_url', "/business/checkout?purpose=upgrade&plan={$this->pro->uuid}&cycle=Monthly");
 
-        $this->assertTrue(app(SubscriptionService::class)->activateSubscriptionFromPayment($reference, 'inv_1', 'EWALLET', 'PH_GCASH', 1000));
-
+        // Nothing changes until it is paid.
         $this->subscription->refresh();
-        $this->assertSame($this->pro->id, $this->subscription->subscription_plan_id);
-        $this->assertTrue($this->subscription->expires_at->equalTo($expires));
-        $this->assertEquals(1500, $this->subscription->billings()->where('status', 'Paid')->sum('amount'));
-
-        // The webhook and the confirm fallback can't both apply it.
-        $this->assertFalse(app(SubscriptionService::class)->activateSubscriptionFromPayment($reference, 'inv_1', 'EWALLET', 'PH_GCASH', 1000));
+        $this->assertSame($this->basic->id, $this->subscription->subscription_plan_id);
+        $this->assertEquals(500, $this->subscription->billings()->where('status', 'Paid')->sum('amount'));
     }
 
     public function test_a_downgrade_waits_for_the_next_billing_and_can_be_undone(): void
@@ -164,17 +162,23 @@ class SubscriptionPlanSwitchTest extends TestCase
         $this->change($this->pro)->assertStatus(422);
     }
 
-    public function test_an_over_limit_downgrade_is_warned_and_its_renewal_refused(): void
+    public function test_an_over_limit_downgrade_asks_what_to_keep(): void
     {
         $this->subscription->update(['subscription_plan_id' => $this->pro->id]);
         SpaBranch::factory()->count(2)->create(['spa_business_id' => $this->business->id]);
 
-        $this->change($this->basic)->assertOk()->assertJsonCount(1, 'over_limits');
+        // Over the smaller plan's limits, the owner first says which branch to keep (PlanFitService).
+        $this->change($this->basic)->assertStatus(422)->assertJsonPath('code', 'PLAN_FIT_CHOICE');
+        $keep = SpaBranch::where('spa_business_id', $this->business->id)->orderBy('id')->value('uuid');
+        $this->postJson('/api/business/subscription/change', [
+            'subscription_plan_uuid' => $this->basic->uuid, 'billing_cycle' => 'Monthly', 'keep' => ['branch_uuids' => [$keep]],
+        ])->assertOk()->assertJsonCount(1, 'over_limits');
 
+        // Renewing is paid on Servora's checkout now (CheckoutService checks the plan's limits there).
         $this->subscription->update(['expires_at' => now()->subDay()]);
         $this->postJson('/api/business/subscription', ['subscription_plan_uuid' => $this->basic->uuid, 'billing_cycle' => 'Monthly'])
-            ->assertStatus(422)
-            ->assertJsonCount(1, 'over_limits');
+            ->assertStatus(409)
+            ->assertJsonPath('checkout_url', "/business/checkout?purpose=subscribe&plan={$this->basic->uuid}&cycle=Monthly");
     }
 
     public function test_owners_cannot_edit_their_subscription_row(): void

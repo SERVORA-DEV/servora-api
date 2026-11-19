@@ -8,8 +8,8 @@ use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\System\SecurityRepository;
 use App\Service\Concerns\SendsOtpMail;
-use App\Support\SessionActivity;
-use App\Support\UserAgentParser;
+use App\Support\Access\SessionActivity;
+use App\Support\Access\UserAgentParser;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -25,14 +25,10 @@ class SecurityService
     // How soon another "turn on two-factor" code may be asked for.
     private const TWO_FACTOR_SETUP_RESEND_SECONDS = 60;
 
-    private SecurityRepository $securityRepository;
-    private AuditLogRepository $auditLogRepository;
-
-    public function __construct(SecurityRepository $securityRepository, AuditLogRepository $auditLogRepository)
-    {
-        $this->securityRepository = $securityRepository;
-        $this->auditLogRepository = $auditLogRepository;
-    }
+    public function __construct(
+        private SecurityRepository $securityRepository,
+        private AuditLogRepository $auditLogRepository,
+    ) {}
 
     // ── Password ─────────────────────────────────────────────────
 
@@ -61,7 +57,7 @@ class SecurityService
     // ── Two-factor authentication ───────────────────────────────
     //
     // The second factor is a 6-digit code emailed to the account's VERIFIED
-    // personal email each time it signs in (UserService's challenge:
+    // personal email each time it signs in (SignInService's challenge:
     // requestTwoFactorEmailCode / verifyTwoFactorLogin). There is no
     // authenticator app and there are no recovery codes — so the personal
     // email can't be changed while two-factor is on (submitPersonalEmail),
@@ -278,7 +274,7 @@ class SecurityService
 
     // ── Login sessions ───────────────────────────────────────────
 
-    // Only the sessions in use are listed (App\Support\SessionActivity):
+    // Only the sessions in use are listed (App\Support\Access\SessionActivity):
     // this one, and any other used in the last half hour. Sign-ins left
     // behind by a closed browser are still valid, so they are counted
     // (idle_count) and "log out everywhere else" ends them — but they are
@@ -311,7 +307,7 @@ class SecurityService
         ], 200);
     }
 
-    // My own Login / Logout / Login Failed history. Writers: UserService
+    // My own Login / Logout / Login Failed history. Writers: Auth\SignInService
     // (login, 2FA challenge, logout, password reset) and this class
     // (revoked sessions, password change).
     public function loginHistory(User $user, ?int $currentTokenId)
@@ -372,7 +368,7 @@ class SecurityService
     }
 
     // Security change on the admin's OWN account, for Settings > Audit Logs
-    // (sign-ins/sign-outs are logged by UserService/endOtherSessions).
+    // (sign-ins/sign-outs are logged by Auth\SignInService/endOtherSessions).
     private function logAccountEvent(User $user, string $action, array $new, ?array $old = null): void
     {
         $this->auditLogRepository->record($user->id, 'users', $user->id, $action, $old, $new, request());

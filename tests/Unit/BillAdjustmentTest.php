@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\BillAdjustment;
+use App\Support\Billing\BillAdjustment;
 use PHPUnit\Framework\TestCase;
 
 // Changing a paid bill: who has to approve it, and what a voucher hands back.

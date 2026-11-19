@@ -62,7 +62,7 @@ class ClientRewardsService
         }
 
         return DB::transaction(function () use ($user, $client, $program) {
-            $result = $this->rewards->redeemPoints($client, $program, $user, null, \App\Support\ProgramChannel::APP);
+            $result = $this->rewards->redeemPoints($client, $program, $user, null, \App\Support\Programs\ProgramChannel::APP);
             if (is_string($result)) {
                 return response()->json(['message' => $result], 422);
             }

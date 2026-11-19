@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\ServiceExtension;
+use App\Support\Visits\ServiceExtension;
 use PHPUnit\Framework\TestCase;
 
 // Extending a service in progress to a longer length of the same service.

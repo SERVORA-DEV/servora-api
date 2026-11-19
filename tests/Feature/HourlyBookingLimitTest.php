@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\AppointmentStatus;
 use App\Models\Appointment;
 use App\Models\BranchService;
 use App\Models\Service;
@@ -76,7 +77,7 @@ class HourlyBookingLimitTest extends TestCase
             'appointment_date' => self::DATE,
             'appointment_time' => $time,
             'services' => [['service_variant_uuid' => $this->variant->uuid]],
-            'client' => ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => '0917' . random_int(1000000, 9999999)],
+            'client' => ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => '0917' . random_int(1000000, 9999999), 'gender' => 'Female'],
         ]);
     }
 
@@ -89,7 +90,7 @@ class HourlyBookingLimitTest extends TestCase
             'appointment_date' => self::DATE,
             'appointment_time' => $time,
             'appointment_type' => $type,
-            'client' => ['first_name' => 'Walk', 'last_name' => 'In', 'gender' => 'Female'],
+            'client' => ['first_name' => 'Walk', 'last_name' => 'In', 'gender' => 'Female', 'phone_number' => '0917' . random_int(1000000, 9999999)],
         ]);
     }
 
@@ -203,7 +204,7 @@ class HourlyBookingLimitTest extends TestCase
         $uuid = $this->deskBooking('14:05')->assertSuccessful()->json('data.uuid');
         $this->deskBooking('14:30')->assertStatus(422);
 
-        Appointment::where('uuid', $uuid)->update(['status' => Appointment::STATUS_CANCELLED]);
+        Appointment::where('uuid', $uuid)->update(['status' => AppointmentStatus::Cancelled->value]);
 
         $this->deskBooking('14:30')->assertSuccessful();
     }

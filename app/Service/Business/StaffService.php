@@ -2,6 +2,9 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
+use App\Enums\StaffStatus;
 use App\Models\CommissionPlan;
 use App\Models\Service;
 use App\Models\Staff;
@@ -13,31 +16,21 @@ use App\Repository\Business\SpaBranchRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Http\Resources\StaffResource;
 use App\Models\SpaBusiness;
-use App\Support\AppCache;
-use App\Support\CommissionShare;
-use App\Support\StaffSpecialty;
+use App\Support\Staff\CommissionShare;
+use App\Support\Staff\StaffSpecialty;
+use Illuminate\Support\Facades\Gate;
 
 class StaffService
 {
-    private StaffRepository $staffRepository;
-    private SpaBranchRepository $spaBranchRepository;
-    private SpaBusinessRepository $spaBusinessRepository;
-    private StaffQualificationRepository $staffQualificationRepository;
-
     public function __construct(
-        StaffRepository $staffRepository,
-        SpaBranchRepository $spaBranchRepository,
-        SpaBusinessRepository $spaBusinessRepository,
-        StaffQualificationRepository $staffQualificationRepository,
+        private StaffRepository $staffRepository,
+        private SpaBranchRepository $spaBranchRepository,
+        private SpaBusinessRepository $spaBusinessRepository,
+        private StaffQualificationRepository $staffQualificationRepository,
         private ManagerChangeNotifier $managerChanges,
         private CommissionCalculator $commissionCalculator,
         private StaffTransferService $transfers,
-    ) {
-        $this->staffRepository = $staffRepository;
-        $this->spaBranchRepository = $spaBranchRepository;
-        $this->spaBusinessRepository = $spaBusinessRepository;
-        $this->staffQualificationRepository = $staffQualificationRepository;
-    }
+    ) {}
 
     // business_owner's branch ids cover the whole business; manager's cover
     // only their own staff record's branch — see
@@ -98,20 +91,10 @@ class StaffService
         return (new StaffResource($staff))->additional($this->standardCommission($business) + $extra);
     }
 
-    // Whether this account may give staff a commission plan: the owner
-    // always; a manager when `commission_update` is in their role's bundle and
-    // not switched off on their own account (EnsurePermission's rule — the
-    // role is the ceiling, the account's own flag can only narrow it).
+    // Whether this account may give staff a commission plan: StaffPolicy::changeCommission.
     private function mayChangeCommission(User $user): bool
     {
-        if ($user->role === 'business_owner') {
-            return true;
-        }
-        if (! in_array('commission_update', config('permission.' . $user->role, []), true)) {
-            return false;
-        }
-
-        return AppCache::permission($user->id)?->commission_update !== false;
+        return Gate::forUser($user)->allows('changeCommission', Staff::class);
     }
 
     // Someone's commission plan on its way to the database. `commission_plan_uuid`
@@ -252,7 +235,7 @@ class StaffService
         $branch = $this->spaBranchRepository->findByUuidForBranches($payload['spa_branch_uuid'], $this->branchIds($user));
 
         $payload['spa_branch_id'] = $branch->id;
-        $payload['status'] = $payload['status'] ?? 'active';
+        $payload['status'] = $payload['status'] ?? StaffStatus::Active->value;
         unset($payload['spa_branch_uuid']);
 
         $payload = $this->withSpecialties($payload, null);
@@ -340,7 +323,7 @@ class StaffService
 
         // Switching someone off (they left) while they are mid-service or assigned
         // to a visit would leave that visit with nobody.
-        if (($payload['status'] ?? null) === 'inactive' && $existing->status !== 'inactive' && ($problem = $this->openWorkProblem($existing, 'switching off'))) {
+        if (($payload['status'] ?? null) === StaffStatus::Inactive->value && $existing->status !== StaffStatus::Inactive->value && ($problem = $this->openWorkProblem($existing, 'switching off'))) {
             return response()->json(['message' => $problem], 422);
         }
 
@@ -398,9 +381,9 @@ class StaffService
     private function openWorkProblem(Staff $staff, string $action): ?string
     {
         $open = \App\Models\TherapistAssignment::where('staff_id', $staff->id)
-            ->whereIn('assignment_status', ['Assigned', 'In Progress'])
+            ->whereIn('assignment_status', [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value])
             ->whereHas('appointmentService.appointment', fn ($q) => $q->whereIn('status', [
-                \App\Models\Appointment::STATUS_SCHEDULED, \App\Models\Appointment::STATUS_CHECKED_IN, \App\Models\Appointment::STATUS_IN_SERVICE,
+                AppointmentStatus::Scheduled->value, AppointmentStatus::CheckedIn->value, AppointmentStatus::InService->value,
             ]))
             ->count();
         if ($open === 0) {
@@ -413,7 +396,7 @@ class StaffService
             . ($open === 1 ? 'it' : 'them') . ($action === 'removing' ? ' before removing them.' : ' before switching them off.');
     }
 
-    // What the person does (App\Support\StaffSpecialty) on its way to the
+    // What the person does (App\Support\Staff\StaffSpecialty) on its way to the
     // database: left out until the column exists; none for a manager or the
     // front desk; for staff, what was sent — what they had, or "Therapist",
     // when nothing was. Sending an empty list for someone who performs
@@ -428,7 +411,7 @@ class StaffService
 
         $role = $payload['role'] ?? $existing?->role;
         $sent = array_key_exists('specialties', $payload);
-        if ($role === \App\Support\StaffSpecialty::ROLE && $sent && ! \App\Support\StaffSpecialty::clean($payload['specialties'])) {
+        if ($role === \App\Support\Staff\StaffSpecialty::ROLE && $sent && ! \App\Support\Staff\StaffSpecialty::clean($payload['specialties'])) {
             return response()->json(['message' => 'Choose at least one specialty.'], 422);
         }
         // Nothing to settle: a save that touches neither the role nor these.
@@ -436,7 +419,7 @@ class StaffService
             return $payload;
         }
 
-        $payload['specialties'] = \App\Support\StaffSpecialty::forRole($role, $payload['specialties'] ?? null, $existing?->specialties) ?: null;
+        $payload['specialties'] = \App\Support\Staff\StaffSpecialty::forRole($role, $payload['specialties'] ?? null, $existing?->specialties) ?: null;
 
         return $payload;
     }
@@ -453,7 +436,7 @@ class StaffService
         }
 
         $role = $payload['role'] ?? $existing?->role;
-        if ($role !== \App\Support\StaffSpecialty::ROLE && (array_key_exists('home_service_available', $payload) || array_key_exists('role', $payload))) {
+        if ($role !== \App\Support\Staff\StaffSpecialty::ROLE && (array_key_exists('home_service_available', $payload) || array_key_exists('role', $payload))) {
             $payload['home_service_available'] = false;
         }
 

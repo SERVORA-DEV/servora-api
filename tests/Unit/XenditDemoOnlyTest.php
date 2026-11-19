@@ -2,8 +2,8 @@
 
 namespace Tests\Unit;
 
-use App\Service\XenditRequestException;
-use App\Service\XenditService;
+use App\Service\Subscription\XenditRequestException;
+use App\Service\Subscription\XenditService;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 

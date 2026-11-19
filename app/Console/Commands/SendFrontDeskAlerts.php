@@ -2,6 +2,8 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\AppointmentStatus;
+use App\Enums\StaffStatus;
 use App\Models\Appointment;
 use App\Models\Notification;
 use App\Models\SpaBusinessSetting;
@@ -48,7 +50,7 @@ class SendFrontDeskAlerts extends Command
         $sent = 0;
 
         Appointment::query()
-            ->where('status', Appointment::STATUS_SCHEDULED)
+            ->where('status', AppointmentStatus::Scheduled->value)
             ->where('appointment_date', now()->toDateString())
             ->where('appointment_time', '>=', now()->format('H:i:s'))
             ->with('client', 'branch.business.settings')
@@ -90,7 +92,7 @@ class SendFrontDeskAlerts extends Command
         $date = now()->toDateString();
 
         Staff::query()
-            ->where('status', 'active')
+            ->where('status', StaffStatus::Active->value)
             ->with([
                 'branch.business.settings',
                 'schedules',

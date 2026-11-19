@@ -2,17 +2,18 @@
 
 namespace App\Service\Business;
 
+use App\Enums\StaffStatus;
 use App\Models\Staff;
 use App\Models\User;
 use App\Repository\SpaBusinessRepository;
-use App\Support\AttendancePenalty;
+use App\Support\Staff\AttendancePenalty;
 use Carbon\Carbon;
 
 // The Earnings page: what every staff member of the caller's branches earned
 // between two dates (the current pay period unless asked otherwise) —
 // commission and home-service fees, and the late and absent penalties and the
 // parts of refunds charged to them (refund policies that charge staff,
-// App\Support\RefundCharge) — down to what is left, never below zero. A row adds
+// App\Support\Billing\RefundCharge) — down to what is left, never below zero. A row adds
 // up to that employee's own Earnings tab (StaffEarningsService).
 class StaffEarningsReport
 {
@@ -46,7 +47,7 @@ class StaffEarningsReport
         // a late day costs the same whoever it is.
         $staff = Staff::with('branch')
             ->whereIn('spa_branch_id', $branchIds)
-            ->whereIn('status', ['active', 'on-leave'])
+            ->whereIn('status', [StaffStatus::Active->value, StaffStatus::OnLeave->value])
             ->orderBy('first_name')
             ->get();
         $ids = $staff->pluck('id')->all();
@@ -96,7 +97,7 @@ class StaffEarningsReport
         // earned in the range, marked as such.
         $former = Staff::withTrashed()->with('branch')
             ->whereIn('spa_branch_id', $branchIds)
-            ->where(fn ($q) => $q->whereNotIn('status', ['active', 'on-leave'])->orWhereNotNull('deleted_at'))
+            ->where(fn ($q) => $q->whereNotIn('status', [StaffStatus::Active->value, StaffStatus::OnLeave->value])->orWhereNotNull('deleted_at'))
             ->get();
         if ($former->isNotEmpty()) {
             $owed = $this->commissionCalculator->summary($business, $former->pluck('id')->all(), $start, $end);

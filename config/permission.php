@@ -194,7 +194,7 @@ return [
         // Voiding a mistaken payment / refunding a bill.
         'payment_refund',
         // Changing a bill after it is paid (a voucher afterwards, a refund)
-        // without asking the owner first (App\Support\BillAdjustment).
+        // without asking the owner first (App\Support\Billing\BillAdjustment).
         'payment_adjust',
         // Going ahead despite a booking rule, with a reason that is kept
         // (App\Service\Business\PolicyGate).
@@ -252,7 +252,7 @@ return [
         // Grantable, but off by default — see default_off below.
         'policy_override',
         // Off by default: without it, changing a paid bill is a request a
-        // manager or the owner approves (App\Support\BillAdjustment).
+        // manager or the owner approves (App\Support\Billing\BillAdjustment).
         'payment_adjust',
 
         // Customer programs: see what's offered, sell memberships, apply
@@ -267,7 +267,7 @@ return [
     // 2026_10_29 migration, which switches them on for the accounts that
     // already existed. Until that migration has run, EnsurePermission treats
     // them as on for those accounts, so nobody is locked out of what they
-    // could do the day before (App\Support\PermissionGrants).
+    // could do the day before (App\Support\Access\PermissionGrants).
     'newly_enforced' => [
         'manager' => ['attendance_checkin', 'facility_create', 'facility_delete', 'branch_update', 'audit_log_view'],
         'front_officer' => ['appointment_update', 'appointment_complete', 'appointment_cancel'],

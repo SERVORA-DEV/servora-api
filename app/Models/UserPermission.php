@@ -2,13 +2,10 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class UserPermission extends Model
 {
-    use HasFactory;
-
     // policy_override and payment_adjust get their columns from migrations
     // the owner runs; until then they are simply not written.
     protected static function booted(): void

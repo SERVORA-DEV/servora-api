@@ -122,11 +122,6 @@ class MakeApiLayer extends Command
             return new DummyResource($model);
         }
 
-        public function getDummyByField(string $field, $value)
-        {
-            $model = $this->dummyRepository->findByField($field, $value);
-            return new DummyResource($model);
-        }
     
         public function updateDummy(string $uuid, array $payload)
         {

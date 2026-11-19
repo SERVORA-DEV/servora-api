@@ -3,30 +3,54 @@
 namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
-use App\Service\Business\AppointmentService;
+use App\Http\Requests\Business\BillDiscountRequest;
+use App\Http\Requests\Business\BillProgramDiscountRequest;
+use App\Http\Requests\Business\BillRefundRequest;
+use App\Http\Requests\Business\BillingListRequest;
+use App\Http\Requests\Business\BillingSummaryRequest;
+use App\Service\Business\AppointmentLookupService;
+use App\Service\Business\AppointmentOverviewService;
+use App\Service\Business\BillingOverviewService;
 use App\Service\Business\BillingService;
+use App\Support\PerPage;
 use Illuminate\Http\Request;
 
 class BillingController extends Controller
 {
-    private AppointmentService $appointmentService;
-    private BillingService $billingService;
+    public function __construct(
+        private AppointmentLookupService $lookup,
+        private BillingService $billingService,
+    ) {}
 
-    public function __construct(AppointmentService $appointmentService, BillingService $billingService)
+    // One page of visit bills, filtered by the API (BillingListQuery says which filters);
+    // `with_counts` / `with_totals` add the status counts and what the matching bills add up to.
+    public function index(BillingListRequest $request)
     {
-        $this->appointmentService = $appointmentService;
-        $this->billingService = $billingService;
+        $filters = $request->only(['status', 'display_status', 'payment_method', 'date_from', 'date_to', 'search', 'branch_uuid', 'sort']);
+        $filters['with_counts'] = $request->boolean('with_counts');
+        $filters['with_totals'] = $request->boolean('with_totals');
+
+        return $this->lookup->listBillings($request->user(), $filters, PerPage::from($request));
     }
 
-    public function index(Request $request)
+    // The overview card: a period's bills, money in, still owed, refunds, and how it was paid.
+    public function summary(BillingSummaryRequest $request, BillingOverviewService $overview, AppointmentOverviewService $scope)
     {
-        $filters = $request->only(['status', 'payment_method', 'date_from', 'date_to', 'search']);
-        return $this->appointmentService->listBillings($request->user(), $filters, (int) $request->input('per_page', 15));
+        $data = $request->validated();
+        if ($data['date_to'] < $data['date_from']) {
+            return response()->json(['message' => 'The end date is before the start date.'], 422);
+        }
+        $ids = $scope->branchIds($request->user(), $data['branch_uuid'] ?? null);
+        if ($ids === null) {
+            return response()->json(['message' => 'No spa business found for this account.'], 422);
+        }
+
+        return response()->json(['data' => $overview->overview($ids, $data['date_from'], $data['date_to'])]);
     }
 
     public function show(Request $request, string $uuid)
     {
-        return $this->appointmentService->getBilling($request->user(), $uuid);
+        return $this->lookup->getBilling($request->user(), $uuid);
     }
 
     // The methods this business accepts (Settings → Payments), for the
@@ -36,13 +60,9 @@ class BillingController extends Controller
         return $this->billingService->paymentOptions($request->user());
     }
 
-    public function discount(Request $request, string $uuid)
+    public function discount(BillDiscountRequest $request, string $uuid)
     {
-        $data = $request->validate([
-            'type' => ['required', 'in:amount,percent'],
-            'value' => ['required', 'numeric', 'min:0', $request->input('type') === 'percent' ? 'max:100' : 'max:1000000'],
-            'reason' => ['nullable', 'string', 'max:255'],
-        ]);
+        $data = $request->validated();
 
         return $this->billingService->applyDiscount($request->user(), $uuid, $data['type'], (float) $data['value'], $data['reason'] ?? null, $request);
     }
@@ -57,13 +77,9 @@ class BillingController extends Controller
     // Apply one of those (or remove it with `remove`). Separate from
     // discount() so the front desk can use programs the owner set up
     // without being allowed to type in any discount they like.
-    public function programDiscount(Request $request, string $uuid)
+    public function programDiscount(BillProgramDiscountRequest $request, string $uuid)
     {
-        $data = $request->validate([
-            'discount_program_uuid' => ['nullable', 'uuid', 'required_without_all:client_voucher_uuid,remove'],
-            'client_voucher_uuid' => ['nullable', 'uuid'],
-            'remove' => ['nullable', 'boolean'],
-        ]);
+        $data = $request->validated();
 
         if ($request->boolean('remove')) {
             return $this->billingService->applyDiscount($request->user(), $uuid, 'amount', 0, null, $request, programOnly: true);
@@ -77,14 +93,9 @@ class BillingController extends Controller
         );
     }
 
-    public function refund(Request $request, string $uuid)
+    public function refund(BillRefundRequest $request, string $uuid)
     {
-        $data = $request->validate([
-            'amount' => ['required', 'numeric', 'min:0.01', 'max:1000000'],
-            'reason' => ['required', 'string', 'max:255'],
-            // The money for one service of the visit, when it is not for the whole bill.
-            'service_uuid' => ['nullable', 'string', 'max:64'],
-        ]);
+        $data = $request->validated();
 
         return $this->billingService->refund($request->user(), $uuid, (float) $data['amount'], $data['reason'], $request, $data['service_uuid'] ?? null);
     }

@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\ServoraReviewStatus;
+use App\Http\Requests\ServoraReviewRequest;
 use App\Service\ServoraReviewService;
 use Illuminate\Http\Request;
 
@@ -16,16 +18,9 @@ class ServoraReviewController extends Controller
         return $this->reviews->mine($request->user());
     }
 
-    public function save(Request $request)
+    public function save(ServoraReviewRequest $request)
     {
-        $data = $request->validate([
-            'rating' => 'required|integer|between:1,5',
-            'title' => 'nullable|string|max:80',
-            'body' => 'required|string|min:20|max:1200',
-            'show_business' => 'sometimes|boolean',
-        ], [
-            'body.min' => 'Write a little more: at least 20 characters.',
-        ]);
+        $data = $request->validated();
 
         return $this->reviews->save($request->user(), $data, $request);
     }
@@ -37,18 +32,18 @@ class ServoraReviewController extends Controller
 
     public function adminIndex(Request $request)
     {
-        $status = (string) $request->query('status', 'Pending');
+        $status = (string) $request->query('status', ServoraReviewStatus::Pending->value);
 
-        return $this->reviews->adminList(in_array($status, ['Pending', 'Published', 'Hidden', 'All'], true) ? $status : 'Pending');
+        return $this->reviews->adminList(in_array($status, [ServoraReviewStatus::Pending->value, ServoraReviewStatus::Published->value, ServoraReviewStatus::Hidden->value, 'All'], true) ? $status : ServoraReviewStatus::Pending->value);
     }
 
     public function publish(Request $request, string $uuid)
     {
-        return $this->reviews->setStatus($request->user(), $uuid, 'Published', $request);
+        return $this->reviews->setStatus($request->user(), $uuid, ServoraReviewStatus::Published->value, $request);
     }
 
     public function hide(Request $request, string $uuid)
     {
-        return $this->reviews->setStatus($request->user(), $uuid, 'Hidden', $request);
+        return $this->reviews->setStatus($request->user(), $uuid, ServoraReviewStatus::Hidden->value, $request);
     }
 }

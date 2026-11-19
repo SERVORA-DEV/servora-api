@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\LoyaltyEarning;
+use App\Support\Programs\LoyaltyEarning;
 use PHPUnit\Framework\TestCase;
 
 // Loyalty points are for clients who use the app.

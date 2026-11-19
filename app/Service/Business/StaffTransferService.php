@@ -2,6 +2,10 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
+use App\Enums\ScheduleChangeStatus;
+use App\Enums\StaffTransferStatus;
 use App\Models\Appointment;
 use App\Models\SpaBranch;
 use App\Models\Staff;
@@ -11,9 +15,10 @@ use App\Models\TherapistAssignment;
 use App\Models\User;
 use App\Repository\Business\StaffRepository;
 use App\Repository\SpaBusinessRepository;
-use App\Service\NotificationService;
+use App\Service\Notifications\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 // Moving a staff member to another branch.
 //
@@ -30,11 +35,11 @@ use Illuminate\Support\Facades\DB;
 // A staff member's login follows them (a login's branch is its staff row's
 // branch), so a manager or front desk account lands in the new branch's
 // scope. Their past attendance stays at the branch where it happened
-// (attendances.spa_branch_id, App\Support\History).
+// (attendances.spa_branch_id, App\Support\Activity\History).
 class StaffTransferService
 {
     // Bookings that are still to happen (or happening).
-    private const OPEN_BOOKINGS = [Appointment::STATUS_SCHEDULED, Appointment::STATUS_CHECKED_IN, Appointment::STATUS_IN_SERVICE];
+    private const OPEN_BOOKINGS = [AppointmentStatus::Scheduled->value, AppointmentStatus::CheckedIn->value, AppointmentStatus::InService->value];
 
     public function __construct(
         private SpaBusinessRepository $spaBusinessRepository,
@@ -66,13 +71,9 @@ class StaffTransferService
             return response()->json(['message' => 'That branch was not found.'], 404);
         }
 
-        if ($user->role === 'manager') {
-            if (! \App\Models\AccountBranch::ready() && $staff->user_id === $user->id) {
-                return response()->json(['message' => "You can't move yourself to another branch. Ask the spa owner."], 422);
-            }
-            if ($staff->role === 'manager') {
-                return response()->json(['message' => 'Only the spa owner can move a manager to another branch.'], 422);
-            }
+        $may = Gate::forUser($user)->inspect('moveToAnotherBranch', $staff);
+        if ($may->denied()) {
+            return response()->json(['message' => $may->message()], $may->status());
         }
         // (Before logins were given branches of their own, a login moved with its employee.)
         if (! \App\Models\AccountBranch::ready() && $staff->user_id !== null && $to->plan_hold_at) {
@@ -102,7 +103,7 @@ class StaffTransferService
         $from = $staff->branch;
         $request = DB::transaction(function () use ($staff, $user, $from, $to) {
             // One open request per person: a newer one replaces it.
-            $this->closePending($staff->id, StaffTransferRequest::SUPERSEDED);
+            $this->closePending($staff->id, StaffTransferStatus::Superseded->value);
 
             return StaffTransferRequest::create([
                 'staff_id' => $staff->id,
@@ -112,7 +113,7 @@ class StaffTransferService
                 'from_branch_name' => $from?->branch_name,
                 'to_branch_name' => $to->branch_name,
                 'requested_by_user_id' => $user->id,
-                'status' => StaffTransferRequest::PENDING,
+                'status' => StaffTransferStatus::Pending->value,
             ]);
         });
 
@@ -135,7 +136,7 @@ class StaffTransferService
     public function pendingRequests(User $user)
     {
         $requests = StaffTransferRequest::with(['staff', 'requester.staff'])
-            ->where('status', StaffTransferRequest::PENDING)
+            ->where('status', StaffTransferStatus::Pending->value)
             ->whereIn('from_branch_id', $this->branchIds($user))
             ->latest()
             ->get();
@@ -145,9 +146,7 @@ class StaffTransferService
 
     public function approve(User $user, string $uuid)
     {
-        if ($user->role !== 'business_owner') {
-            return response()->json(['message' => 'Only the owner can confirm a move to another branch.'], 403);
-        }
+        Gate::forUser($user)->authorize('approve', StaffTransferRequest::class);
         $request = $this->findPending($user, $uuid);
         if (! $request) {
             return response()->json(['message' => 'This request has already been decided or withdrawn.'], 422);
@@ -160,7 +159,7 @@ class StaffTransferService
         }
         // Moved by someone else since the request was made: nothing to do.
         if ($staff->spa_branch_id !== $request->from_branch_id) {
-            $request->update(['status' => StaffTransferRequest::SUPERSEDED]);
+            $request->update(['status' => StaffTransferStatus::Superseded->value]);
 
             return response()->json(['message' => "{$this->nameOf($staff)} is no longer at {$request->from_branch_name}, so this request is closed."], 422);
         }
@@ -172,7 +171,7 @@ class StaffTransferService
         }
 
         $this->apply($staff, $to, $user, $request);
-        $request->update(['status' => StaffTransferRequest::APPROVED, 'decided_by_user_id' => $user->id, 'decided_at' => now()]);
+        $request->update(['status' => StaffTransferStatus::Approved->value, 'decided_by_user_id' => $user->id, 'decided_at' => now()]);
 
         if ($request->requester) {
             $this->notificationService->staffTransferDecided(
@@ -185,16 +184,14 @@ class StaffTransferService
 
     public function decline(User $user, string $uuid, ?string $reason)
     {
-        if ($user->role !== 'business_owner') {
-            return response()->json(['message' => 'Only the owner can decline a move to another branch.'], 403);
-        }
+        Gate::forUser($user)->authorize('decline', StaffTransferRequest::class);
         $request = $this->findPending($user, $uuid);
         if (! $request) {
             return response()->json(['message' => 'This request has already been decided or withdrawn.'], 422);
         }
 
         $request->update([
-            'status' => StaffTransferRequest::DECLINED,
+            'status' => StaffTransferStatus::Declined->value,
             'decided_by_user_id' => $user->id,
             'decided_at' => now(),
             'decision_note' => $reason ?: null,
@@ -215,11 +212,9 @@ class StaffTransferService
         if (! $request) {
             return response()->json(['message' => 'This request has already been decided or withdrawn.'], 422);
         }
-        if ($user->role !== 'business_owner' && $request->requested_by_user_id !== $user->id) {
-            return response()->json(['message' => 'Only the person who made this request can withdraw it.'], 403);
-        }
+        Gate::forUser($user)->authorize('withdraw', $request);
 
-        $request->update(['status' => StaffTransferRequest::WITHDRAWN]);
+        $request->update(['status' => StaffTransferStatus::Withdrawn->value]);
 
         return response()->json(['message' => 'Request withdrawn.', 'request' => null]);
     }
@@ -233,7 +228,7 @@ class StaffTransferService
         return response()->json(['data' => $branches->map(fn (SpaBranch $b) => [
             'uuid' => $b->uuid,
             'name' => $b->branch_name,
-            'title' => \App\Support\BranchIdentity::title($b->branch_name, $b->code),
+            'title' => \App\Support\Branches\BranchIdentity::title($b->branch_name, $b->code),
             'on_hold' => (bool) $b->plan_hold_at,
         ])->values()]);
     }
@@ -248,7 +243,7 @@ class StaffTransferService
         return $this->present(
             StaffTransferRequest::with(['staff', 'requester.staff'])
                 ->where('staff_id', $staff->id)
-                ->where('status', StaffTransferRequest::PENDING)
+                ->where('status', StaffTransferStatus::Pending->value)
                 ->latest()
                 ->first()
         );
@@ -273,12 +268,12 @@ class StaffTransferService
 
             // Written against the old branch.
             StaffScheduleChangeRequest::where('staff_id', $staff->id)
-                ->where('status', StaffScheduleChangeRequest::PENDING)
-                ->update(['status' => StaffScheduleChangeRequest::SUPERSEDED, 'updated_at' => now()]);
+                ->where('status', ScheduleChangeStatus::Pending->value)
+                ->update(['status' => ScheduleChangeStatus::Superseded->value, 'updated_at' => now()]);
             StaffTransferRequest::where('staff_id', $staff->id)
-                ->where('status', StaffTransferRequest::PENDING)
+                ->where('status', StaffTransferStatus::Pending->value)
                 ->when($deciding, fn ($q) => $q->where('id', '!=', $deciding->id))
-                ->update(['status' => StaffTransferRequest::SUPERSEDED, 'updated_at' => now()]);
+                ->update(['status' => StaffTransferStatus::Superseded->value, 'updated_at' => now()]);
         });
         $staff->unsetRelation('branch');
 
@@ -302,7 +297,7 @@ class StaffTransferService
     private function openBookingsProblem(Staff $staff): ?string
     {
         $assigned = TherapistAssignment::where('staff_id', $staff->id)
-            ->whereIn('assignment_status', ['Assigned', 'In Progress'])
+            ->whereIn('assignment_status', [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value])
             ->whereHas('appointmentService.appointment', fn ($q) => $q->whereIn('status', self::OPEN_BOOKINGS))
             ->count();
         $asked = Appointment::remembersRequests()
@@ -323,7 +318,7 @@ class StaffTransferService
     {
         return StaffTransferRequest::with(['staff.branch', 'toBranch', 'requester.staff'])
             ->where('uuid', $uuid)
-            ->where('status', StaffTransferRequest::PENDING)
+            ->where('status', StaffTransferStatus::Pending->value)
             ->whereIn('from_branch_id', $this->branchIds($user))
             ->first();
     }
@@ -331,7 +326,7 @@ class StaffTransferService
     private function closePending(int $staffId, string $status): void
     {
         StaffTransferRequest::where('staff_id', $staffId)
-            ->where('status', StaffTransferRequest::PENDING)
+            ->where('status', StaffTransferStatus::Pending->value)
             ->update(['status' => $status, 'updated_at' => now()]);
     }
 

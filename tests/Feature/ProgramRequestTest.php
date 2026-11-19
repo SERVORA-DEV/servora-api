@@ -13,6 +13,7 @@ use App\Models\SubscriptionPlan;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
+use Tests\Concerns\MakesStaffLogins;
 use Tests\TestCase;
 
 // A manager asks the owner for a new voucher, discount or membership for
@@ -24,6 +25,7 @@ use Tests\TestCase;
 //   DB_PASSWORD=... php artisan test --filter=ProgramRequestTest
 class ProgramRequestTest extends TestCase
 {
+    use MakesStaffLogins;
     use RefreshDatabase;
 
     private const DISCOUNT = ['type' => 'discount', 'name' => 'Student Rate', 'audience' => 'all', 'values' => ['kind' => '%', 'percent' => '10']];
@@ -66,14 +68,7 @@ class ProgramRequestTest extends TestCase
     {
         $staff = Staff::factory()->create(['spa_branch_id' => $branch->id, 'role' => 'manager']);
         Sanctum::actingAs($this->owner);
-        $this->postJson('/api/business/account', [
-            'staff_uuid' => $staff->uuid,
-            'username' => $username,
-            'email' => "{$username}@lotus.test",
-            'password' => 'secret-password',
-        ])->assertSuccessful();
-
-        return User::where('username', $username)->firstOrFail();
+        return $this->makeStaffLogin($staff, $username, "{$username}@lotus.test");
     }
 
     private function ask(array $body = [])

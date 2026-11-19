@@ -2,6 +2,9 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentServiceStatus;
+use App\Enums\AssignmentStatus;
+use App\Enums\BillingAdjustmentStatus;
 use App\Models\Billing;
 use App\Models\BillingAdjustment;
 use App\Models\AppointmentServiceItem;
@@ -11,14 +14,14 @@ use App\Models\SpaBusiness;
 use App\Models\User;
 use App\Repository\NotificationRepository;
 use App\Repository\SpaBusinessRepository;
-use App\Support\AccountScope;
-use App\Support\AppCache;
-use App\Support\BillAdjustment;
-use App\Support\History;
-use App\Support\RefundCharge;
-use App\Support\RefundPolicyRule;
+use App\Support\Access\AccountScope;
+use App\Support\Billing\BillAdjustment;
+use App\Support\Activity\History;
+use App\Support\Billing\RefundCharge;
+use App\Support\Billing\RefundPolicyRule;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 // Changing a bill after it is paid: a voucher put on afterwards (its value
 // comes off, the difference is handed back) or a refund, part or all. And
@@ -27,7 +30,7 @@ use Illuminate\Support\Facades\DB;
 // of" as a refund after payment; while one waits, no payment is taken.
 //
 // Every change is a billing_adjustments row, so the bill keeps who did it,
-// why, and who approved it. Who has to agree is App\Support\BillAdjustment:
+// why, and who approved it. Who has to agree is App\Support\Billing\BillAdjustment:
 // the owner and anyone with "Adjust paid bills" (payment_adjust) apply it at
 // once; anyone else sends a request that a manager of the branch or the
 // owner (front desk) or only the owner (manager) approves or declines. The
@@ -52,35 +55,22 @@ class BillingAdjustmentService
 
     // ── Who ──────────────────────────────────────────────────────────────
 
-    /** Whether this account applies a change at once ("Adjust paid bills"). */
+    /** Whether this account applies a change at once ("Adjust paid bills"): BillingAdjustmentPolicy. */
     public function mayAdjust(User $user): bool
     {
-        if ($user->role === 'business_owner') {
-            return true;
-        }
-        if (! BillingAdjustment::ready() || ! in_array('payment_adjust', config("permission.{$user->role}", []), true)) {
-            return false;
-        }
-        $row = $user->relationLoaded('permission') ? $user->permission : AppCache::permission($user->id);
-
-        return $row ? $row->getAttribute('payment_adjust') === true : $user->role === 'manager';
+        return Gate::forUser($user)->allows('adjustAtOnce', BillingAdjustment::class);
     }
 
-    /** NOW, MANAGER or OWNER for this account (App\Support\BillAdjustment::route); $mustAsk for a refund policy that always needs approval. */
+    /** NOW, MANAGER or OWNER for this account (App\Support\Billing\BillAdjustment::route); $mustAsk for a refund policy that always needs approval. */
     public function routeFor(User $user, bool $mustAsk = false): string
     {
         return BillAdjustment::route($user->role, $this->mayAdjust($user), $mustAsk);
     }
 
+    /** Whether this account may approve or decline this request: BillingAdjustmentPolicy. */
     public function mayDecide(User $user, BillingAdjustment $adjustment): bool
     {
-        return $adjustment->status === BillingAdjustment::PENDING && BillAdjustment::mayDecide(
-            $user->role,
-            $this->mayAdjust($user),
-            (string) $adjustment->needs,
-            $user->role === 'manager' && $this->managesBranch($user, $adjustment->spa_branch_id),
-            $adjustment->requested_by_user_id === $user->id,
-        );
+        return Gate::forUser($user)->allows('decide', $adjustment);
     }
 
     /** What the bill page needs to offer "Adjust": whether it can, and what happens when it is used. */
@@ -177,7 +167,7 @@ class BillingAdjustmentService
     {
         return BillingAdjustment::where('billing_id', $billing->id)
             ->where('kind', BillAdjustment::CREDIT)
-            ->where('status', BillingAdjustment::APPLIED)
+            ->where('status', BillingAdjustmentStatus::Applied->value)
             ->whereNotNull('appointment_service_id')
             ->get(['appointment_service_id', 'amount'])
             ->groupBy('appointment_service_id')
@@ -194,7 +184,7 @@ class BillingAdjustmentService
     private function serviceTarget(Billing $billing, string $serviceUuid): array|string
     {
         $service = $billing->appointment_id
-            ? AppointmentServiceItem::where('uuid', $serviceUuid)->where('appointment_id', $billing->appointment_id)->where('status', '!=', 'Cancelled')->first()
+            ? AppointmentServiceItem::where('uuid', $serviceUuid)->where('appointment_id', $billing->appointment_id)->where('status', '!=', AppointmentServiceStatus::Cancelled->value)->first()
             : null;
         if (! $service) {
             return 'That service is not on this bill.';
@@ -235,7 +225,7 @@ class BillingAdjustmentService
             ->where('spa_business_id', $business->id)
             ->whereIn('spa_branch_id', $branchIds)
             ->where(function ($q) use ($user) {
-                $q->where('status', BillingAdjustment::PENDING)
+                $q->where('status', BillingAdjustmentStatus::Pending->value)
                     ->orWhere(fn ($own) => $own->where('requested_by_user_id', $user->id)
                         ->where('decided_at', '>=', now()->subDays(self::KEEP_DECIDED_DAYS)));
             })
@@ -256,7 +246,7 @@ class BillingAdjustmentService
      * its amount when none is given, held to its rule, the policy's name as
      * the reason when none is typed. Outside them (when the owner allows it):
      * the amount and reason typed in. Either way who it comes out of — the
-     * policy's, or charge_to outside them (App\Support\RefundCharge) — is
+     * policy's, or charge_to outside them (App\Support\Billing\RefundCharge) — is
      * copied onto the request and charged to staff once the money goes back
      * (chargeStaff).
      *
@@ -286,7 +276,7 @@ class BillingAdjustmentService
             if ($billProblem) {
                 return $this->refuse($billProblem);
             }
-            if (BillingAdjustment::where('billing_id', $billing->id)->where('status', BillingAdjustment::PENDING)->exists()) {
+            if (BillingAdjustment::where('billing_id', $billing->id)->where('status', BillingAdjustmentStatus::Pending->value)->exists()) {
                 return $this->refuse('This bill already has a change waiting for approval. Wait for the answer, or withdraw it first.');
             }
 
@@ -390,7 +380,7 @@ class BillingAdjustmentService
                 'client_voucher_id' => $voucherId,
                 'voucher_name' => $voucherName,
                 'reason' => $reason,
-                'status' => $now ? BillingAdjustment::APPLIED : BillingAdjustment::PENDING,
+                'status' => $now ? BillingAdjustmentStatus::Applied->value : BillingAdjustmentStatus::Pending->value,
                 'needs' => $now ? null : $route,
                 'requested_by_user_id' => $user->id,
                 'requested_by_name' => $user->displayName(),
@@ -399,7 +389,7 @@ class BillingAdjustmentService
                 'decided_by_name' => $now ? $user->displayName() : null,
                 'decided_at' => $now ? now() : null,
             ] + ($policy ? [
-                // Its own copy of the policy as it was (App\Support\History).
+                // Its own copy of the policy as it was (App\Support\Activity\History).
                 'refund_policy_id' => $policy->id,
                 'refund_policy_name' => $policy->name,
                 'refund_policy_rule' => $policy->rule(),
@@ -459,7 +449,7 @@ class BillingAdjustmentService
             }
 
             $adjustment->update([
-                'status' => BillingAdjustment::APPLIED,
+                'status' => BillingAdjustmentStatus::Applied->value,
                 'amount' => $done,
                 'decided_by_user_id' => $user->id,
                 'decided_by_name' => $user->displayName(),
@@ -490,7 +480,7 @@ class BillingAdjustmentService
             }
 
             $adjustment->update([
-                'status' => BillingAdjustment::DECLINED,
+                'status' => BillingAdjustmentStatus::Declined->value,
                 'decided_by_user_id' => $user->id,
                 'decided_by_name' => $user->displayName(),
                 'decided_at' => now(),
@@ -517,7 +507,7 @@ class BillingAdjustmentService
             return $this->refuse('Only the person who asked can withdraw it.', 403);
         }
 
-        $adjustment->update(['status' => BillingAdjustment::WITHDRAWN, 'decided_at' => now()]);
+        $adjustment->update(['status' => BillingAdjustmentStatus::Withdrawn->value, 'decided_at' => now()]);
 
         return response()->json(['message' => 'Request withdrawn.', 'data' => $this->present($adjustment, $user)]);
     }
@@ -526,7 +516,7 @@ class BillingAdjustmentService
 
     /**
      * An applied refund under a policy that charges staff: each person who did
-     * the visit gets their part (App\Support\RefundCharge::split, by what they
+     * the visit gets their part (App\Support\Billing\RefundCharge::split, by what they
      * did), dated today, to come off their earnings like a penalty.
      */
     private function chargeStaff(BillingAdjustment $adjustment, Billing $billing): void
@@ -569,9 +559,9 @@ class BillingAdjustmentService
             return [[], []];
         }
         $plan = $this->billingService->serviceRefunds($billing);
-        $services = AppointmentServiceItem::with(['therapistAssignments' => fn ($q) => $q->where('assignment_status', 'Completed')->whereNotNull('staff_id')])
+        $services = AppointmentServiceItem::with(['therapistAssignments' => fn ($q) => $q->where('assignment_status', AssignmentStatus::Completed->value)->whereNotNull('staff_id')])
             ->where('appointment_id', $billing->appointment_id)
-            ->where('status', '!=', 'Cancelled')
+            ->where('status', '!=', AppointmentServiceStatus::Cancelled->value)
             ->when($onlyServiceId, fn ($q) => $q->whereKey($onlyServiceId))
             ->get();
 
@@ -635,14 +625,9 @@ class BillingAdjustmentService
         return BillingAdjustment::with('voucher')
             ->where('uuid', $uuid)
             ->whereIn('spa_branch_id', $this->spaBusinessRepository->branchIdsForUser($user))
-            ->where('status', BillingAdjustment::PENDING)
+            ->where('status', BillingAdjustmentStatus::Pending->value)
             ->when($lock, fn ($q) => $q->lockForUpdate())
             ->first();
-    }
-
-    private function managesBranch(User $user, ?int $branchId): bool
-    {
-        return $branchId !== null && in_array($user->id, AccountScope::userIdsAt([$branchId], ['manager']), true);
     }
 
     private function whoAnswers(BillingAdjustment $adjustment): string
@@ -830,7 +815,7 @@ class BillingAdjustmentService
             'decided_at' => $a->decided_at?->toIso8601String(),
             'decision_note' => $a->decision_note,
             'can_decide' => $viewer !== null && $this->mayDecide($viewer, $a),
-            'can_withdraw' => $viewer !== null && $a->status === BillingAdjustment::PENDING && $a->requested_by_user_id === $viewer->id,
+            'can_withdraw' => $viewer !== null && $a->status === BillingAdjustmentStatus::Pending->value && $a->requested_by_user_id === $viewer->id,
         ];
     }
 

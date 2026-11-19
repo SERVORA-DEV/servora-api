@@ -2,7 +2,7 @@
 
 namespace App\Models;
 
-use App\Services\ImageUploadService;
+use App\Service\Uploads\ImageUploadService;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -115,7 +115,7 @@ class SpaBranch extends Model
         return $this->hasMany(BranchSchedule::class, 'spa_branch_id');
     }
 
-    // Temporary closures outside the weekly hours (see App\Support\BranchClosures).
+    // Temporary closures outside the weekly hours (see App\Support\Branches\BranchClosures).
     public function closures()
     {
         return $this->hasMany(BranchClosure::class, 'spa_branch_id');

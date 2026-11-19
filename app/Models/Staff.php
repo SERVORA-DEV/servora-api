@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use App\Support\StaffSpecialty;
+use App\Support\Staff\StaffSpecialty;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 
@@ -44,14 +44,14 @@ class Staff extends Model
         'hire_date',
 
         'role',
-        // What they do (App\Support\StaffSpecialty): a list, the first being
+        // What they do (App\Support\Staff\StaffSpecialty): a list, the first being
         // their main one. Only for the people who perform services.
         'specialties',
         // Whether the owner lets them be sent to a client's home
         // (HomeServiceRules). Off until turned on.
         'home_service_available',
         // Their own commission rate — the same kind as the standard one in
-        // Staff Policies. Null: the standard (App\Support\CommissionShare).
+        // Staff Policies. Null: the standard (App\Support\Staff\CommissionShare).
         'commission_rate',
         // The commission plan the owner gave them (App\Models\CommissionPlan);
         // null: the standard rate.

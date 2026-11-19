@@ -4,7 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\User;
 use App\Models\UserPermission;
-use App\Support\AdminPermissions;
+use App\Support\Access\AdminPermissions;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -152,7 +152,8 @@ class SubscriptionReportTest extends TestCase
         }
         $this->getJson('/api/system/reports/subscriptions')->assertUnprocessable();
         $this->getJson('/api/system/reports/subscriptions?section=secrets')->assertUnprocessable();
-        $this->getJson('/api/system/reports/subscriptions?section=payments&per_page=999')->assertUnprocessable();
+        // Too many rows asked for: every list answers at most 100 a page (App\Http\Middleware\CapPerPage).
+        $this->getJson('/api/system/reports/subscriptions?section=payments&per_page=999')->assertOk()->assertJsonPath('per_page', 100);
         $this->getJson('/api/system/reports/subscriptions?section=payments&page=0')->assertUnprocessable();
         $this->assertSame(0, DB::table('subscriptions')->count());
         $this->assertSame(0, DB::table('checkout_sessions')->count());

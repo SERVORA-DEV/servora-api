@@ -2,6 +2,13 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentServiceStatus;
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
+use App\Enums\BillingStatus;
+use App\Enums\PaymentStatus;
+use App\Exceptions\ActionRefused;
+use App\Exceptions\NotFound;
 use App\Models\Addon;
 use App\Models\Appointment;
 use App\Models\AppointmentServiceItem;
@@ -9,10 +16,11 @@ use App\Models\Billing;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
 use App\Models\SpaBusinessSetting;
-use App\Support\ServiceAddon;
+use App\Support\Catalog\ServiceAddon;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 // The staff at the client's home, on the branch's scanner page (ScannerController): the visit
 // found by its code, then step by step — its details, Start, the countdown with Extend,
@@ -31,12 +39,11 @@ class HomeVisitDoorService
     public const DOOR_METHODS = ['Cash', 'GCash', 'Maya'];
 
     public function __construct(
-        private AppointmentService $appointments,
+        private HomeVisitService $homeVisits,
         private ServiceExtensionService $extensions,
         private BillingService $billing,
         private StaffNotifier $staffNotifier,
-    ) {
-    }
+    ) {}
 
     public function look(SpaBranch $branch, string $code): array
     {
@@ -44,7 +51,7 @@ class HomeVisitDoorService
             $appointment = $this->find($branch, $code);
             // Every service done (here or at the desk): the bill is ready to take.
             if ($this->state($appointment) === 'services_done') {
-                $this->appointments->billHomeVisit($appointment);
+                $this->homeVisits->billHomeVisit($appointment);
             }
 
             return $this->visit($appointment);
@@ -55,7 +62,7 @@ class HomeVisitDoorService
     {
         return DB::transaction(function () use ($branch, $code) {
             $appointment = $this->find($branch, $code);
-            $this->appointments->startHomeVisitAtDoor($appointment, $branch);
+            $this->homeVisits->startHomeVisitAtDoor($appointment, $branch);
 
             return $this->visit($appointment, 'Service started.');
         });
@@ -84,11 +91,11 @@ class HomeVisitDoorService
             $by = $this->staffOn($line);
 
             $options = $this->extensions->optionsFor($line, null)['data'];
-            abort_if(! $options['can_extend'], 422, $options['reason'] ?? 'This service can\'t be extended.');
+            throw_if(! $options['can_extend'], ActionRefused::class, $options['reason'] ?? 'This service can\'t be extended.');
             $chosen = collect($options['options'])->first(fn (array $o) => ! empty($payload['service_variant_uuid'])
                 ? $o['kind'] === 'length' && $o['service_variant_uuid'] === $payload['service_variant_uuid']
                 : $o['kind'] === 'time' && (int) $o['extra_minutes'] === (int) ($payload['extra_minutes'] ?? 0));
-            abort_if(! $chosen, 422, 'That extension isn\'t offered for this service. Pick one of the choices shown.');
+            throw_if(! $chosen, ActionRefused::class, 'That extension isn\'t offered for this service. Pick one of the choices shown.');
 
             $name = $line->displayName() ?: 'the service';
             if ($chosen['policy'] !== []) {
@@ -117,9 +124,9 @@ class HomeVisitDoorService
     {
         return DB::transaction(function () use ($branch, $code) {
             $appointment = $this->find($branch, $code);
-            $this->appointments->completeHomeVisitServices($appointment);
+            $this->homeVisits->completeHomeVisitServices($appointment);
             if ($this->state($appointment) === 'services_done') {
-                $this->appointments->billHomeVisit($appointment);
+                $this->homeVisits->billHomeVisit($appointment);
 
                 return $this->visit($appointment, 'Service done. Take the payment to finish the visit.');
             }
@@ -132,15 +139,15 @@ class HomeVisitDoorService
     {
         return DB::transaction(function () use ($branch, $code, $payload) {
             $appointment = $this->find($branch, $code);
-            abort_if(! in_array($payload['payment_method'], self::DOOR_METHODS, true), 422,
+            throw_if(! in_array($payload['payment_method'], self::DOOR_METHODS, true), ActionRefused::class,
                 'At the client\'s home, take cash, GCash or Maya. A card payment is taken at the spa.');
             $state = $this->state($appointment);
-            abort_if($state === 'paid', 422, 'This visit is already paid.');
-            abort_if($state !== 'services_done', 422, 'Finish the services first (Service done), then check out.');
+            throw_if($state === 'paid', ActionRefused::class, 'This visit is already paid.');
+            throw_if($state !== 'services_done', ActionRefused::class, 'Finish the services first (Service done), then check out.');
 
-            $billing = $this->appointments->billHomeVisit($appointment);
-            $receipt = $this->appointments->payHomeVisit($appointment, $billing, $payload, $this->staffOf($appointment));
-            $paid = $receipt['billing_status'] === 'Paid';
+            $billing = $this->homeVisits->billHomeVisit($appointment);
+            $receipt = $this->homeVisits->payHomeVisit($appointment, $billing, $payload, $this->staffOf($appointment));
+            $paid = $receipt['billing_status'] === BillingStatus::Paid->value;
 
             return $this->visit(
                 $appointment,
@@ -156,7 +163,7 @@ class HomeVisitDoorService
         $appointment = Appointment::with([
             'client:id,first_name',
             'branch.business.settings',
-            'services' => fn ($q) => $q->where('status', '!=', 'Cancelled')->orderBy('sort_order')->orderBy('id'),
+            'services' => fn ($q) => $q->where('status', '!=', AppointmentServiceStatus::Cancelled->value)->orderBy('sort_order')->orderBy('id'),
             'services.serviceVariant.service',
             'services.therapistAssignments.staff:id,first_name,last_name',
         ])->findOrFail($appointment->id);
@@ -182,11 +189,11 @@ class HomeVisitDoorService
             ];
         })->values();
 
-        $running = $services->where('status', 'In Progress');
+        $running = $services->where('status', AppointmentServiceStatus::InProgress->value);
         $billing = Billing::with('payments')->where('appointment_id', $appointment->id)->where('billing_type', 'Appointment')->first();
-        $paidTotal = $billing ? round((float) $billing->payments->where('payment_status', 'Paid')->sum('amount'), 2) : 0.0;
+        $paidTotal = $billing ? round((float) $billing->payments->where('payment_status', PaymentStatus::Paid->value)->sum('amount'), 2) : 0.0;
         $total = $billing ? (float) $billing->amount : (float) $appointment->total_amount;
-        $last = $billing?->payments->where('payment_status', 'Paid')->sortByDesc('paid_at')->first();
+        $last = $billing?->payments->where('payment_status', PaymentStatus::Paid->value)->sortByDesc('paid_at')->first();
 
         $business = $appointment->branch?->business;
         $settings = $business?->settings?->section('payments') ?? SpaBusinessSetting::DEFAULTS['payments'];
@@ -200,7 +207,7 @@ class HomeVisitDoorService
             'state' => $this->state($appointment),
             'services' => $services->all(),
             'total_minutes' => (int) $services->sum('minutes'),
-            'staff' => $all->flatMap(fn ($l) => $l->therapistAssignments->whereNotIn('assignment_status', ['Cancelled']))
+            'staff' => $all->flatMap(fn ($l) => $l->therapistAssignments->whereNotIn('assignment_status', [AssignmentStatus::Cancelled->value]))
                 ->map(fn ($a) => trim("{$a->staff?->first_name} {$a->staff?->last_name}"))->filter()->unique()->values()->all(),
             // The page counts down on the server's clock (its own may be off).
             'server_now' => now()->toIso8601String(),
@@ -239,15 +246,15 @@ class HomeVisitDoorService
     private function state(Appointment $appointment): string
     {
         $appointment = Appointment::find($appointment->id);
-        if ($appointment->status === Appointment::STATUS_COMPLETED
-            || Billing::where('appointment_id', $appointment->id)->where('billing_type', 'Appointment')->where('status', 'Paid')->exists()) {
+        if ($appointment->status === AppointmentStatus::Completed->value
+            || Billing::where('appointment_id', $appointment->id)->where('billing_type', 'Appointment')->where('status', BillingStatus::Paid->value)->exists()) {
             return 'paid';
         }
-        $statuses = AppointmentServiceItem::where('appointment_id', $appointment->id)->where('status', '!=', 'Cancelled')->pluck('status');
-        if ($statuses->contains('In Progress')) {
+        $statuses = AppointmentServiceItem::where('appointment_id', $appointment->id)->where('status', '!=', AppointmentServiceStatus::Cancelled->value)->pluck('status');
+        if ($statuses->contains(AppointmentServiceStatus::InProgress->value)) {
             return 'in_service';
         }
-        if ($statuses->isNotEmpty() && ! $statuses->contains('Pending')) {
+        if ($statuses->isNotEmpty() && ! $statuses->contains(AppointmentServiceStatus::Pending->value)) {
             return 'services_done';
         }
 
@@ -263,10 +270,10 @@ class HomeVisitDoorService
             ->where('home_start_code', $code)
             ->lockForUpdate()
             ->first();
-        abort_if(! $appointment, 422, "This code isn't for a booking at {$branch->branch_name}. Check the code, or use the scanner of the branch the client booked with.");
-        abort_if(! $appointment->isHomeService(), 422, 'This booking isn\'t a home visit.');
-        abort_if(in_array($appointment->status, [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW], true), 422,
-            $appointment->status === Appointment::STATUS_CANCELLED ? 'This booking was cancelled.' : 'This booking was marked as a no-show. Call the Front Officer.');
+        throw_if(! $appointment, ActionRefused::class, "This code isn't for a booking at {$branch->branch_name}. Check the code, or use the scanner of the branch the client booked with.");
+        throw_if(! $appointment->isHomeService(), ActionRefused::class, 'This booking isn\'t a home visit.');
+        throw_if(in_array($appointment->status, [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value], true), ActionRefused::class,
+            $appointment->status === AppointmentStatus::Cancelled->value ? 'This booking was cancelled.' : 'This booking was marked as a no-show. Call the Front Officer.');
         $appointment->setRelation('branch', $branch);
 
         return $appointment;
@@ -278,8 +285,8 @@ class HomeVisitDoorService
         $line = AppointmentServiceItem::where('appointment_id', $appointment->id)->where('uuid', $uuid)
             ->with('therapistAssignments.staff:id,first_name,last_name')
             ->lockForUpdate()->first();
-        abort_if(! $line, 422, 'That service isn\'t on this visit.');
-        abort_if($line->status !== 'In Progress', 422, 'Only a service that is running can be extended.');
+        throw_if(! $line, ActionRefused::class, 'That service isn\'t on this visit.');
+        throw_if($line->status !== AppointmentServiceStatus::InProgress->value, ActionRefused::class, 'Only a service that is running can be extended.');
         $line->setRelation('appointment', $appointment);
 
         return $line;
@@ -287,7 +294,7 @@ class HomeVisitDoorService
 
     private function staffOn(AppointmentServiceItem $line): string
     {
-        $names = $line->therapistAssignments->whereIn('assignment_status', ['In Progress', 'Completed', 'Assigned'])
+        $names = $line->therapistAssignments->whereIn('assignment_status', [AssignmentStatus::InProgress->value, AssignmentStatus::Completed->value, AssignmentStatus::Assigned->value])
             ->map(fn ($a) => trim("{$a->staff?->first_name} {$a->staff?->last_name}"))->filter()->unique();
 
         return $names->isNotEmpty() ? $names->join(' and ') : 'The staff';
@@ -295,19 +302,21 @@ class HomeVisitDoorService
 
     private function staffOf(Appointment $appointment): string
     {
-        $names = AppointmentServiceItem::where('appointment_id', $appointment->id)->where('status', '!=', 'Cancelled')
+        $names = AppointmentServiceItem::where('appointment_id', $appointment->id)->where('status', '!=', AppointmentServiceStatus::Cancelled->value)
             ->with('therapistAssignments.staff:id,first_name,last_name')->get()
-            ->flatMap(fn ($l) => $l->therapistAssignments->where('assignment_status', 'Completed'))
+            ->flatMap(fn ($l) => $l->therapistAssignments->where('assignment_status', AssignmentStatus::Completed->value))
             ->map(fn ($a) => trim("{$a->staff?->first_name} {$a->staff?->last_name}"))->filter()->unique();
 
         return $names->isNotEmpty() ? $names->join(' and ') : 'The staff';
     }
 
-    // The extension service answers a refusal as a response; here it stops the step.
+    // The extension service answers a refusal as a response; here it stops the step, with that
+    // refusal's own status and message (whatever kind it was).
     private function refuseOnError($result): void
     {
         if ($result instanceof JsonResponse && $result->getStatusCode() >= 400) {
-            abort($result->getStatusCode(), (string) ($result->getData(true)['message'] ?? 'This can\'t be done.'));
+            $message = (string) ($result->getData(true)['message'] ?? 'This can\'t be done.');
+            throw $result->getStatusCode() === 404 ? new NotFound($message) : new HttpException($result->getStatusCode(), $message);
         }
     }
 }

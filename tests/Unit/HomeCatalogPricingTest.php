@@ -15,10 +15,10 @@ use App\Models\SpaBusinessSetting;
 use App\Repository\Business\AppointmentServiceRepository;
 use App\Repository\Business\BranchPackageRepository;
 use App\Repository\Business\ServiceVariantRepository;
-use App\Service\Business\AppointmentService;
 use App\Service\Business\HomeServiceRules;
+use App\Service\Business\VisitItemsService;
 use App\Service\Client\BookingPolicy;
-use App\Support\CommissionShare;
+use App\Support\Staff\CommissionShare;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
@@ -133,8 +133,8 @@ class HomeCatalogPricingTest extends TestCase
     {
         $service = $this->catalog();
         $variant = $service->variants->firstWhere('service_location', 'In Spa');
-        $instance = (new \ReflectionClass(AppointmentService::class))->newInstanceWithoutConstructor();
-        $method = new \ReflectionMethod(AppointmentService::class, 'addServiceInternal');
+        $instance = (new \ReflectionClass(VisitItemsService::class))->newInstanceWithoutConstructor();
+        $method = new \ReflectionMethod(VisitItemsService::class, 'addServiceInternal');
         $this->expectException(HttpException::class);
         $this->expectExceptionMessage('Choose a length and price for the selected booking location.');
         $method->invoke($instance, new Appointment(['service_location' => 'Home Service']), 1,
@@ -157,9 +157,9 @@ class HomeCatalogPricingTest extends TestCase
             'is_available' => true, 'custom_price' => 1100]);
         $repository = \Mockery::mock(AppointmentServiceRepository::class);
         $repository->shouldReceive('create')->once()->andReturnUsing(fn ($row) => new AppointmentServiceItem($row));
-        $instance = (new \ReflectionClass(AppointmentService::class))->newInstanceWithoutConstructor();
-        (new \ReflectionProperty(AppointmentService::class, 'appointmentServiceRepository'))->setValue($instance, $repository);
-        $line = (new \ReflectionMethod(AppointmentService::class, 'addServiceInternal'))->invoke($instance,
+        $instance = (new \ReflectionClass(VisitItemsService::class))->newInstanceWithoutConstructor();
+        (new \ReflectionProperty(VisitItemsService::class, 'appointmentServiceRepository'))->setValue($instance, $repository);
+        $line = (new \ReflectionMethod(VisitItemsService::class, 'addServiceInternal'))->invoke($instance,
             (new Appointment(['service_location' => 'Home Service']))->forceFill(['id' => 1]), 1,
             ['service_variant_uuid' => $variant->uuid, 'quantity' => 2], 1, 1);
         $this->assertSame($variant->id, $line->service_variant_id);
@@ -232,30 +232,5 @@ class HomeCatalogPricingTest extends TestCase
         $rows[] = $rows[1];
         $this->assertTrue($validate($rows)->fails());
         $this->assertTrue($validate([$rows[0]])->fails());
-    }
-
-    public function test_migration_preserves_existing_prices_and_requires_home_price_review(): void
-    {
-        DB::statement('DROP INDEX catalog_lengths');
-        Schema::table('service_variants', function (Blueprint $t) {
-            $t->dropColumn('service_location');
-            $t->unique(['service_id', 'duration_minutes']);
-        });
-        foreach (['packages', 'package_services', 'branch_packages'] as $table) {
-            Schema::create($table, fn (Blueprint $t) => $t->id());
-        }
-        DB::table('service_variants')->insert(['uuid' => 'old-option', 'service_id' => 1, 'duration_minutes' => 60, 'price' => 450]);
-        DB::table('packages')->insert(['id' => 1]);
-        $migration = require database_path('migrations/2026_11_10_160000_home_service_catalog_prices.php');
-        $migration->up();
-        $row = DB::table('service_variants')->first();
-        $this->assertSame('In Spa', $row->service_location);
-        $this->assertSame(450.0, (float) $row->price);
-        $this->assertFalse((bool) DB::table('packages')->value('home_service_available'));
-        $this->assertNull(DB::table('packages')->value('home_price'));
-        DB::table('service_variants')->insert(['uuid' => 'home-option', 'service_id' => 1, 'service_location' => 'Home Service', 'duration_minutes' => 60, 'price' => 800]);
-        $this->assertSame(2, DB::table('service_variants')->count());
-        $this->expectException(\RuntimeException::class);
-        $migration->down();
     }
 }

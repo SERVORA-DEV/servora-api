@@ -3,8 +3,8 @@
 namespace Tests\Unit;
 
 use App\Models\BranchSchedule;
-use App\Support\BookingBoard;
-use App\Support\BranchOpenWindows;
+use App\Support\Visits\BookingBoard;
+use App\Support\Branches\BranchOpenWindows;
 use PHPUnit\Framework\TestCase;
 
 // A branch open past midnight is open on two dates: tonight's hours run to midnight and the rest

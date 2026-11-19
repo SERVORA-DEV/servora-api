@@ -2,6 +2,9 @@
 
 namespace App\Service\Client;
 
+use App\Enums\AccountStatus;
+use App\Enums\AppointmentStatus;
+use App\Exceptions\NotFound;
 use App\Http\Resources\Client\ClientNotificationResource;
 use App\Http\Resources\Client\ClientTransactionResource;
 use App\Http\Resources\NearbySpaResource;
@@ -17,7 +20,6 @@ use App\Models\User;
 use App\Repository\Business\SpaBranchRepository;
 use App\Repository\NotificationRepository;
 use App\Repository\ReviewRepository;
-use App\Service\Business\MarketplaceReadiness;
 use App\Support\ClientNotificationLink;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
@@ -121,7 +123,7 @@ class ClientAccountService
     public function markNotificationRead(User $user, int $id)
     {
         if (! $this->notifications->markReadForUser($user->id, $id)) {
-            abort(404);
+            throw new NotFound();
         }
 
         return response()->json(['data' => ['unread_count' => $this->notifications->countUnreadForUser($user->id)]]);
@@ -172,9 +174,9 @@ class ClientAccountService
         }
 
         DB::transaction(function () use ($user) {
-            $appointments = app(\App\Service\Business\AppointmentService::class);
+            $appointments = app(\App\Service\Business\AppointmentBookingService::class);
             Appointment::whereHas('client', fn ($q) => $q->where('user_id', $user->id))
-                ->where('status', Appointment::STATUS_SCHEDULED)
+                ->where('status', AppointmentStatus::Scheduled->value)
                 ->lockForUpdate()
                 ->get()
                 ->each(function (Appointment $a) use ($appointments) {
@@ -208,7 +210,7 @@ class ClientAccountService
                 'personal_email' => null,
                 'email' => "deleted+{$user->uuid}@servora.invalid",
                 'password' => Hash::make(Str::random(64)),
-                'account_status' => 'Inactive',
+                'account_status' => AccountStatus::Inactive->value,
             ])->save();
         });
 

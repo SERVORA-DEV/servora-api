@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\ServiceVoidRules;
+use App\Support\Visits\ServiceVoidRules;
 use PHPUnit\Framework\TestCase;
 
 // Taking a started or finished service off a visit.

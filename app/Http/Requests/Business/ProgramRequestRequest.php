@@ -42,7 +42,7 @@ class ProgramRequestRequest extends FormRequest
             'values' => ['sometimes', 'array'],
             'values.*' => ['nullable', 'max:4000'],
             // Where the program applies: everywhere, the app only, or the front desk only.
-            'values.channel' => ['nullable', Rule::in(\App\Support\ProgramChannel::VALUES)],
+            'values.channel' => ['nullable', Rule::in(\App\Support\Programs\ProgramChannel::VALUES)],
             'condition' => ['sometimes', 'nullable', 'array'],
             'condition.kind' => ['nullable', Rule::in(CustomerProgram::CONDITIONS)],
             'condition.value' => ['nullable', 'integer', 'min:1', 'max:100000000'],

@@ -2,16 +2,21 @@
 
 namespace App\Service\Business;
 
+use App\Enums\ChangeRequestStatus;
+use App\Enums\VerificationStatus;
+use App\Exceptions\ActionRefused;
+use App\Exceptions\NotSetUp;
 use App\Models\BusinessRegistrationChange;
 use App\Models\SpaBusiness;
 use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\NotificationRepository;
 use App\Repository\System\AdminUsersRepository;
-use App\Services\DocumentUploadService;
+use App\Service\Uploads\DocumentUploadService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 
 // Changing the company registration of a verified business: the DTI number,
@@ -38,13 +43,13 @@ class BusinessRegistrationChangeService
         $ready = $this->ready();
         $open = $ready && $business ? $this->openFor($business) : null;
         $last = $ready && $business && ! $open
-            ? BusinessRegistrationChange::where('spa_business_id', $business->id)->whereIn('status', ['Approved', 'Rejected'])->latest('reviewed_at')->first()
+            ? BusinessRegistrationChange::where('spa_business_id', $business->id)->whereIn('status', [ChangeRequestStatus::Approved->value, ChangeRequestStatus::Rejected->value])->latest('reviewed_at')->first()
             : null;
 
         return response()->json(['data' => [
             'available' => $ready,
             // Only a verified registration is changed this way (before that it is edited directly).
-            'can_request' => $ready && $business?->verification_status === 'Verified' && $owner->role === 'business_owner',
+            'can_request' => $ready && $business?->verification_status === VerificationStatus::Verified->value && $owner->role === 'business_owner',
             'request' => $open ? $this->present($open) : null,
             'last' => $last ? $this->present($last) : null,
         ]]);
@@ -70,7 +75,7 @@ class BusinessRegistrationChangeService
             'registration_document_path' => $path,
             'note' => trim((string) ($fields['note'] ?? '')) ?: null,
             'previous' => $business->only(['registration_number', 'registered_business_name', 'registered_owner_name', 'registration_document_path']),
-            'status' => 'Pending',
+            'status' => ChangeRequestStatus::Pending->value,
             'submitted_at' => now(),
         ]);
 
@@ -95,17 +100,17 @@ class BusinessRegistrationChangeService
         if (! $change) {
             return response()->json(['message' => 'There is no request to cancel.'], 422);
         }
-        $change->update(['status' => 'Cancelled']);
-        $this->auditLogs->record($owner->id, 'business_registration_changes', $change->id, 'Cancel', ['status' => 'Pending'], ['status' => 'Cancelled'], $request);
+        $change->update(['status' => ChangeRequestStatus::Cancelled->value]);
+        $this->auditLogs->record($owner->id, 'business_registration_changes', $change->id, 'Cancel', ['status' => ChangeRequestStatus::Pending->value], ['status' => ChangeRequestStatus::Cancelled->value], $request);
 
         return response()->json(['message' => 'Request cancelled. Your registration stays as it is.']);
     }
 
     // ── System administrator ───────────────────────────────────────────
 
-    public function adminList(string $status = 'Pending')
+    public function adminList(string $status = ChangeRequestStatus::Pending->value)
     {
-        abort_unless($this->ready(), 503, 'Registration changes are not set up on this server yet.');
+        throw_unless($this->ready(), NotSetUp::class, 'Registration changes are not set up on this server yet.');
         $rows = BusinessRegistrationChange::query()
             ->with(['business:id,uuid,business_name,registration_number,registered_business_name,registered_owner_name', 'user:id,first_name,last_name,email', 'reviewer:id,first_name,last_name'])
             ->when($status !== 'All', fn ($q) => $q->where('status', $status))
@@ -119,7 +124,7 @@ class BusinessRegistrationChangeService
 
     public function adminShow(string $uuid)
     {
-        abort_unless($this->ready(), 503, 'Registration changes are not set up on this server yet.');
+        throw_unless($this->ready(), NotSetUp::class, 'Registration changes are not set up on this server yet.');
         $change = BusinessRegistrationChange::with(['business', 'user', 'reviewer:id,first_name,last_name'])->where('uuid', $uuid)->firstOrFail();
 
         return response()->json(['data' => $this->presentForAdmin($change, true)]);
@@ -127,11 +132,11 @@ class BusinessRegistrationChangeService
 
     public function approve(User $admin, string $uuid, ?Request $request = null)
     {
-        abort_unless($this->ready(), 503, 'Registration changes are not set up on this server yet.');
+        throw_unless($this->ready(), NotSetUp::class, 'Registration changes are not set up on this server yet.');
 
         return DB::transaction(function () use ($admin, $uuid, $request) {
             $change = BusinessRegistrationChange::where('uuid', $uuid)->lockForUpdate()->firstOrFail();
-            if ($change->status !== 'Pending') {
+            if ($change->status !== ChangeRequestStatus::Pending->value) {
                 return response()->json(['message' => 'This request has already been decided.'], 422);
             }
             $business = SpaBusiness::findOrFail($change->spa_business_id);
@@ -149,7 +154,7 @@ class BusinessRegistrationChangeService
                 'verified_at' => now(),
             ])->save();
 
-            $change->update(['status' => 'Approved', 'reviewed_by' => $admin->id, 'reviewed_at' => now()]);
+            $change->update(['status' => ChangeRequestStatus::Approved->value, 'reviewed_by' => $admin->id, 'reviewed_at' => now()]);
             $this->auditLogs->record($admin->id, 'spa_businesses', $business->id, 'Approve', $before, $business->only($fields), $request);
             $this->notifications->create($change->user_id, 'Registration Updated', 'Your new registration details were approved and are now on your business.', 'Verification');
 
@@ -159,15 +164,15 @@ class BusinessRegistrationChangeService
 
     public function reject(User $admin, string $uuid, string $reason, ?Request $request = null)
     {
-        abort_unless($this->ready(), 503, 'Registration changes are not set up on this server yet.');
+        throw_unless($this->ready(), NotSetUp::class, 'Registration changes are not set up on this server yet.');
 
         return DB::transaction(function () use ($admin, $uuid, $reason, $request) {
             $change = BusinessRegistrationChange::where('uuid', $uuid)->lockForUpdate()->firstOrFail();
-            if ($change->status !== 'Pending') {
+            if ($change->status !== ChangeRequestStatus::Pending->value) {
                 return response()->json(['message' => 'This request has already been decided.'], 422);
             }
-            $change->update(['status' => 'Rejected', 'rejection_reason' => $reason, 'reviewed_by' => $admin->id, 'reviewed_at' => now()]);
-            $this->auditLogs->record($admin->id, 'business_registration_changes', $change->id, 'Reject', ['status' => 'Pending'], ['status' => 'Rejected', 'rejection_reason' => $reason], $request);
+            $change->update(['status' => ChangeRequestStatus::Rejected->value, 'rejection_reason' => $reason, 'reviewed_by' => $admin->id, 'reviewed_at' => now()]);
+            $this->auditLogs->record($admin->id, 'business_registration_changes', $change->id, 'Reject', ['status' => ChangeRequestStatus::Pending->value], ['status' => ChangeRequestStatus::Rejected->value, 'rejection_reason' => $reason], $request);
             $this->notifications->create($change->user_id, 'Registration Change Not Approved', "Your registration change wasn't approved: {$reason}", 'Verification');
 
             return response()->json(['message' => 'Rejected. The owner was told why.', 'data' => $this->presentForAdmin($change->fresh(['business', 'user', 'reviewer']), true)]);
@@ -192,18 +197,18 @@ class BusinessRegistrationChangeService
 
     private function guard(User $owner): SpaBusiness
     {
-        abort_unless($this->ready(), 503, 'Changing your registration is not set up on this server yet.');
-        abort_unless($owner->role === 'business_owner', 403, 'Only the owner can do this.');
+        throw_unless($this->ready(), NotSetUp::class, 'Changing your registration is not set up on this server yet.');
+        Gate::forUser($owner)->authorize('changeOwnerDetails', SpaBusiness::class);
         $business = $this->businessOf($owner);
-        abort_unless($business, 422, 'Register your business first.');
-        abort_unless($business->verification_status === 'Verified', 422, 'Your registration is not verified yet. You can correct it on the verification page.');
+        throw_unless($business, ActionRefused::class, 'Register your business first.');
+        throw_unless($business->verification_status === VerificationStatus::Verified->value, ActionRefused::class, 'Your registration is not verified yet. You can correct it on the verification page.');
 
         return $business;
     }
 
     private function openFor(SpaBusiness $business): ?BusinessRegistrationChange
     {
-        return BusinessRegistrationChange::where('spa_business_id', $business->id)->where('status', 'Pending')->latest('id')->first();
+        return BusinessRegistrationChange::where('spa_business_id', $business->id)->where('status', ChangeRequestStatus::Pending->value)->latest('id')->first();
     }
 
     private function present(BusinessRegistrationChange $c): array
@@ -216,7 +221,7 @@ class BusinessRegistrationChangeService
             'registered_owner_name' => $c->registered_owner_name,
             'note' => $c->note,
             'status' => $c->status,
-            'rejection_reason' => $c->status === 'Rejected' ? $c->rejection_reason : null,
+            'rejection_reason' => $c->status === ChangeRequestStatus::Rejected->value ? $c->rejection_reason : null,
             'submitted_at' => $c->submitted_at?->toIso8601String(),
             'reviewed_at' => $c->reviewed_at?->toIso8601String(),
         ];

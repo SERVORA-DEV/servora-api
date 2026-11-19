@@ -2,6 +2,7 @@
 
 namespace App\Service\System;
 
+use App\Enums\VerificationStatus;
 use App\Http\Resources\OwnerVerificationResource;
 use App\Models\OwnerIdentityVerification;
 use App\Models\SpaBusiness;
@@ -9,8 +10,8 @@ use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Repository\System\OwnerVerificationRepository;
-use App\Service\NotificationService;
-use App\Support\OwnerVerificationStatus;
+use App\Service\Notifications\NotificationService;
+use App\Support\Platform\OwnerVerificationStatus;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -31,7 +32,7 @@ class OwnerVerificationService
         return OwnerVerificationResource::collection($collection->through(
             fn (SpaBusiness $business) => (object) [
                 'business' => $business,
-                'identity' => $business->owner?->ownerIdentityVerification ?? new OwnerIdentityVerification(['status' => 'Unregistered']),
+                'identity' => $business->owner?->ownerIdentityVerification ?? new OwnerIdentityVerification(['status' => VerificationStatus::Unregistered->value]),
                 'owner' => $business->owner,
             ]
         ));
@@ -40,7 +41,7 @@ class OwnerVerificationService
     public function getReview(string $uuid)
     {
         $business = $this->ownerVerificationRepository->findByUuid($uuid);
-        $identity = $business->owner?->ownerIdentityVerification ?? new OwnerIdentityVerification(['status' => 'Unregistered']);
+        $identity = $business->owner?->ownerIdentityVerification ?? new OwnerIdentityVerification(['status' => VerificationStatus::Unregistered->value]);
 
         return (new OwnerVerificationResource((object) [
             'business' => $business,
@@ -80,7 +81,7 @@ class OwnerVerificationService
         $business = $this->ownerVerificationRepository->findForReviewUpdate($uuid);
         $identity = $business->owner?->ownerIdentityVerification;
 
-        if (! $identity || $identity->status !== 'Pending') {
+        if (! $identity || $identity->status !== VerificationStatus::Pending->value) {
             return response()->json(['message' => 'Only a pending identity verification can be approved.'], 422);
         }
 
@@ -89,7 +90,7 @@ class OwnerVerificationService
         $oldValues = $identity->only(['status', 'verified_by', 'verified_at', 'rejection_reason']);
 
         $identity = $this->ownerVerificationRepository->updateIdentity($identity, [
-            'status' => 'Verified',
+            'status' => VerificationStatus::Verified->value,
             'verified_by' => $admin->id,
             'verified_at' => now(),
             'rejection_reason' => null,
@@ -127,7 +128,7 @@ class OwnerVerificationService
         $business = $this->ownerVerificationRepository->findForReviewUpdate($uuid);
         $identity = $business->owner?->ownerIdentityVerification;
 
-        if (! $identity || $identity->status !== 'Pending') {
+        if (! $identity || $identity->status !== VerificationStatus::Pending->value) {
             return response()->json(['message' => 'Only a pending identity verification can be rejected.'], 422);
         }
 
@@ -136,7 +137,7 @@ class OwnerVerificationService
         $oldValues = $identity->only(['status', 'verified_by', 'verified_at', 'rejection_reason']);
 
         $identity = $this->ownerVerificationRepository->updateIdentity($identity, [
-            'status' => 'Rejected',
+            'status' => VerificationStatus::Rejected->value,
             'verified_by' => $admin->id,
             'verified_at' => now(),
             'rejection_reason' => $reason,
@@ -172,7 +173,7 @@ class OwnerVerificationService
     {
         $business = $this->ownerVerificationRepository->findForReviewUpdate($uuid);
 
-        if ($business->verification_status !== 'Pending') {
+        if ($business->verification_status !== VerificationStatus::Pending->value) {
             return response()->json(['message' => 'Only a pending business verification can be approved.'], 422);
         }
 
@@ -181,7 +182,7 @@ class OwnerVerificationService
         $oldValues = $business->only(['verification_status', 'verified_by', 'verified_at', 'rejection_reason']);
 
         $business = $this->spaBusinessRepository->update($business, [
-            'verification_status' => 'Verified',
+            'verification_status' => VerificationStatus::Verified->value,
             'verified_by' => $admin->id,
             'verified_at' => now(),
             'rejection_reason' => null,
@@ -221,7 +222,7 @@ class OwnerVerificationService
     {
         $business = $this->ownerVerificationRepository->findForReviewUpdate($uuid);
 
-        if ($business->verification_status !== 'Pending') {
+        if ($business->verification_status !== VerificationStatus::Pending->value) {
             return response()->json(['message' => 'Only a pending business verification can be rejected.'], 422);
         }
 
@@ -230,7 +231,7 @@ class OwnerVerificationService
         $oldValues = $business->only(['verification_status', 'verified_by', 'verified_at', 'rejection_reason']);
 
         $business = $this->spaBusinessRepository->update($business, [
-            'verification_status' => 'Rejected',
+            'verification_status' => VerificationStatus::Rejected->value,
             'verified_by' => $admin->id,
             'verified_at' => now(),
             'rejection_reason' => $reason,

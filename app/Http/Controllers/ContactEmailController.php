@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Repository\SpaBusinessRepository;
-use App\Support\ContactEmail;
+use App\Support\Branches\ContactEmail;
 use Illuminate\Http\Request;
 
 // Confirming the business's or a branch's contact email (App\Support\

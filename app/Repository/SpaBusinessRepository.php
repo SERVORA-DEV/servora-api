@@ -56,14 +56,14 @@ class SpaBusinessRepository
     // rather than always coming back null.
     //
     // A staff login's business is the one its branches belong to
-    // (App\Support\AccountScope).
+    // (App\Support\Access\AccountScope).
     public function findForUser(User $user): ?SpaBusiness
     {
         if ($user->role === 'business_owner') {
             return $this->findByOwnerId($user->id);
         }
 
-        return \App\Support\AccountScope::business($user);
+        return \App\Support\Access\AccountScope::business($user);
     }
 
     // Single source of truth for "which branches can this user see" — every
@@ -74,7 +74,7 @@ class SpaBusinessRepository
     // business/branch resolved at all (mirrors findForUser's null case).
     //
     // A staff login gets the branches the owner gave it — on Management-only
-    // routes, only those it has Management at (App\Support\AccountScope).
+    // routes, only those it has Management at (App\Support\Access\AccountScope).
     //
     // The owner working the front desk (Operation mode on the web) works one
     // branch: when the request names one of theirs (X-Branch), only that one.
@@ -89,7 +89,7 @@ class SpaBusinessRepository
             return $only->isNotEmpty() ? $only : $all;
         }
 
-        return \App\Support\AccountScope::branches($user);
+        return \App\Support\Access\AccountScope::branches($user);
     }
 
     // Just the ids — all most callers need, to scope their own queries.

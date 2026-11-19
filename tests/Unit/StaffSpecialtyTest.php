@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\StaffSpecialty;
+use App\Support\Staff\StaffSpecialty;
 use PHPUnit\Framework\TestCase;
 
 // What a member of staff does: a fixed list, several per person, the first

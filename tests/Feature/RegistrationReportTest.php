@@ -4,7 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\User;
 use App\Models\UserPermission;
-use App\Support\AdminPermissions;
+use App\Support\Access\AdminPermissions;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -103,7 +103,8 @@ class RegistrationReportTest extends TestCase
             $ids[] = $response->json('data.0.uuid');
         }
         $this->assertCount(3, array_unique($ids));
-        $this->getJson('/api/system/reports/registrations?per_page=9999')->assertUnprocessable();
+        // Too many rows asked for: every list answers at most 100 a page (App\Http\Middleware\CapPerPage).
+        $this->getJson('/api/system/reports/registrations?per_page=9999')->assertOk()->assertJsonPath('per_page', 100);
     }
 
     public function test_permission_and_role_gates_protect_the_report(): void

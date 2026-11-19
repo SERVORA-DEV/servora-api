@@ -2,21 +2,22 @@
 
 namespace App\Http\Controllers\System;
 
+use App\Enums\VerificationStatus;
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Http\Requests\System\RegistrationReportRequest;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 // A read-only report, separate from the pending queue and verified-branch list.
 class RegistrationReportController extends Controller
 {
-    public function __invoke(Request $request)
+    public function __invoke(RegistrationReportRequest $request)
     {
-        $input = $request->validate(['per_page' => 'sometimes|integer|min:1|max:250', 'page' => 'sometimes|integer|min:1']);
+        $input = $request->validated();
         $submissions = fn (string $table) => DB::table('audit_logs')
             ->where('table_name', $table)->where('action', 'Submit')
             ->select('record_id')->selectRaw('MIN(created_at) AS submitted_at')->groupBy('record_id');
-        $statuses = ['Pending', 'Verified', 'Rejected', 'Suspended'];
+        $statuses = [VerificationStatus::Pending->value, VerificationStatus::Verified->value, VerificationStatus::Rejected->value, VerificationStatus::Suspended->value];
 
         $businesses = DB::table('spa_businesses as b')
             ->leftJoin('users as u', 'u.id', '=', 'b.owner_id')

@@ -2,8 +2,8 @@
 
 namespace Tests\Unit;
 
-use App\Support\RememberedSession;
-use App\Support\SessionActivity;
+use App\Support\Access\RememberedSession;
+use App\Support\Access\SessionActivity;
 use Carbon\Carbon;
 use PHPUnit\Framework\TestCase;
 

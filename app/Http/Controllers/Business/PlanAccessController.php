@@ -2,15 +2,23 @@
 
 namespace App\Http\Controllers\Business;
 
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
+use App\Enums\BillingStatus;
+use App\Exceptions\ActionRefused;
+use App\Exceptions\NotFound;
+use App\Exceptions\NotPermitted;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Business\ExportAuthorizeRequest;
+use App\Http\Requests\Business\ExportRequest;
 use App\Models\Appointment;
 use App\Models\Billing;
 use App\Models\SpaBranch;
 use App\Repository\SpaBusinessRepository;
-use App\Service\PlanAccessService;
-use App\Support\AccountScope;
+use App\Service\Subscription\PlanAccessService;
+use App\Support\Access\AccountScope;
 use App\Support\AppCache;
-use App\Support\PlanTerms;
+use App\Support\Platform\PlanTerms;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 
@@ -21,44 +29,35 @@ class PlanAccessController extends Controller
     public function show(Request $request, PlanAccessService $access)
     {
         $business = $this->businesses->findForUser($request->user());
-        abort_unless($business, 404);
+        throw_unless($business, NotFound::class);
 
         return ['data' => $access->present($business->id)];
     }
 
-    public function authorizeExport(Request $request)
+    public function authorizeExport(ExportAuthorizeRequest $request)
     {
-        $data = $request->validate(['format' => 'required|in:csv,pdf,excel']);
+        $data = $request->validated();
         $business = $this->businesses->findForUser($request->user());
         $plan = $business ? AppCache::activeSubscription($business->id)?->plan : null;
-        abort_unless($plan && in_array($data['format'], PlanTerms::exportFormats($plan), true), 403, 'Your plan does not include this export format.');
+        throw_unless($plan && in_array($data['format'], PlanTerms::exportFormats($plan), true), NotPermitted::class, 'Your plan does not include this export format.');
         // Restricted exports must use the server-built, date-filtered Reports export.
-        abort_if($plan->export_days !== null, 403, "Your plan exports the last {$plan->export_days} days, from Reports.");
+        throw_if($plan->export_days !== null, NotPermitted::class, "Your plan exports the last {$plan->export_days} days, from Reports.");
 
         return ['allowed' => true];
     }
 
     // Export data is built from scoped server records, never a client-supplied report.
-    public function export(Request $request)
+    public function export(ExportRequest $request)
     {
-        $data = $request->validate([
-            'format' => 'required|in:csv,pdf,excel',
-            'type' => 'required|in:sales,appointments,clients,services,staff,branches',
-            'date_from' => 'required|date_format:Y-m-d',
-            'date_to' => 'required|date_format:Y-m-d|after_or_equal:date_from',
-            'branch_uuid' => 'nullable|uuid',
-            // What the list on screen is narrowed to: its dropdown, and its search box.
-            'list_filter' => 'nullable|in:paid,unpaid,refunded,walkin,booking,app,member,service,package',
-            'search' => 'nullable|string|max:100',
-        ]);
+        $data = $request->validated();
         $filter = $data['list_filter'] ?? null;
         $business = $this->businesses->findForUser($request->user());
-        abort_unless($business, 404);
+        throw_unless($business, NotFound::class);
         $plan = AppCache::activeSubscription($business->id)?->plan;
-        abort_unless($plan && in_array($data['format'], PlanTerms::exportFormats($plan), true), 403, 'Your plan does not include this export format.');
+        throw_unless($plan && in_array($data['format'], PlanTerms::exportFormats($plan), true), NotPermitted::class, 'Your plan does not include this export format.');
         $today = now('Asia/Manila')->startOfDay();
         if ($plan->export_days !== null) {
-            abort_if(Carbon::parse($data['date_from'])->lt($today->copy()->subDays($plan->export_days - 1)) || Carbon::parse($data['date_to'])->gt($today), 422, "Your plan exports only the last {$plan->export_days} days. Choose dates in that period.");
+            throw_if(Carbon::parse($data['date_from'])->lt($today->copy()->subDays($plan->export_days - 1)) || Carbon::parse($data['date_to'])->gt($today), ActionRefused::class, "Your plan exports only the last {$plan->export_days} days. Choose dates in that period.");
         }
         $branches = SpaBranch::where('spa_business_id', $business->id);
         if ($request->user()->role !== 'business_owner') {
@@ -68,7 +67,7 @@ class PlanAccessController extends Controller
             $branches->where('uuid', $data['branch_uuid']);
         }
         $ids = $branches->pluck('id');
-        abort_if($ids->isEmpty(), 403, 'No accessible branch selected.');
+        throw_if($ids->isEmpty(), NotPermitted::class, 'No accessible branch selected.');
         $from = $data['date_from'];
         $to = $data['date_to'];
         $visits = Appointment::with(['client', 'branch', 'services.therapistAssignments.staff'])
@@ -80,9 +79,9 @@ class PlanAccessController extends Controller
             $columns = ['Bill', 'Issued', 'Branch', 'Amount billed', 'Status'];
             $rows = Billing::with('branch')->whereIn('spa_branch_id', $ids)->where('billing_type', 'Appointment')
                 ->whereBetween('issued_at', [Carbon::parse($from)->startOfDay(), Carbon::parse($to)->endOfDay()])
-                ->when($filter === 'paid', fn ($q) => $q->where('status', 'Paid'))
-                ->when($filter === 'refunded', fn ($q) => $q->where('status', 'Refunded'))
-                ->when($filter === 'unpaid', fn ($q) => $q->whereNotIn('status', ['Paid', 'Refunded', 'Cancelled']))
+                ->when($filter === 'paid', fn ($q) => $q->where('status', BillingStatus::Paid->value))
+                ->when($filter === 'refunded', fn ($q) => $q->where('status', BillingStatus::Refunded->value))
+                ->when($filter === 'unpaid', fn ($q) => $q->whereNotIn('status', [BillingStatus::Paid->value, BillingStatus::Refunded->value, BillingStatus::Cancelled->value]))
                 ->orderBy('issued_at')->get()
                 ->map(fn ($b) => [$b->billing_number, $b->issued_at?->format('Y-m-d'), $b->branch?->branch_name, (float) $b->amount, $b->status])->all();
         } elseif ($type === 'appointments') {
@@ -99,10 +98,10 @@ class PlanAccessController extends Controller
                     if ($filter === 'member') return (bool) $client?->activeMembership()->exists();
                     return true;
                 })
-                ->map(fn ($v) => [trim($v->first()->client?->first_name.' '.$v->first()->client?->last_name), $v->count(), $v->where('status', 'completed')->count(), (float) $v->sum('total_amount')])->values()->all();
+                ->map(fn ($v) => [trim($v->first()->client?->first_name.' '.$v->first()->client?->last_name), $v->count(), $v->where('status', AppointmentStatus::Completed->value)->count(), (float) $v->sum('total_amount')])->values()->all();
         } elseif ($type === 'branches') {
             $columns = ['Branch', 'Visits', 'Completed', 'Amount booked'];
-            $rows = $visits->groupBy('spa_branch_id')->map(fn ($v) => [$v->first()->branch?->branch_name, $v->count(), $v->where('status', 'completed')->count(), (float) $v->sum('total_amount')])->values()->all();
+            $rows = $visits->groupBy('spa_branch_id')->map(fn ($v) => [$v->first()->branch?->branch_name, $v->count(), $v->where('status', AppointmentStatus::Completed->value)->count(), (float) $v->sum('total_amount')])->values()->all();
         } elseif ($type === 'services') {
             $columns = ['Service', 'Quantity', 'Amount booked', 'Refunded'];
             $rows = $visits->flatMap->services
@@ -112,7 +111,7 @@ class PlanAccessController extends Controller
         } else {
             $columns = ['Staff', 'Service assignments', 'Completed assignments'];
             $rows = $visits->flatMap->services->flatMap->therapistAssignments->filter(fn ($a) => $a->staff_id !== null)->groupBy('staff_id')
-                ->map(fn ($v) => [trim($v->first()->staff?->first_name.' '.$v->first()->staff?->last_name), $v->count(), $v->where('assignment_status', 'Completed')->count()])->values()->all();
+                ->map(fn ($v) => [trim($v->first()->staff?->first_name.' '.$v->first()->staff?->last_name), $v->count(), $v->where('assignment_status', AssignmentStatus::Completed->value)->count()])->values()->all();
         }
 
         // The search box: rows with any cell containing the words typed.

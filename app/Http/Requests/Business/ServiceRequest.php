@@ -6,8 +6,8 @@ use App\Models\Service;
 use App\Models\ServiceVariant;
 use App\Models\SpaBusiness;
 use App\Rules\NoEmoji;
-use App\Support\AccountScope;
-use App\Support\ServiceKind;
+use App\Support\Access\AccountScope;
+use App\Support\Catalog\ServiceKind;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 

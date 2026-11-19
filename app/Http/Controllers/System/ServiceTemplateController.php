@@ -9,12 +9,9 @@ use Illuminate\Http\Request;
 
 class ServiceTemplateController extends Controller
 {
-    private ServiceTemplateService $serviceTemplateService;
-
-    public function __construct(ServiceTemplateService $serviceTemplateService)
-    {
-        $this->serviceTemplateService = $serviceTemplateService;
-    }
+    public function __construct(
+        private ServiceTemplateService $serviceTemplateService,
+    ) {}
 
     public function index(Request $request)
     {

@@ -2,7 +2,7 @@
 
 namespace App\Models;
 
-use App\Support\History;
+use App\Support\Activity\History;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -13,10 +13,10 @@ use Illuminate\Support\Facades\Schema;
 // on a massage): a name, a price, the time it adds, and the service
 // categories — optionally only some services in them — it goes with. One for
 // the whole business, the same at every branch. The rules are in
-// App\Support\ServiceAddon.
+// App\Support\Catalog\ServiceAddon.
 //
 // On a visit it becomes an appointment_services line under its main service,
-// carrying its own copy of the name, price and minutes (App\Support\History),
+// carrying its own copy of the name, price and minutes (App\Support\Activity\History),
 // so editing or deleting the add-on later never rewrites a past visit.
 class Addon extends Model
 {
@@ -89,7 +89,7 @@ class Addon extends Model
         return $this->belongsToMany(Service::class, 'addon_services')->withTimestamps();
     }
 
-    /** Where it is available, in the shape App\Support\ServiceAddon reads. */
+    /** Where it is available, in the shape App\Support\Catalog\ServiceAddon reads. */
     public function rule(): array
     {
         return [

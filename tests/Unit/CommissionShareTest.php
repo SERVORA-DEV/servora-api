@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\CommissionShare;
+use App\Support\Staff\CommissionShare;
 use PHPUnit\Framework\TestCase;
 
 // What a therapist earns for one completed service.

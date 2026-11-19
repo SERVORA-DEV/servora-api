@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\BusinessActivityDescriber as Describer;
+use App\Support\Activity\BusinessActivityDescriber as Describer;
 use PHPUnit\Framework\TestCase;
 
 // The business Audit Log's wording and what it keeps out of a row. No

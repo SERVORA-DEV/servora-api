@@ -64,7 +64,7 @@ class NearbySpaResourceTest extends TestCase
     {
         $rows = app(SpaBranchService::class)
             ->nearby(self::LAT, self::LNG, null, null)
-            ->toArray(request());
+            ->getData(true)['data'];
 
         $this->assertCount(1, $rows);
 
@@ -90,7 +90,7 @@ class NearbySpaResourceTest extends TestCase
     // Nothing to book = not ready for the marketplace (MarketplaceReadiness).
     public function test_a_branch_with_nothing_on_offer_is_not_listed(): void
     {
-        $rows = app(SpaBranchService::class)->nearby(self::LAT, self::LNG, null, null)->toArray(request());
+        $rows = app(SpaBranchService::class)->nearby(self::LAT, self::LNG, null, null)->getData(true)['data'];
 
         $this->assertSame([], $rows);
     }
@@ -113,7 +113,8 @@ class NearbySpaResourceTest extends TestCase
         $row = $this->row();
 
         $this->assertSame(['Wellness'], $row['service_categories']);
-        $this->assertSame(900.0, $row['starting_price']);
+        // Read back from JSON, where a whole-number price comes as 900, not 900.0.
+        $this->assertEquals(900.0, $row['starting_price']);
     }
 
     public function test_a_branch_custom_price_overrides_the_default(): void
@@ -121,7 +122,7 @@ class NearbySpaResourceTest extends TestCase
         $this->offer('Massage', 800, ['custom_price' => 450]);
         $this->offer('Facial', 600);
 
-        $this->assertSame(450.0, $this->row()['starting_price']);
+        $this->assertEquals(450.0, $this->row()['starting_price']);
     }
 
     public function test_a_cheaper_package_sets_the_starting_price(): void
@@ -136,7 +137,7 @@ class NearbySpaResourceTest extends TestCase
             ])->id,
         ]);
 
-        $this->assertSame(500.0, $this->row()['starting_price']);
+        $this->assertEquals(500.0, $this->row()['starting_price']);
     }
 
     public function test_open_now_follows_the_branch_schedule(): void

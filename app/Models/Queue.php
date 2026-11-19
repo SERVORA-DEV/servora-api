@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\QueueStatus;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
@@ -10,7 +11,7 @@ use Illuminate\Support\Facades\Schema;
 // Front-desk queue ticket for an appointment — one-to-one (an appointment
 // only ever has one place in line at a time). spa_branch_id/appointment_date
 // are denormalized off the appointment at insert time (see
-// AppointmentService::addToQueueInternal) so "today's queue for my branch"
+// CheckInService::addToQueueInternal) so "today's queue for my branch"
 // never needs a join.
 class Queue extends Model
 {
@@ -81,14 +82,14 @@ class Queue extends Model
 
     /**
      * Cache key: a Front Officer moved this ticket down the line in the last 30 minutes
-     * (AppointmentService::skipQueue). The client's app says so; nothing is stored in the table.
+     * (CheckInService::skipQueue). The client's app says so; nothing is stored in the table.
      */
     public static function movedDownKey(int $queueId): string
     {
         return "queue-moved-down:{$queueId}";
     }
 
-    /** Cache key: the spa called this booking (AppointmentService::callQueue) today. */
+    /** Cache key: the spa called this booking (CheckInService::callQueue) today. */
     public static function calledKey(int $appointmentId): string
     {
         return "appointment-called-at:{$appointmentId}";
@@ -97,7 +98,7 @@ class Queue extends Model
     /** Whether a Front Officer moved this ticket down the line in the last 30 minutes. */
     public function movedDown(): bool
     {
-        return in_array($this->queue_status, ['Waiting', 'Called'], true) && Cache::has(self::movedDownKey($this->id));
+        return in_array($this->queue_status, [QueueStatus::Waiting->value, QueueStatus::Called->value], true) && Cache::has(self::movedDownKey($this->id));
     }
 
     /** This ticket's place in the line, as a time. */

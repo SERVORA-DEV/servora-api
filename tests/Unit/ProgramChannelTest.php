@@ -4,7 +4,7 @@ namespace Tests\Unit;
 
 use App\Models\Appointment;
 use App\Models\CustomerProgram;
-use App\Support\ProgramChannel;
+use App\Support\Programs\ProgramChannel;
 use PHPUnit\Framework\TestCase;
 
 // Where a customer program applies: everywhere, the mobile app only, or the

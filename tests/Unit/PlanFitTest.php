@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\PlanFit;
+use App\Support\Platform\PlanFit;
 use PHPUnit\Framework\TestCase;
 
 // Fitting a business into a smaller plan: what needs choosing, and whether a

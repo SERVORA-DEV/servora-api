@@ -3,65 +3,55 @@
 namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Business\AttendanceDayRequest;
+use App\Http\Requests\Business\AttendanceHistoryRequest;
+use App\Http\Requests\Business\FillInCandidatesRequest;
+use App\Http\Requests\Business\StaffCheckInRequest;
+use App\Http\Requests\Business\StaffCheckOutRequest;
+use App\Http\Requests\Business\StaffLeaveRequest;
 use App\Service\Business\FrontOfficeAttendanceService;
 use Carbon\Carbon;
-use Illuminate\Http\Request;
 
 class FrontOfficeAttendanceController extends Controller
 {
-    private FrontOfficeAttendanceService $frontOfficeAttendanceService;
+    public function __construct(
+        private FrontOfficeAttendanceService $frontOfficeAttendanceService,
+    ) {}
 
-    public function __construct(FrontOfficeAttendanceService $frontOfficeAttendanceService)
+    public function index(AttendanceDayRequest $request)
     {
-        $this->frontOfficeAttendanceService = $frontOfficeAttendanceService;
-    }
-
-    public function index(Request $request)
-    {
-        $date = $request->validate(['date' => ['nullable', 'date_format:Y-m-d']])['date'] ?? null;
+        $date = $request->validated()['date'] ?? null;
         return $this->frontOfficeAttendanceService->today($request->user(), $date);
     }
 
-    public function checkIn(Request $request)
+    public function checkIn(StaffCheckInRequest $request)
     {
-        $data = $request->validate([
-            'staff_uuid' => ['required', 'uuid', 'exists:staff,uuid'],
-            'covering_for_staff_uuid' => ['nullable', 'uuid', 'exists:staff,uuid'],
-        ]);
+        $data = $request->validated();
         return $this->frontOfficeAttendanceService->checkIn($request->user(), $data['staff_uuid'], $data['covering_for_staff_uuid'] ?? null, $request);
     }
 
-    public function checkOut(Request $request)
+    public function checkOut(StaffCheckOutRequest $request)
     {
-        $staffUuid = $request->validate(['staff_uuid' => ['required', 'uuid', 'exists:staff,uuid']])['staff_uuid'];
+        $staffUuid = $request->validated()['staff_uuid'];
         return $this->frontOfficeAttendanceService->checkOut($request->user(), $staffUuid, $request);
     }
 
-    public function leave(Request $request)
+    public function leave(StaffLeaveRequest $request)
     {
-        $data = $request->validate([
-            'staff_uuid' => ['required', 'uuid', 'exists:staff,uuid'],
-            'type' => ['required', 'in:early,day'],
-            'reason' => ['nullable', 'string', 'max:255'],
-        ]);
+        $data = $request->validated();
         return $this->frontOfficeAttendanceService->leave($request->user(), $data['staff_uuid'], $data['type'], $data['reason'] ?? null, $request);
     }
 
-    public function fillInCandidates(Request $request)
+    public function fillInCandidates(FillInCandidatesRequest $request)
     {
-        $data = $request->validate(['covering_for' => ['nullable', 'uuid']]);
+        $data = $request->validated();
 
         return $this->frontOfficeAttendanceService->fillInCandidates($request->user(), $data['covering_for'] ?? null);
     }
 
-    public function history(Request $request, string $uuid)
+    public function history(AttendanceHistoryRequest $request, string $uuid)
     {
-        $data = $request->validate([
-            'days' => ['nullable', 'integer', 'min:1', 'max:90'],
-            // A range instead of "the last N days" (the employee page).
-            'from' => ['nullable', 'date_format:Y-m-d', 'required_with:to'],
-            'to' => ['nullable', 'date_format:Y-m-d', 'required_with:from'],
-        ]);
+        $data = $request->validated();
         if (! empty($data['from'])) {
             $from = Carbon::parse($data['from']);
             $to = Carbon::parse($data['to']);

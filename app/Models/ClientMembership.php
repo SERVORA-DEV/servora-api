@@ -16,7 +16,7 @@ class ClientMembership extends Model
         'client_id',
         'customer_program_id',
         // What it was sold as — its own copy of the program's name and of
-        // the vouchers and discounts it included (App\Support\History).
+        // the vouchers and discounts it included (App\Support\Activity\History).
         'program_name',
         'perks',
         'spa_branch_id',
@@ -63,7 +63,7 @@ class ClientMembership extends Model
     protected static function booted(): void
     {
         static::saving(function (self $membership) {
-            if (\App\Support\History::ready() && (! $membership->exists || $membership->isDirty('customer_program_id') || $membership->program_name === null)) {
+            if (\App\Support\Activity\History::ready() && (! $membership->exists || $membership->isDirty('customer_program_id') || $membership->program_name === null)) {
                 $program = CustomerProgram::withTrashed()->with('items')->find($membership->customer_program_id);
                 $membership->program_name = $program?->name;
                 $membership->perks = $program ? self::perksOf($program) : [];
@@ -88,7 +88,7 @@ class ClientMembership extends Model
     /** The membership's name when it was sold — its own copy first. */
     public function displayName(): ?string
     {
-        return \App\Support\History::own($this->program_name, fn () => $this->program?->name);
+        return \App\Support\Activity\History::own($this->program_name, fn () => $this->program?->name);
     }
 
     /** The programs (vouchers, discounts) this membership includes: as sold. */
@@ -112,7 +112,7 @@ class ClientMembership extends Model
         }
 
         $held = clone $program;
-        $held->name = \App\Support\History::own($kept['name'] ?? null, $program->name);
+        $held->name = \App\Support\Activity\History::own($kept['name'] ?? null, $program->name);
         if (is_array($kept['values'] ?? null)) {
             $held->values = $kept['values'];
         }
@@ -129,10 +129,5 @@ class ClientMembership extends Model
         }
 
         return CustomerProgram::withTrashed()->whereIn('id', $ids)->get()->map(fn (CustomerProgram $p) => $this->held($p))->values();
-    }
-
-    public function isCurrent(): bool
-    {
-        return $this->status === 'active' && $this->ends_at->isFuture();
     }
 }

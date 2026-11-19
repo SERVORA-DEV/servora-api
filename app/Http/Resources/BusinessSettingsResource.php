@@ -2,8 +2,9 @@
 
 namespace App\Http\Resources;
 
+use App\Enums\VerificationStatus;
 use App\Models\SpaBusinessSetting;
-use App\Services\ImageUploadService;
+use App\Service\Uploads\ImageUploadService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -26,7 +27,7 @@ class BusinessSettingsResource extends JsonResource
                 'business_description' => $this->business_description,
                 'business_email' => $this->business_email,
                 // Confirmed by the button in the email Servora sent to it (or the owner's own sign-up address).
-                'business_email_verified' => \App\Support\ContactEmail::isVerified($this->resource),
+                'business_email_verified' => \App\Support\Branches\ContactEmail::isVerified($this->resource),
                 'business_phone' => $this->business_phone,
                 'head_office_address' => $this->head_office_address,
                 'facebook_url' => $this->facebook_url,
@@ -43,7 +44,7 @@ class BusinessSettingsResource extends JsonResource
                 'registered_owner_name' => $this->registered_owner_name,
                 'authorized_representative_name' => $this->authorized_representative_name,
                 'verification_status' => $this->verification_status,
-                'editable' => in_array($this->verification_status, ['Unregistered', 'Rejected'], true),
+                'editable' => in_array($this->verification_status, [VerificationStatus::Unregistered->value, VerificationStatus::Rejected->value], true),
             ],
 
             'payments' => $settings->section('payments'),
@@ -67,7 +68,7 @@ class BusinessSettingsResource extends JsonResource
 
     private function planReminders(): array
     {
-        $schedule = \App\Support\SubscriptionReminderSchedule::fromSettings(\App\Support\AppCache::systemSettings());
+        $schedule = \App\Support\Platform\SubscriptionReminderSchedule::fromSettings(\App\Support\AppCache::systemSettings());
 
         return [
             'early_enabled' => $schedule->earlyEnabled,

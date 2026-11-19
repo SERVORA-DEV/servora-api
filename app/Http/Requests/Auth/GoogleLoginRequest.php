@@ -19,7 +19,7 @@ class GoogleLoginRequest extends FormRequest
             'credential' => ['required_without:access_token', 'nullable', 'string', 'max:4096'],
             'access_token' => ['required_without:credential', 'nullable', 'string', 'max:4096'],
             // Sent by the sign-up page only. Signing in to an existing account
-            // doesn't need it; creating one does (UserService::loginWithGoogle).
+            // doesn't need it; creating one does (GoogleSignInService::loginWithGoogle).
             'terms_accepted' => ['sometimes', 'boolean'],
         ];
     }

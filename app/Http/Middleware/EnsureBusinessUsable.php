@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Enums\VerificationStatus;
 use App\Repository\SpaBusinessRepository;
 use Closure;
 use Illuminate\Http\Request;
@@ -35,7 +36,7 @@ class EnsureBusinessUsable
             ], 423);
         }
 
-        if ($business->verification_status === 'Suspended') {
+        if ($business->verification_status === VerificationStatus::Suspended->value) {
             return response()->json([
                 'message' => 'This business is suspended.',
                 'code' => 'BUSINESS_SUSPENDED',

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\CatalogRequestStatus;
 use App\Models\CatalogRequest;
 use App\Models\OwnerIdentityVerification;
 use App\Models\Service;
@@ -13,6 +14,7 @@ use App\Models\SubscriptionPlan;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
+use Tests\Concerns\MakesStaffLogins;
 use Tests\TestCase;
 
 // A manager asks the owner for a service or package the catalog doesn't have;
@@ -22,6 +24,7 @@ use Tests\TestCase;
 //   DB_PASSWORD=... php artisan test --filter=CatalogRequestTest
 class CatalogRequestTest extends TestCase
 {
+    use MakesStaffLogins;
     use RefreshDatabase;
 
     private User $owner;
@@ -51,13 +54,7 @@ class CatalogRequestTest extends TestCase
         // A manager account, made the way the owner makes one.
         $managerStaff = Staff::factory()->create(['spa_branch_id' => $this->branch->id, 'role' => 'manager']);
         Sanctum::actingAs($this->owner);
-        $this->postJson('/api/business/account', [
-            'staff_uuid' => $managerStaff->uuid,
-            'username' => 'branchmanager',
-            'email' => 'manager@lotus.test',
-            'password' => 'secret-password',
-        ])->assertSuccessful();
-        $this->manager = User::where('username', 'branchmanager')->firstOrFail();
+        $this->manager = $this->makeStaffLogin($managerStaff, 'branchmanager', 'manager@lotus.test');
     }
 
     private function ask(array $body = [])
@@ -167,7 +164,7 @@ class CatalogRequestTest extends TestCase
         $other = SpaBranch::factory()->create(['spa_business_id' => $this->business->id]);
         CatalogRequest::create([
             'spa_business_id' => $this->business->id, 'spa_branch_id' => $other->id, 'requested_by_user_id' => $this->owner->id,
-            'kind' => 'service', 'name' => 'Elsewhere', 'status' => CatalogRequest::PENDING,
+            'kind' => 'service', 'name' => 'Elsewhere', 'status' => CatalogRequestStatus::Pending->value,
         ]);
 
         Sanctum::actingAs($this->manager);

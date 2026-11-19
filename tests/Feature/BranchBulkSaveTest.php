@@ -146,7 +146,7 @@ class BranchBulkSaveTest extends TestCase
             ],
         ])->assertOk()
             ->assertJsonPath('data.branch_uuid', $this->branch->uuid)
-            ->assertJsonPath('data.services.0.custom_price', 900.0)
+            ->assertJsonPath('data.services.0.custom_price', 900)
             ->assertJsonPath('data.packages.0.is_available', true);
 
         $row = BranchService::where('spa_branch_id', $this->branch->id)->where('service_variant_id', $swedish->id)->sole();

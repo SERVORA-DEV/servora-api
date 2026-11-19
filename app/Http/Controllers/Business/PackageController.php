@@ -10,12 +10,9 @@ use Illuminate\Http\Request;
 
 class PackageController extends Controller
 {
-    private PackageService $packageService;
-
-    public function __construct(PackageService $packageService)
-    {
-        $this->packageService = $packageService;
-    }
+    public function __construct(
+        private PackageService $packageService,
+    ) {}
 
     public function index(Request $request)
     {

@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Schema;
 // A named commission rate the owner gives to staff (Starter, Senior…): a rate
 // in the kind Staff Policies sets — a percentage of the price, or pesos per
 // service. Whoever has no plan earns the STANDARD rate in Staff Policies,
-// which is not a row here. See App\Support\CommissionShare for what a plan
+// which is not a row here. See App\Support\Staff\CommissionShare for what a plan
 // earns, and App\Service\Business\CommissionPlanService for managing them.
 class CommissionPlan extends Model
 {

@@ -2,23 +2,21 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\CheckoutStatus;
+use App\Exceptions\NotPermitted;
 use App\Models\CheckoutSession;
-use App\Service\CheckoutService;
-use App\Service\SubscriptionService;
-use App\Service\XenditService;
+use App\Service\Subscription\CheckoutService;
+use App\Service\Subscription\SubscriptionService;
+use App\Service\Subscription\XenditService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 class XenditWebhookController extends Controller
 {
-    private XenditService $xenditService;
-    private SubscriptionService $subscriptionService;
-
-    public function __construct(XenditService $xenditService, SubscriptionService $subscriptionService)
-    {
-        $this->xenditService = $xenditService;
-        $this->subscriptionService = $subscriptionService;
-    }
+    public function __construct(
+        private XenditService $xenditService,
+        private SubscriptionService $subscriptionService,
+    ) {}
 
     // Xendit's Invoice callback isn't wrapped in an {event, data} envelope
     // like the Payment Requests API — it POSTs the invoice object itself
@@ -30,7 +28,7 @@ class XenditWebhookController extends Controller
         // the endpoint can't be used to flood or poison the logs.
         if (! $this->xenditService->verifyWebhookToken($request)) {
             Log::warning('xendit.webhook.rejected', ['reason' => 'invalid or missing x-callback-token']);
-            abort(403, 'Invalid webhook token.');
+            throw new NotPermitted('Invalid webhook token.');
         }
 
         // Only the identifying fields at info level (payloads can carry
@@ -89,7 +87,7 @@ class XenditWebhookController extends Controller
         $checkout = app(CheckoutService::class);
         match ($event) {
             'payment_session.completed' => $checkout->complete($session, $data),
-            'payment_session.expired' => $session->isFinal() || $session->update(['status' => 'expired', 'failure_reason' => "The payment wasn't finished in time."]),
+            'payment_session.expired' => $session->isFinal() || $session->update(['status' => CheckoutStatus::Expired->value, 'failure_reason' => "The payment wasn't finished in time."]),
             // A saved-method charge (checkout "Saved" or auto-renewal):
             // re-read the payment request so the amount and status come from
             // Xendit, not the webhook body.

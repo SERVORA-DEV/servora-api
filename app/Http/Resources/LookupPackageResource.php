@@ -6,7 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 // Wraps a BranchPackage — uuid exposed is the Package's (what
-// AppointmentService::addPackage expects as package_uuid), price is this
+// VisitItemsService::addPackage expects as package_uuid), price is this
 // branch's effective price (custom_price ?? the package's own default_price).
 // Mirrors LookupServiceResource.
 class LookupPackageResource extends JsonResource

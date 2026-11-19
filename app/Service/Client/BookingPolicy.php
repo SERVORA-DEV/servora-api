@@ -36,20 +36,20 @@ class BookingPolicy
         'max_reschedules_per_booking',
         'allow_cancellation',
         'cancellation_window_hours',
-        // What the front desk is held to as well (App\Support\FrontDeskPolicy).
+        // What the front desk is held to as well (App\Support\Visits\FrontDeskPolicy).
         'no_show_policy',
         'no_show_suspend_after',
-        // How long after its time a reservation is held (App\Support\ReservationHold).
+        // How long after its time a reservation is held (App\Support\Visits\ReservationHold).
         'reservation_grace_minutes',
         // A reservation with no staff asked for is given staff and a facility when it is made
-        // (AppointmentService::autoAssign).
+        // (VisitAssignmentService::autoAssign).
         'auto_assign_staff',
         'queue_enabled',
         'max_queue_size',
         'queue_number_format',
         'walk_ins_first_priority',
         'allow_service_extension',
-        // The step extra time is added in (App\Support\ServiceExtension::steps).
+        // The step extra time is added in (App\Support\Visits\ServiceExtension::steps).
         'extension_increment_mins',
         'max_extension_mins',
         'extension_requires_approval',

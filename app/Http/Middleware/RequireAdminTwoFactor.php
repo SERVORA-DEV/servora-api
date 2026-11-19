@@ -2,7 +2,7 @@
 
 namespace App\Http\Middleware;
 
-use App\Support\AdminAccess;
+use App\Support\Access\AdminAccess;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;

@@ -2,6 +2,7 @@
 
 namespace App\Repository\Business;
 
+use App\Enums\AccountStatus;
 use App\Models\AccountBranch;
 use App\Models\Staff;
 use App\Models\User;
@@ -10,7 +11,7 @@ use Illuminate\Support\Arr;
 
 // An "account" is a standalone Manager/Front Officer login — a User row,
 // scoped to a business through the branches it was given (account_branches,
-// see App\Support\AccountScope). Before that migration has been run, through
+// see App\Support\Access\AccountScope). Before that migration has been run, through
 // the staff member it was made from (staff.user_id), as it used to be.
 class AccountRepository
 {
@@ -33,14 +34,6 @@ class AccountRepository
         return $this->ofBusiness(User::with($this->relations())->whereIn('role', ['manager', 'front_officer']), $spaBusinessId)
             ->latest()
             ->paginate($perPage);
-    }
-
-    // Same scope as paginateForBusiness, just a count — used against
-    // subscription_plans.max_user_accounts to show staff-seat usage (see
-    // SubscriptionService::getCurrentSubscription).
-    public function countForBusiness(int $spaBusinessId): int
-    {
-        return $this->ofBusiness(User::whereIn('role', ['manager', 'front_officer']), $spaBusinessId)->count();
     }
 
     // Scoped lookup for show/update/destroy — 404s instead of touching
@@ -132,7 +125,7 @@ class AccountRepository
         // Suspending a login, or the owner setting a new password, has to end
         // the sessions already open — otherwise a suspended staff member who
         // is signed in keeps working until their token happens to expire.
-        $blocked = in_array($userData['account_status'] ?? null, ['Suspended', 'Inactive'], true);
+        $blocked = in_array($userData['account_status'] ?? null, [AccountStatus::Suspended->value, AccountStatus::Inactive->value], true);
         if ($blocked || isset($userData['password'])) {
             $account->tokens()->delete();
         }

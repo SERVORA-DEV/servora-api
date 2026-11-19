@@ -2,13 +2,15 @@
 
 namespace App\Service\Business;
 
+use App\Enums\CatalogRequestStatus;
 use App\Models\Addon;
 use App\Models\CatalogRequest;
 use App\Models\Package;
 use App\Models\Service;
 use App\Models\User;
 use App\Repository\SpaBusinessRepository;
-use App\Service\NotificationService;
+use App\Service\Notifications\NotificationService;
+use Illuminate\Support\Facades\Gate;
 
 // The catalog (services and packages) is the owner's, shared by every branch.
 // A manager who needs something it doesn't have asks for it here; the owner
@@ -57,13 +59,13 @@ class CatalogRequestService
         }
 
         if ($user->role === 'business_owner') {
-            $query->where('status', CatalogRequest::PENDING);
+            $query->where('status', CatalogRequestStatus::Pending->value);
         } else {
             $query->whereIn('spa_branch_id', $this->spaBusinessRepository->branchIdsForUser($user))
                 ->where(function ($q) {
-                    $q->where('status', CatalogRequest::PENDING)
+                    $q->where('status', CatalogRequestStatus::Pending->value)
                         ->orWhere(function ($decided) {
-                            $decided->whereIn('status', [CatalogRequest::ADDED, CatalogRequest::DECLINED])
+                            $decided->whereIn('status', [CatalogRequestStatus::Added->value, CatalogRequestStatus::Declined->value])
                                 ->where('decided_at', '>=', now()->subDays(self::KEEP_DECIDED_DAYS));
                         });
                 });
@@ -76,13 +78,11 @@ class CatalogRequestService
 
     public function create(User $user, array $payload)
     {
-        if ($user->role !== 'manager') {
-            return response()->json(['message' => 'Only a branch manager sends a request. The owner adds services directly.'], 403);
-        }
+        Gate::forUser($user)->authorize('create', CatalogRequest::class);
 
         $business = $this->spaBusinessRepository->findForUser($user);
-        // The branch they are working in (App\Support\AccountScope::workingBranch).
-        $branch = \App\Support\AccountScope::workingBranch($user);
+        // The branch they are working in (App\Support\Access\AccountScope::workingBranch).
+        $branch = \App\Support\Access\AccountScope::workingBranch($user);
         if (! $business || ! $branch) {
             return response()->json(['message' => 'No branch found for this account.'], 422);
         }
@@ -100,7 +100,7 @@ class CatalogRequestService
             return response()->json(['message' => "\"{$name}\" is already in the catalog. Switch it on for your branch instead."], 422);
         }
 
-        $waiting = CatalogRequest::where('spa_branch_id', $branch->id)->where('status', CatalogRequest::PENDING);
+        $waiting = CatalogRequest::where('spa_branch_id', $branch->id)->where('status', CatalogRequestStatus::Pending->value);
 
         if ((clone $waiting)->where('kind', $kind)->whereRaw('LOWER(name) = ?', [$lower])->exists()) {
             return response()->json(['message' => "\"{$name}\" has already been requested and is waiting for the owner."], 422);
@@ -119,7 +119,7 @@ class CatalogRequestService
             // Only a service has a category here (an add-on has several, in its form).
             'category' => $kind === 'service' ? (trim($payload['category'] ?? '') ?: null) : null,
             'details' => trim($payload['details'] ?? '') ?: null,
-            'status' => CatalogRequest::PENDING,
+            'status' => CatalogRequestStatus::Pending->value,
         ] + (CatalogRequest::hasPayload() ? ['payload' => ($payload['payload'] ?? null) ?: null] : []));
 
         if ($business->owner) {
@@ -140,11 +140,9 @@ class CatalogRequestService
             return response()->json(['message' => 'This request has already been answered or withdrawn.'], 422);
         }
 
-        if ($user->role !== 'business_owner' && $request->requested_by_user_id !== $user->id) {
-            return response()->json(['message' => 'Only the person who made this request can withdraw it.'], 403);
-        }
+        Gate::forUser($user)->authorize('withdraw', $request);
 
-        $request->update(['status' => CatalogRequest::WITHDRAWN]);
+        $request->update(['status' => CatalogRequestStatus::Withdrawn->value]);
 
         return response()->json(['message' => 'Request withdrawn.']);
     }
@@ -152,21 +150,19 @@ class CatalogRequestService
     // The owner has added it to the catalog (or it was there already).
     public function markAdded(User $user, string $uuid)
     {
-        return $this->decide($user, $uuid, CatalogRequest::ADDED, null);
+        return $this->decide($user, $uuid, CatalogRequestStatus::Added->value, null);
     }
 
     public function decline(User $user, string $uuid, ?string $reason)
     {
-        return $this->decide($user, $uuid, CatalogRequest::DECLINED, $reason);
+        return $this->decide($user, $uuid, CatalogRequestStatus::Declined->value, $reason);
     }
 
     // ── internals ───────────────────────────────────────────────────────
 
     private function decide(User $user, string $uuid, string $status, ?string $reason)
     {
-        if ($user->role !== 'business_owner') {
-            return response()->json(['message' => 'Only the owner can answer a request.'], 403);
-        }
+        Gate::forUser($user)->authorize('decide', CatalogRequest::class);
 
         $request = $this->findPending($user, $uuid);
         if (! $request) {
@@ -187,14 +183,14 @@ class CatalogRequestService
                 $request->requester,
                 $request->kind,
                 $request->name,
-                $status === CatalogRequest::ADDED,
+                $status === CatalogRequestStatus::Added->value,
                 $reason,
                 $request->branch?->branch_name,
             );
         }
 
         return response()->json([
-            'message' => $status === CatalogRequest::ADDED ? 'Marked as added.' : 'Request declined.',
+            'message' => $status === CatalogRequestStatus::Added->value ? 'Marked as added.' : 'Request declined.',
             'data' => $this->present($request, $user),
         ]);
     }
@@ -206,7 +202,7 @@ class CatalogRequestService
         return CatalogRequest::with(['branch', 'requester.staff'])
             ->where('uuid', $uuid)
             ->whereIn('spa_branch_id', $this->spaBusinessRepository->branchIdsForUser($user))
-            ->where('status', CatalogRequest::PENDING)
+            ->where('status', CatalogRequestStatus::Pending->value)
             ->first();
     }
 
@@ -230,7 +226,7 @@ class CatalogRequestService
             'requested_at' => $request->created_at?->toIso8601String(),
             'decided_at' => $request->decided_at?->toIso8601String(),
             // When it stopped waiting: the answer, or the withdrawal.
-            'closed_at' => $request->status === CatalogRequest::PENDING
+            'closed_at' => $request->status === CatalogRequestStatus::Pending->value
                 ? null
                 : ($request->decided_at ?? $request->updated_at)?->toIso8601String(),
             'decision_note' => $request->decision_note,

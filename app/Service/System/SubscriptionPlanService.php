@@ -7,27 +7,17 @@ use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
 use App\Repository\AuditLogRepository;
 use App\Repository\System\SubscriptionPlanRepository;
-use App\Service\PlanChangeService;
+use App\Service\Subscription\PlanChangeService;
 use App\Support\AppCache;
 use Illuminate\Support\Arr;
 
 class SubscriptionPlanService
 {
-    private SubscriptionPlanRepository $subscriptionPlanRepository;
-
-    private PlanChangeService $planChangeService;
-
-    private AuditLogRepository $auditLogRepository;
-
     public function __construct(
-        SubscriptionPlanRepository $subscriptionPlanRepository,
-        PlanChangeService $planChangeService,
-        AuditLogRepository $auditLogRepository,
-    ) {
-        $this->subscriptionPlanRepository = $subscriptionPlanRepository;
-        $this->planChangeService = $planChangeService;
-        $this->auditLogRepository = $auditLogRepository;
-    }
+        private SubscriptionPlanRepository $subscriptionPlanRepository,
+        private PlanChangeService $planChangeService,
+        private AuditLogRepository $auditLogRepository,
+    ) {}
 
     public function listSubscriptionPlan(int $perPage = 15)
     {
@@ -111,13 +101,6 @@ class SubscriptionPlanService
     public function getSubscriptionPlan(string $uuid)
     {
         $model = $this->subscriptionPlanRepository->findByUuid($uuid);
-
-        return new SubscriptionPlanResource($model);
-    }
-
-    public function getSubscriptionPlanByField(string $field, $value)
-    {
-        $model = $this->subscriptionPlanRepository->findByField($field, $value);
 
         return new SubscriptionPlanResource($model);
     }
@@ -259,14 +242,5 @@ class SubscriptionPlanService
         $this->auditLogRepository->recordAdminAction('subscription_plans', $plan->id, 'Delete', null, ['name' => $plan->name]);
 
         return true;
-    }
-
-    public function restoreSubscriptionPlan(string $uuid)
-    {
-        $model = $this->subscriptionPlanRepository->restore($uuid);
-
-        $this->auditLogRepository->recordAdminAction('subscription_plans', $model->id, 'Restore', null, ['name' => $model->name]);
-
-        return new SubscriptionPlanResource($model);
     }
 }

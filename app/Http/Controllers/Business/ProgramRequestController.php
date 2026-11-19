@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Business\DeclineRequest;
+use App\Http\Requests\Business\ProgramRequestApproveRequest;
 use App\Http\Requests\Business\ProgramRequestRequest;
 use App\Service\Business\ProgramRequestService;
 use Illuminate\Http\Request;
@@ -31,16 +33,16 @@ class ProgramRequestController extends Controller
 
     // With no body: created as asked. With a program in the body: the
     // owner's changed version is created instead.
-    public function approve(Request $request, string $uuid)
+    public function approve(ProgramRequestApproveRequest $request, string $uuid)
     {
-        $changed = $request->validate(['name' => ['sometimes', 'string', 'min:2', 'max:120']] + ProgramRequestRequest::programRules());
+        $changed = $request->validated();
 
         return $this->programRequestService->approve($request->user(), $uuid, $changed ?: null);
     }
 
-    public function decline(Request $request, string $uuid)
+    public function decline(DeclineRequest $request, string $uuid)
     {
-        $reason = $request->validate(['reason' => 'nullable|string|max:500'])['reason'] ?? null;
+        $reason = $request->validated()['reason'] ?? null;
 
         return $this->programRequestService->decline($request->user(), $uuid, $reason);
     }

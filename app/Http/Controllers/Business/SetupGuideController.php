@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Business;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Business\SetupGuideRequest;
 use App\Models\BusinessSetupGuide;
 use App\Repository\SpaBusinessRepository;
 use Illuminate\Http\JsonResponse;
@@ -14,8 +15,6 @@ use Illuminate\Http\Request;
 // has run, both answer with empty progress and save nothing.
 class SetupGuideController extends Controller
 {
-    private const MAX_STEPS = 40;
-
     public function __construct(private SpaBusinessRepository $businesses)
     {
     }
@@ -25,15 +24,9 @@ class SetupGuideController extends Controller
         return response()->json(['data' => $this->present($this->find($request))]);
     }
 
-    public function update(Request $request): JsonResponse
+    public function update(SetupGuideRequest $request): JsonResponse
     {
-        $data = $request->validate([
-            'done' => ['present', 'array', 'max:' . self::MAX_STEPS],
-            'done.*' => ['string', 'max:40', 'regex:/^[a-z][a-z0-9-]*$/'],
-            'skipped' => ['present', 'array', 'max:' . self::MAX_STEPS],
-            'skipped.*' => ['string', 'max:40', 'regex:/^[a-z][a-z0-9-]*$/'],
-            'finished' => ['required', 'boolean'],
-        ]);
+        $data = $request->validated();
 
         $business = $this->businesses->findForUser($request->user());
         if (! $business || ! BusinessSetupGuide::ready()) {
@@ -42,7 +35,7 @@ class SetupGuideController extends Controller
 
         $row = BusinessSetupGuide::firstOrNew(['spa_business_id' => $business->id]);
         $done = array_values(array_unique(array_merge($row->done ?? [], $data['done'])));
-        $row->done = array_slice($done, 0, self::MAX_STEPS);
+        $row->done = array_slice($done, 0, SetupGuideRequest::MAX_STEPS);
         $row->skipped = array_values(array_diff(array_unique($data['skipped']), $row->done));
         $row->finished = (bool) $data['finished'];
         $row->save();

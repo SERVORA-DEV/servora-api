@@ -2,25 +2,30 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentServiceStatus;
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
+use App\Enums\AttendanceStatus;
+use App\Enums\BillingStatus;
+use App\Enums\PaymentStatus;
+use App\Enums\StaffStatus;
 use App\Models\Addon;
 use App\Models\Billing;
 use App\Models\Payment;
 use App\Models\Staff;
 use App\Models\User;
 use App\Repository\SpaBusinessRepository;
-use App\Support\History;
+use App\Support\Activity\History;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class DashboardService
 {
-    private SpaBusinessRepository $spaBusinessRepository;
-
-    public function __construct(SpaBusinessRepository $spaBusinessRepository, private ServingNow $servingNow)
-    {
-        $this->spaBusinessRepository = $spaBusinessRepository;
-    }
+    public function __construct(
+        private SpaBusinessRepository $spaBusinessRepository,
+        private ServingNow $servingNow,
+    ) {}
 
     /**
      * The owner's and manager's dashboard, from what the branches actually
@@ -166,7 +171,7 @@ class DashboardService
     // The services completed most in the period, with what they brought in
     // and their share of everything completed (one query: the window sum
     // gives the total alongside the top few). A service keeps the name it
-    // had when it was done (App\Support\History).
+    // had when it was done (App\Support\Activity\History).
     private function topServices(array $branchIds, $periodStart, $periodEnd): array
     {
         if (! $branchIds) {
@@ -180,7 +185,7 @@ class DashboardService
             ->leftJoin('services as sv', 'sv.id', '=', 'v.service_id')
             ->whereIn('a.spa_branch_id', $branchIds)
             ->whereNull('a.deleted_at')
-            ->where('s.status', 'Completed')
+            ->where('s.status', AppointmentServiceStatus::Completed->value)
             // An add-on is part of the service it rides with, not one of its own.
             ->when(Addon::ready(), fn ($q) => $q->whereNull('s.parent_appointment_service_id'))
             ->whereBetween('a.appointment_date', [$periodStart->toDateString(), $periodEnd->toDateString()])
@@ -203,7 +208,7 @@ class DashboardService
     private function revenueByBranch(array $branchIds, $periodStart, $periodEnd): array
     {
         return Payment::whereIn('spa_branch_id', $branchIds)
-            ->where('payment_status', 'Paid')
+            ->where('payment_status', PaymentStatus::Paid->value)
             ->whereBetween('paid_at', [$periodStart, $periodEnd])
             ->groupBy('spa_branch_id')
             ->selectRaw('spa_branch_id, coalesce(sum(amount), 0) as total')
@@ -226,7 +231,7 @@ class DashboardService
             $days[] = Carbon::now()->subDays($i)->toDateString();
         }
         $rows = Payment::whereIn('spa_branch_id', $branchIds)
-            ->where('payment_status', 'Paid')
+            ->where('payment_status', PaymentStatus::Paid->value)
             ->whereBetween('paid_at', [Carbon::now()->subDays(6)->startOfDay(), Carbon::now()->endOfDay()])
             ->groupBy('spa_branch_id', DB::raw('date(paid_at)'))
             ->selectRaw('spa_branch_id, date(paid_at) as day, coalesce(sum(amount), 0) as total')
@@ -263,8 +268,8 @@ class DashboardService
                 'uuid' => $branch->uuid,
                 'name' => $branch->branch_name,
                 'visitsToday' => $this->booked($counts),
-                'inSpaNow' => ($counts['checked_in'] ?? 0) + ($counts['in_service'] ?? 0),
-                'completedToday' => $counts['completed'] ?? 0,
+                'inSpaNow' => ($counts[AppointmentStatus::CheckedIn->value] ?? 0) + ($counts[AppointmentStatus::InService->value] ?? 0),
+                'completedToday' => $counts[AppointmentStatus::Completed->value] ?? 0,
                 'staffOnDuty' => $people['onDuty'],
                 'staffActive' => $people['active'],
             ];
@@ -299,7 +304,7 @@ class DashboardService
 
         $sum = fn (string $status) => array_sum(array_map(fn ($counts) => $counts[$status] ?? 0, $byBranch));
         $all = [];
-        foreach (['scheduled', 'checked_in', 'in_service', 'completed', 'cancelled', 'no_show'] as $status) {
+        foreach ([AppointmentStatus::Scheduled->value, AppointmentStatus::CheckedIn->value, AppointmentStatus::InService->value, AppointmentStatus::Completed->value, AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value] as $status) {
             $all[$status] = $sum($status);
         }
 
@@ -309,19 +314,19 @@ class DashboardService
                 // Booked for today and still on: everything but the ones that
                 // were cancelled or never came.
                 'total' => $this->booked($all),
-                'scheduled' => $all['scheduled'],
-                'checkedIn' => $all['checked_in'],
-                'inService' => $all['in_service'],
-                'completed' => $all['completed'],
-                'cancelled' => $all['cancelled'],
-                'noShow' => $all['no_show'],
+                'scheduled' => $all[AppointmentStatus::Scheduled->value],
+                'checkedIn' => $all[AppointmentStatus::CheckedIn->value],
+                'inService' => $all[AppointmentStatus::InService->value],
+                'completed' => $all[AppointmentStatus::Completed->value],
+                'cancelled' => $all[AppointmentStatus::Cancelled->value],
+                'noShow' => $all[AppointmentStatus::NoShow->value],
             ],
         ];
     }
 
     private function booked(array $counts): int
     {
-        return ($counts['scheduled'] ?? 0) + ($counts['checked_in'] ?? 0) + ($counts['in_service'] ?? 0) + ($counts['completed'] ?? 0);
+        return ($counts[AppointmentStatus::Scheduled->value] ?? 0) + ($counts[AppointmentStatus::CheckedIn->value] ?? 0) + ($counts[AppointmentStatus::InService->value] ?? 0) + ($counts[AppointmentStatus::Completed->value] ?? 0);
     }
 
     // What is coming up: visits from today on that have not finished, soonest
@@ -339,7 +344,7 @@ class DashboardService
             ->whereIn('a.spa_branch_id', $branchIds)
             ->whereNull('a.deleted_at')
             ->whereDate('a.appointment_date', '>=', $today)
-            ->whereIn('a.status', ['scheduled', 'checked_in', 'in_service'])
+            ->whereIn('a.status', [AppointmentStatus::Scheduled->value, AppointmentStatus::CheckedIn->value, AppointmentStatus::InService->value])
             ->orderBy('a.appointment_date')
             ->orderBy('a.appointment_time')
             ->limit(self::UPCOMING_LIMIT)
@@ -357,7 +362,7 @@ class DashboardService
             ->leftJoin('service_variants as v', 'v.id', '=', 's.service_variant_id')
             ->leftJoin('services as sv', 'sv.id', '=', 'v.service_id')
             ->whereIn('s.appointment_id', $visits->pluck('id')->all())
-            ->where('s.status', '!=', 'Cancelled')
+            ->where('s.status', '!=', AppointmentServiceStatus::Cancelled->value)
             ->when(Addon::ready(), fn ($q) => $q->whereNull('s.parent_appointment_service_id'))
             ->orderBy('s.sort_order')
             ->get(['s.id', 's.appointment_id', DB::raw(($own ? 'coalesce(s.service_name, sv.name)' : 'sv.name') . ' as name')]);
@@ -366,7 +371,7 @@ class DashboardService
             ->leftJoin('staff as st', 'st.id', '=', 'ta.staff_id')
             ->leftJoin('facilities as f', 'f.id', '=', 'ta.facility_id')
             ->whereIn('ta.appointment_service_id', $services->pluck('id')->all() ?: [0])
-            ->where('ta.assignment_status', '!=', 'Cancelled')
+            ->where('ta.assignment_status', '!=', AssignmentStatus::Cancelled->value)
             ->get([
                 'ta.appointment_service_id',
                 DB::raw(($own ? "coalesce(ta.staff_name, nullif(trim(concat(st.first_name, ' ', st.last_name)), ''))" : "nullif(trim(concat(st.first_name, ' ', st.last_name)), '')") . ' as staff'),
@@ -413,13 +418,13 @@ class DashboardService
     private function staffToday(array $branchIds, string $today): array
     {
         $roster = Staff::whereIn('spa_branch_id', $branchIds)
-            ->whereIn('status', ['active', 'on-leave'])
+            ->whereIn('status', [StaffStatus::Active->value, StaffStatus::OnLeave->value])
             ->orderBy('first_name')
             ->get(['id', 'uuid', 'spa_branch_id', 'first_name', 'last_name', 'role', 'status']);
         $ids = $roster->pluck('id')->all();
 
         // Each branch's working day (BusinessDay): before it opens, the day before is still on.
-        $dayOf = collect($branchIds)->mapWithKeys(fn ($id) => [$id => \App\Support\BusinessDay::attendanceDate($id, $today)]);
+        $dayOf = collect($branchIds)->mapWithKeys(fn ($id) => [$id => \App\Support\Branches\BusinessDay::attendanceDate($id, $today)]);
         $branchOf = $roster->pluck('spa_branch_id', 'id');
         $attendance = $ids
             ? DB::table('attendances')->whereIn('staff_id', $ids)->whereIn('attendance_date', $dayOf->values()->unique()->all())
@@ -438,7 +443,7 @@ class DashboardService
             $with = $serving[$staff->id] ?? null;
 
             [$state, $detail] = match (true) {
-                $staff->status === 'on-leave' || ($day?->status === 'On Leave') => ['on_leave', null],
+                $staff->status === StaffStatus::OnLeave->value || ($day?->status === AttendanceStatus::OnLeave->value) => ['on_leave', null],
                 $with !== null => ['in_service', trim(($with['client'] ?? 'A client') . ' · ' . ($with['service'] ?? 'Service'), ' ·')],
                 $day?->check_out_at !== null => ['timed_out', Carbon::parse($day->check_out_at)->format('H:i')],
                 $day?->check_in_at !== null => ['on_duty', Carbon::parse($day->check_in_at)->format('H:i')],
@@ -446,7 +451,7 @@ class DashboardService
             };
 
             $byBranch[$staff->spa_branch_id] ??= ['onDuty' => 0, 'active' => 0];
-            $byBranch[$staff->spa_branch_id]['active'] += $staff->status === 'active' ? 1 : 0;
+            $byBranch[$staff->spa_branch_id]['active'] += $staff->status === StaffStatus::Active->value ? 1 : 0;
             $byBranch[$staff->spa_branch_id]['onDuty'] += in_array($state, ['on_duty', 'in_service'], true) ? 1 : 0;
 
             return [
@@ -467,7 +472,7 @@ class DashboardService
 
         return [
             'total' => $roster->count(),
-            'active' => $roster->where('status', 'active')->count(),
+            'active' => $roster->where('status', StaffStatus::Active->value)->count(),
             'onLeave' => $rows->where('status', 'on_leave')->count(),
             'onDuty' => $rows->whereIn('status', ['on_duty', 'in_service'])->count(),
             'inService' => $rows->where('status', 'in_service')->count(),
@@ -496,7 +501,7 @@ class DashboardService
         }
 
         $row = Payment::whereIn('spa_branch_id', $branchIds)
-            ->where('payment_status', 'Paid')
+            ->where('payment_status', PaymentStatus::Paid->value)
             ->selectRaw(implode(', ', $sums), $bindings)
             ->toBase()
             ->first();
@@ -514,7 +519,7 @@ class DashboardService
     private function outstandingBilling(array $branchIds): array
     {
         $row = Billing::whereIn('spa_branch_id', $branchIds)
-            ->whereIn('status', ['Pending', 'Overdue'])
+            ->whereIn('status', [BillingStatus::Pending->value, BillingStatus::Overdue->value])
             ->selectRaw('coalesce(sum(amount), 0) as total, count(*) as count')
             ->toBase()
             ->first();

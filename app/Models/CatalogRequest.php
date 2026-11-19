@@ -13,12 +13,6 @@ class CatalogRequest extends Model
 {
     use HasUuids;
 
-    public const PENDING = 'pending';
-    // The owner added it to the catalog.
-    public const ADDED = 'added';
-    public const DECLINED = 'declined';
-    public const WITHDRAWN = 'withdrawn';
-
     protected $fillable = [
         'uuid',
         'spa_business_id',

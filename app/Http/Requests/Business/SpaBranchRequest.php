@@ -5,7 +5,6 @@ namespace App\Http\Requests\Business;
 use App\Rules\ValidEmail;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 use App\Rules\NoEmoji;
 use App\Rules\PhMobile;
 
@@ -37,7 +36,7 @@ class SpaBranchRequest extends FormRequest
             'branch_name' => ['required', 'string', 'max:150', new NoEmoji()],
 
             // The area this branch is in ("Mandug"). Not unique on its own: what tells branches apart
-            // is the name and the area together (App\Support\BranchIdentity, checked in after()).
+            // is the name and the area together (App\Support\Branches\BranchIdentity, checked in after()).
             'code' => ['nullable', 'string', 'max:50'],
 
             'email' => ['nullable', 'email', new ValidEmail(), 'max:255', new NoEmoji()],
@@ -61,8 +60,8 @@ class SpaBranchRequest extends FormRequest
             if ($validator->errors()->has('branch_name') || $validator->errors()->has('code')) {
                 return;
             }
-            if (\App\Support\BranchIdentity::taken($this->resolvedBusinessId(), $this->input('branch_name'), $this->input('code'))) {
-                $validator->errors()->add('branch_name', \App\Support\BranchIdentity::message($this->input('code')));
+            if (\App\Support\Branches\BranchIdentity::taken($this->resolvedBusinessId(), $this->input('branch_name'), $this->input('code'))) {
+                $validator->errors()->add('branch_name', \App\Support\Branches\BranchIdentity::message($this->input('code')));
             }
         }];
     }
@@ -95,6 +94,6 @@ class SpaBranchRequest extends FormRequest
             return \App\Models\SpaBusiness::where('owner_id', $user->id)->value('id');
         }
 
-        return \App\Support\AccountScope::business($user)?->id;
+        return \App\Support\Access\AccountScope::business($user)?->id;
     }
 }

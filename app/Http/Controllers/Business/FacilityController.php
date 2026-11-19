@@ -9,12 +9,9 @@ use Illuminate\Http\Request;
 
 class FacilityController extends Controller
 {
-    private FacilityService $facilityService;
-
-    public function __construct(FacilityService $facilityService)
-    {
-        $this->facilityService = $facilityService;
-    }
+    public function __construct(
+        private FacilityService $facilityService,
+    ) {}
 
     public function index(Request $request)
     {

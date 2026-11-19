@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\PackagePlan;
+use App\Support\Catalog\PackagePlan;
 use PHPUnit\Framework\TestCase;
 
 // A package names services and gives each its own minutes; the menu's lengths

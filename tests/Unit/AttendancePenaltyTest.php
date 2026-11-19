@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\AttendancePenalty;
+use App\Support\Staff\AttendancePenalty;
 use PHPUnit\Framework\TestCase;
 
 class AttendancePenaltyTest extends TestCase

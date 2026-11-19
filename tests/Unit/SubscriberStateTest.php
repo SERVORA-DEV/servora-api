@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\SubscriberState;
+use App\Support\Platform\SubscriberState;
 use Illuminate\Support\Carbon;
 use PHPUnit\Framework\TestCase;
 

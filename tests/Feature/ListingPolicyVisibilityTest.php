@@ -7,7 +7,7 @@ use App\Models\SpaBusiness;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Support\AppCache;
-use App\Support\ListingPolicy;
+use App\Support\Platform\ListingPolicy;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\MakesBranchesBookable;

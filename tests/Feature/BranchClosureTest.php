@@ -14,6 +14,7 @@ use App\Service\Client\BookingSlotService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
+use Tests\Concerns\MakesStaffLogins;
 use Tests\TestCase;
 
 // Temporary closures of a branch (a holiday, repairs): the owner or the
@@ -24,6 +25,7 @@ use Tests\TestCase;
 //   DB_PASSWORD=... php artisan test --filter=BranchClosureTest
 class BranchClosureTest extends TestCase
 {
+    use MakesStaffLogins;
     use RefreshDatabase;
 
     private User $owner;
@@ -54,13 +56,7 @@ class BranchClosureTest extends TestCase
         // A manager account, made the way the owner makes one.
         $managerStaff = Staff::factory()->create(['spa_branch_id' => $this->branch->id, 'role' => 'manager']);
         Sanctum::actingAs($this->owner);
-        $this->postJson('/api/business/account', [
-            'staff_uuid' => $managerStaff->uuid,
-            'username' => 'branchmanager',
-            'email' => 'manager@lotus.test',
-            'password' => 'secret-password',
-        ])->assertSuccessful();
-        $this->manager = User::where('username', 'branchmanager')->firstOrFail();
+        $this->manager = $this->makeStaffLogin($managerStaff, 'branchmanager', 'manager@lotus.test');
     }
 
     private function day(int $plus): string
@@ -127,7 +123,11 @@ class BranchClosureTest extends TestCase
         $this->assertTrue($availability->branchIsOpen($this->branch->id, $this->day(1), '17:00', 60)['ok']);
 
         // The client's time picker offers nothing inside it either.
-        $times = array_column(app(BookingSlotService::class)->slots($this->branch, $this->day(1), 60)['slots'], 'time');
+        // Unbookable times are still listed (so the day reads as a whole), marked closed.
+        $slots = app(BookingSlotService::class)->slots($this->branch, $this->day(1), 60)['slots'];
+        $times = array_column(array_filter($slots, fn ($s) => $s['available']), 'time');
+        $reasons = array_column($slots, 'reason', 'time');
+        $this->assertSame('closed', $reasons['13:00'] ?? null);
         $this->assertNotContains('13:00', $times);
         $this->assertNotContains('16:30', $times);
         $this->assertNotContains('12:30', $times);

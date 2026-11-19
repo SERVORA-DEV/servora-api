@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\BusinessActivityDescriber as Describer;
+use App\Support\Activity\BusinessActivityDescriber as Describer;
 use App\Support\ProfilePhoto;
 use PHPUnit\Framework\TestCase;
 

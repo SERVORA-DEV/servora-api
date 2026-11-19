@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Business;
 
+use App\Http\Requests\Business\NearbyBranchesRequest;
 use App\Service\Business\SpaBranchService;
 use App\Service\Business\BranchCloneService;
 use App\Http\Requests\Business\SpaBranchCloneRequest;
@@ -19,12 +20,9 @@ use Illuminate\Http\JsonResponse;
 
 class SpaBranchController extends Controller
 {
-    private SpaBranchService $spaBranchService;
-
-    public function __construct(SpaBranchService $spaBranchService)
-    {
-        $this->spaBranchService = $spaBranchService;
-    }
+    public function __construct(
+        private SpaBranchService $spaBranchService,
+    ) {}
 
     public function index(Request $request)
     {
@@ -32,14 +30,9 @@ class SpaBranchController extends Controller
     }
 
     // Public, unauthenticated — see routes/api.php and NearbySpaResource.
-    public function nearby(Request $request)
+    public function nearby(NearbyBranchesRequest $request)
     {
-        $validated = $request->validate([
-            'lat' => 'required|numeric|between:-90,90',
-            'lng' => 'required|numeric|between:-180,180',
-            'radius_km' => 'nullable|numeric|min:1|max:100',
-            'limit' => 'nullable|integer|min:1|max:200',
-        ]);
+        $validated = $request->validated();
 
         return $this->spaBranchService->nearby(
             (float) $validated['lat'],
@@ -130,11 +123,6 @@ class SpaBranchController extends Controller
         }
 
         return response()->json(['message' => 'Deleted successfully'], 200);
-    }
-    
-    public function restore(string $uuid)
-    {
-        return $this->spaBranchService->restoreSpaBranch($uuid);
     }
 
     // POST business/branch/{uuid}/reverify — "Resubmit documents" on a verified branch.

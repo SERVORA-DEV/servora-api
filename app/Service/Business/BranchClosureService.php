@@ -2,13 +2,16 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentStatus;
+use App\Exceptions\ActionRefused;
+use App\Exceptions\NotSetUp;
 use App\Models\Appointment;
 use App\Models\BranchClosure;
 use App\Models\SpaBranch;
 use App\Models\User;
 use App\Repository\Business\SpaBranchRepository;
 use App\Repository\SpaBusinessRepository;
-use App\Support\BranchClosures;
+use App\Support\Branches\BranchClosures;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -131,8 +134,8 @@ class BranchClosureService
     // branches, or a manager's one branch).
     private function branchOf(User $user, string $uuid): SpaBranch
     {
-        abort_unless($this->spaBusinessRepository->findForUser($user), 422, 'No spa business found for this account.');
-        abort_unless(BranchClosures::ready(), 503, 'Closures are not set up on this server yet.');
+        throw_unless($this->spaBusinessRepository->findForUser($user), ActionRefused::class, 'No spa business found for this account.');
+        throw_unless(BranchClosures::ready(), NotSetUp::class, 'Closures are not set up on this server yet.');
 
         return $this->spaBranchRepository->findByUuidForBranches($uuid, $this->spaBusinessRepository->branchIdsForUser($user));
     }
@@ -207,8 +210,8 @@ class BranchClosureService
             if (! $row->opening_time || ! $row->closing_time) {
                 return true;
             }
-            $open = $day->copy()->addMinutes(\App\Support\BranchHours::minutes($row->opening_time));
-            $close = $day->copy()->addMinutes(\App\Support\BranchHours::minutes($row->closing_time));
+            $open = $day->copy()->addMinutes(\App\Support\Branches\BranchHours::minutes($row->opening_time));
+            $close = $day->copy()->addMinutes(\App\Support\Branches\BranchHours::minutes($row->closing_time));
             if ($close->lte($open)) {
                 $close->addDay(); // closes after midnight
             }
@@ -224,7 +227,7 @@ class BranchClosureService
     private function bookingsInside(SpaBranch $branch, Carbon $start, Carbon $end): array
     {
         $inside = Appointment::where('spa_branch_id', $branch->id)
-            ->whereIn('status', [Appointment::STATUS_SCHEDULED, Appointment::STATUS_CHECKED_IN, Appointment::STATUS_IN_SERVICE])
+            ->whereIn('status', [AppointmentStatus::Scheduled->value, AppointmentStatus::CheckedIn->value, AppointmentStatus::InService->value])
             // A day early, for a visit that started the evening before.
             ->whereBetween('appointment_date', [$start->copy()->subDay()->toDateString(), $end->toDateString()])
             ->with(['client:id,first_name,last_name', 'services.serviceVariant'])

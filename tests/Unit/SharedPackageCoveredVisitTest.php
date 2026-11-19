@@ -5,7 +5,7 @@ namespace Tests\Unit;
 use App\Models\Appointment;
 use App\Models\AppointmentPackage;
 use App\Models\Client;
-use App\Support\SharedPackages;
+use App\Support\Catalog\SharedPackages;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;

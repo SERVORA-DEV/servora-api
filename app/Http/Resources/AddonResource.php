@@ -17,7 +17,7 @@ class AddonResource extends JsonResource
             'price' => (float) $this->price,
             // What it adds to its main service's time (0 = none).
             'duration_minutes' => (int) $this->duration_minutes,
-            // Where it is available (App\Support\ServiceAddon): these service
+            // Where it is available (App\Support\Catalog\ServiceAddon): these service
             // categories — every service in them, or only service_uuids.
             'categories' => array_values((array) ($this->categories ?? [])),
             'all_services' => (bool) $this->all_services,

@@ -13,12 +13,9 @@ use Illuminate\Http\Request;
 
 class SecurityController extends Controller
 {
-    private SecurityService $securityService;
-
-    public function __construct(SecurityService $securityService)
-    {
-        $this->securityService = $securityService;
-    }
+    public function __construct(
+        private SecurityService $securityService,
+    ) {}
 
     public function changePassword(ChangePasswordRequest $request)
     {

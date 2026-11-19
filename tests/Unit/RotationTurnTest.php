@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\RotationTurn;
+use App\Support\Visits\RotationTurn;
 use PHPUnit\Framework\TestCase;
 
 // Whose turn it is in the staff rotation: the first person on the floor who

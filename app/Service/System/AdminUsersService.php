@@ -2,13 +2,15 @@
 
 namespace App\Service\System;
 
+use App\Enums\AccountStatus;
+use App\Exceptions\NotPermitted;
 use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\System\AdminUsersRepository;
 use App\Http\Resources\AdminUsersResource;
-use App\Service\NotificationService;
-use App\Services\ImageUploadService;
-use App\Support\AdminPermissions;
+use App\Service\Notifications\NotificationService;
+use App\Service\Uploads\ImageUploadService;
+use App\Support\Access\AdminPermissions;
 use App\Support\ProfilePhoto;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
@@ -18,19 +20,11 @@ use Illuminate\Validation\ValidationException;
 
 class AdminUsersService
 {
-    private AdminUsersRepository $adminUsersRepository;
-    private NotificationService $notificationService;
-    private AuditLogRepository $auditLogRepository;
-
     public function __construct(
-        AdminUsersRepository $adminUsersRepository,
-        NotificationService $notificationService,
-        AuditLogRepository $auditLogRepository,
-    ) {
-        $this->adminUsersRepository = $adminUsersRepository;
-        $this->notificationService = $notificationService;
-        $this->auditLogRepository = $auditLogRepository;
-    }
+        private AdminUsersRepository $adminUsersRepository,
+        private NotificationService $notificationService,
+        private AuditLogRepository $auditLogRepository,
+    ) {}
 
     public function listAdminUsers(int $perPage = 15)
     {
@@ -40,14 +34,13 @@ class AdminUsersService
 
     public function createAdminUsers(array $payload, ?User $actor = null)
     {
-
         $payload['role'] = 'system_administrator';
 
         $permissionPayload = Arr::only($payload, AdminPermissions::keys());
 
         // Setting someone's permissions is itself a permission.
         if ($permissionPayload && $actor && ! AdminPermissions::allows($actor, 'permission_update')) {
-            abort(403, 'You need the Update Permissions permission to set what a new administrator can do.');
+            throw new NotPermitted('You need the Update Permissions permission to set what a new administrator can do.');
         }
 
         [$payload, $upload] = $this->prepareProfilePhoto($payload, null, 'administrators/profile');
@@ -99,7 +92,7 @@ class AdminUsersService
 
         if ($permissionChanges) {
             if ($actor && ! AdminPermissions::allows($actor, 'permission_update')) {
-                abort(403, 'You need the Update Permissions permission to change what an administrator can do.');
+                throw new NotPermitted('You need the Update Permissions permission to change what an administrator can do.');
             }
             if ($isSelf) {
                 throw ValidationException::withMessages([
@@ -136,7 +129,7 @@ class AdminUsersService
             $this->cleanUpPhoto($before->profile_photo);
         }
 
-        if ($statusChange && $model->account_status !== 'Active') {
+        if ($statusChange && $model->account_status !== AccountStatus::Active->value) {
             $model->tokens()->delete();
         }
 
@@ -234,15 +227,15 @@ class AdminUsersService
             ]);
         }
 
-        if ($admin->account_status !== 'Inactive') {
-            $this->assertKeepsAnAccountManager($admin, AdminPermissions::effective($admin), 'Inactive');
+        if ($admin->account_status !== AccountStatus::Inactive->value) {
+            $this->assertKeepsAnAccountManager($admin, AdminPermissions::effective($admin), AccountStatus::Inactive->value);
 
             $old = $admin->account_status;
-            $admin->forceFill(['account_status' => 'Inactive'])->save();
+            $admin->forceFill(['account_status' => AccountStatus::Inactive->value])->save();
             $admin->tokens()->delete();
 
             $this->auditLogRepository->recordAdminAction('users', $admin->id, 'Deactivate', ['account_status' => $old], [
-                'account_status' => 'Inactive',
+                'account_status' => AccountStatus::Inactive->value,
                 'name' => trim("{$admin->first_name} {$admin->last_name}") ?: $admin->email,
             ]);
         }
@@ -252,7 +245,7 @@ class AdminUsersService
 
     private function assertNotPrimaryAdmin(User $admin): void
     {
-        abort_if($admin->isPrimaryAdmin(), 403,
+        throw_if($admin->isPrimaryAdmin(), NotPermitted::class,
             'The primary administrator is protected. Its full access is fixed, and this account cannot be edited, suspended, or deactivated here.');
     }
 
@@ -263,12 +256,12 @@ class AdminUsersService
     {
         $canManage = fn (array $p) => ($p['admin_update'] ?? false) && ($p['permission_update'] ?? false);
 
-        if ($targetStatus === 'Active' && $canManage($targetPermissions)) {
+        if ($targetStatus === AccountStatus::Active->value && $canManage($targetPermissions)) {
             return;
         }
 
         $others = $this->adminUsersRepository->allAdministrators()
-            ->filter(fn (User $admin) => $admin->id !== $target->id && $admin->account_status === 'Active')
+            ->filter(fn (User $admin) => $admin->id !== $target->id && $admin->account_status === AccountStatus::Active->value)
             ->contains(fn (User $admin) => $canManage(AdminPermissions::effective($admin)));
 
         if (! $others) {
@@ -278,21 +271,9 @@ class AdminUsersService
         }
     }
 
-    // public function restoreAdminUsers(string $uuid)
-    // {
-    //     $model = $this->adminUsersRepository->restore($uuid);
-    //     return new AdminUsersResource($model);
-    // }
-
     public function getAdminUsers(string $uuid)
     {
         $model = $this->adminUsersRepository->findByUuid($uuid);
-        return new AdminUsersResource($model);
-    }
-
-    public function getAdminUsersByField(string $field, $value)
-    {
-        $model = $this->adminUsersRepository->findByField($field, $value);
         return new AdminUsersResource($model);
     }
 }

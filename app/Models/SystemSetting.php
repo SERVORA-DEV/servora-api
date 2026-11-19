@@ -2,7 +2,7 @@
 
 namespace App\Models;
 
-use App\Support\ListingPolicy;
+use App\Support\Platform\ListingPolicy;
 use Illuminate\Database\Eloquent\Model;
 
 class SystemSetting extends Model
@@ -16,7 +16,7 @@ class SystemSetting extends Model
         // Subscription Policy — see PlanSwitchService.
         'plan_changes_enabled',
         'plan_change_grace_days',
-        // Marketplace Policy — see App\Support\ListingPolicy.
+        // Marketplace Policy — see App\Support\Platform\ListingPolicy.
         'listing_policy',
     ];
 

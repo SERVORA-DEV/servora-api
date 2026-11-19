@@ -6,7 +6,7 @@ use App\Models\Package;
 use App\Models\Service;
 use App\Models\SpaBusiness;
 use App\Rules\NoEmoji;
-use App\Support\AccountScope;
+use App\Support\Access\AccountScope;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -42,7 +42,7 @@ class PackageRequest extends FormRequest
             'services.*.home_price' => 'nullable|numeric|min:0|max:1000000|decimal:0,2',
             'is_active' => 'sometimes|boolean',
 
-            // What is in it (App\Support\PackagePlan): services — not menu
+            // What is in it (App\Support\Catalog\PackagePlan): services — not menu
             // lengths — each with the minutes it runs in this package, how
             // many, and the add-ons that come with it. duration_minutes above
             // is no longer taken from the form: it is the total of these.

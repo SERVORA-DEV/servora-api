@@ -2,6 +2,10 @@
 
 namespace App\Service\Business;
 
+use App\Enums\AppointmentServiceStatus;
+use App\Enums\AppointmentStatus;
+use App\Enums\AssignmentStatus;
+use App\Exceptions\ActionRefused;
 use App\Http\Resources\AppointmentResource;
 use App\Models\Appointment;
 use App\Models\AppointmentServiceItem;
@@ -15,17 +19,18 @@ use App\Repository\Business\AppointmentRepository;
 use App\Repository\Business\AppointmentServiceRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Service\Client\BookingPolicy;
-use App\Support\BookingBoard;
-use App\Support\FrontDeskPolicy;
-use App\Support\History;
-use App\Support\ServiceAddon;
-use App\Support\ServiceExtension;
+use App\Support\Visits\BookingBoard;
+use App\Support\Visits\FrontDeskPolicy;
+use App\Support\Activity\History;
+use App\Support\Catalog\ServiceAddon;
+use App\Support\Visits\ServiceExtension;
+use App\Support\Visits\StaleVisit;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
 // Extending a service that is in progress: the client asks for longer, so the
 // line moves to a longer length of the same service and is charged that
-// length's price (App\Support\ServiceExtension holds the rules). The therapist
+// length's price (App\Support\Visits\ServiceExtension holds the rules). The therapist
 // and the room stay; the visit's total, the therapist's commission, the
 // "should end" time and the front desk's "time is up" notice all follow from
 // the line's length and price, so nothing else has to be told. A service that
@@ -88,7 +93,7 @@ class ServiceExtensionService
                 $this->timeSteps($service, $currentMinutes, $policy, $already, $lengths)),
         );
 
-        $running = $service->therapistAssignments->where('assignment_status', 'In Progress');
+        $running = $service->therapistAssignments->where('assignment_status', AssignmentStatus::InProgress->value);
         $staff = $running->filter(fn ($a) => $a->staff)->mapWithKeys(fn ($a) => [$a->staff_id => trim("{$a->staff->first_name} {$a->staff->last_name}")])->all();
         $rooms = $running->filter(fn ($a) => $a->facility)->mapWithKeys(fn ($a) => [$a->facility_id => $a->facility->name])->all();
         $bookings = $options && $startedAt ? $this->othersWaiting($appointment) : [];
@@ -160,7 +165,7 @@ class ServiceExtensionService
         return DB::transaction(function () use ($service, $payload, $user, $by) {
             $appointment = Appointment::whereKey($service->appointment_id)->lockForUpdate()->firstOrFail();
 
-            if ($stale = AppointmentService::staleRefusal($appointment)) {
+            if ($stale = StaleVisit::refusal($appointment)) {
                 return $stale;
             }
 
@@ -235,7 +240,7 @@ class ServiceExtensionService
             $service->save();
             // A longer length mustn't keep the visit going past closing time.
             if ($late = app(AppointmentAvailabilityService::class)->finishesPastClosing($appointment)) {
-                abort(422, $late);
+                throw new ActionRefused($late);
             }
             if ($user) {
                 $gate->record($appointment, $overrides, $user);
@@ -253,7 +258,7 @@ class ServiceExtensionService
         if ($user) {
             return app(PolicyGate::class)->check($user, $problems);
         }
-        abort_if((bool) $problems, 422, collect($problems)->pluck('message')->filter()->first() ?? 'Extending this service needs the Front Officer.');
+        throw_if((bool) $problems, ActionRefused::class, collect($problems)->pluck('message')->filter()->first() ?? 'Extending this service needs the Front Officer.');
 
         return [];
     }
@@ -300,7 +305,7 @@ class ServiceExtensionService
 
         // More time mustn't keep the visit going past closing time.
         if ($late = app(AppointmentAvailabilityService::class)->finishesPastClosing($appointment)) {
-            abort(422, $late);
+            throw new ActionRefused($late);
         }
         if ($user) {
             $gate->record($appointment, $overrides, $user);
@@ -351,7 +356,7 @@ class ServiceExtensionService
 
     private function startedAt(AppointmentServiceItem $service): ?Carbon
     {
-        $first = $service->therapistAssignments->where('assignment_status', 'In Progress')->whereNotNull('started_at')->min('started_at');
+        $first = $service->therapistAssignments->where('assignment_status', AssignmentStatus::InProgress->value)->whereNotNull('started_at')->min('started_at');
 
         return $first ? Carbon::parse($first) : null;
     }
@@ -387,14 +392,14 @@ class ServiceExtensionService
         return Appointment::where('spa_branch_id', $appointment->spa_branch_id)
             ->whereDate('appointment_date', now()->toDateString())
             ->whereKeyNot($appointment->id)
-            ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_NO_SHOW, Appointment::STATUS_COMPLETED])
+            ->whereNotIn('status', [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value, AppointmentStatus::Completed->value])
             ->with(['client:id,first_name,last_name', 'services.therapistAssignments'])
             ->get()
             ->map(function (Appointment $a) use ($remembers) {
-                $waiting = $a->services->where('status', 'Pending')
-                    ->flatMap(fn ($s) => $s->therapistAssignments->where('assignment_status', 'Assigned'));
+                $waiting = $a->services->where('status', AppointmentServiceStatus::Pending->value)
+                    ->flatMap(fn ($s) => $s->therapistAssignments->where('assignment_status', AssignmentStatus::Assigned->value));
                 $staff = $waiting->pluck('staff_id')->filter()->unique()->values()->all();
-                $anyoneAssigned = $a->services->flatMap(fn ($s) => $s->therapistAssignments->whereIn('assignment_status', ['Assigned', 'In Progress', 'Completed']))->isNotEmpty();
+                $anyoneAssigned = $a->services->flatMap(fn ($s) => $s->therapistAssignments->whereIn('assignment_status', [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value, AssignmentStatus::Completed->value]))->isNotEmpty();
                 if (! $staff && ! $anyoneAssigned && $remembers && $a->requested_staff_id) {
                     $staff = [(int) $a->requested_staff_id];
                 }

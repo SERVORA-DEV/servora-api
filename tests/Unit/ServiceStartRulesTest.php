@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\ServiceStartRules;
+use App\Support\Visits\ServiceStartRules;
 use PHPUnit\Framework\TestCase;
 
 // Starting a second service while another of the same visit is in progress.
@@ -129,7 +129,7 @@ class ServiceStartRulesTest extends TestCase
         $this->assertStringContainsString('in another facility', (string) $problem);
     }
 
-    // ── Service kinds (App\Support\ServiceKind) ──────────────────────────────
+    // ── Service kinds (App\Support\Catalog\ServiceKind) ──────────────────────────────
 
     public function test_one_therapist_may_do_two_procedure_based_services_together_in_the_same_place(): void
     {

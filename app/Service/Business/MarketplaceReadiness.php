@@ -2,12 +2,17 @@
 
 namespace App\Service\Business;
 
+use App\Enums\OperatingStatus;
+use App\Enums\PlanChangeStatus;
+use App\Enums\StaffStatus;
+use App\Enums\SubscriptionStatus;
+use App\Enums\VerificationStatus;
 use App\Models\SpaBranch;
 use App\Models\SystemSetting;
 use App\Repository\Business\SpaBranchRepository;
 use App\Service\Client\BookingPolicy;
 use App\Support\AppCache;
-use App\Support\ListingPolicy;
+use App\Support\Platform\ListingPolicy;
 use Illuminate\Database\Eloquent\Builder;
 
 // Whether a branch can actually take a booking from the client app, so the
@@ -36,13 +41,13 @@ class MarketplaceReadiness
     {
         $grace = SystemSetting::current()->subscription_grace_period_days;
         $query->whereHas('business.subscriptions', function ($s) use ($grace) {
-            $s->where('status', 'Active')->whereHas('plan', fn ($p) => $p->where('mobile_app_access', true))
+            $s->where('status', SubscriptionStatus::Active->value)->whereHas('plan', fn ($p) => $p->where('mobile_app_access', true))
                 ->whereRaw('subscriptions.id = (select max(s2.id) from subscriptions s2 where s2.spa_business_id = subscriptions.spa_business_id and s2.deleted_at is null)')
-                ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now())->orWhere(fn ($q) => $q->where('is_trial', false)->where('expires_at', '>', now()->subDays($grace))->where(fn ($q) => $q->whereNull('plan_change_status')->orWhere('plan_change_status', '!=', 'declined'))));
+                ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now())->orWhere(fn ($q) => $q->where('is_trial', false)->where('expires_at', '>', now()->subDays($grace))->where(fn ($q) => $q->whereNull('plan_change_status')->orWhere('plan_change_status', '!=', PlanChangeStatus::Declined->value))));
         });
         $query
-            ->whereHas('business', fn ($q) => $q->where('verification_status', 'Verified'))
-            ->whereHas('business.owner.ownerIdentityVerification', fn ($q) => $q->where('status', 'Verified'))
+            ->whereHas('business', fn ($q) => $q->where('verification_status', VerificationStatus::Verified->value))
+            ->whereHas('business.owner.ownerIdentityVerification', fn ($q) => $q->where('status', VerificationStatus::Verified->value))
             ->where(fn ($q) => $q
                 ->whereHas('branchServices', fn ($s) => SpaBranchRepository::publicServices($s))
                 ->orWhereHas('branchPackages', fn ($p) => SpaBranchRepository::publicPackages($p)))
@@ -141,12 +146,12 @@ class MarketplaceReadiness
     {
         $branch->loadMissing('business');
 
-        return self::isOn($branch) && $branch->business?->verification_status === 'Verified';
+        return self::isOn($branch) && $branch->business?->verification_status === VerificationStatus::Verified->value;
     }
 
     private static function isOn(SpaBranch $branch): bool
     {
-        return $branch->verification_status === 'Verified' && $branch->operating_status === 'Active';
+        return $branch->verification_status === VerificationStatus::Verified->value && $branch->operating_status === OperatingStatus::Active->value;
     }
 
     // `items` is everything that has to be done to be listed (the Required
@@ -164,11 +169,11 @@ class MarketplaceReadiness
         $items = [
             ['key' => 'plan_listing', 'label' => 'Plan includes client app listing', 'done' => AppCache::planAllows($branch->spa_business_id, 'mobile_app_access')],
             ['key' => 'branch_verified', 'label' => 'Branch verified and active',
-                'done' => $branch->verification_status === 'Verified' && $branch->operating_status === 'Active'],
+                'done' => $branch->verification_status === VerificationStatus::Verified->value && $branch->operating_status === OperatingStatus::Active->value],
             ['key' => 'business_verified', 'label' => 'Business verified',
-                'done' => $branch->business?->verification_status === 'Verified'],
+                'done' => $branch->business?->verification_status === VerificationStatus::Verified->value],
             ['key' => 'owner_verified', 'label' => 'Owner identity verified',
-                'done' => $branch->business?->owner_id && AppCache::identityStatus($branch->business->owner_id) === 'Verified'],
+                'done' => $branch->business?->owner_id && AppCache::identityStatus($branch->business->owner_id) === VerificationStatus::Verified->value],
             ['key' => 'location', 'label' => 'Map location set',
                 'done' => $branch->latitude !== null && $branch->longitude !== null],
             ['key' => 'services', 'label' => 'At least one service or package available', 'done' => $hasOffer],
@@ -210,7 +215,7 @@ class MarketplaceReadiness
     {
         return $query
             ->where('role', 'therapist')
-            ->where('status', 'active')
+            ->where('status', StaffStatus::Active->value)
             ->whereHas('schedules', fn ($s) => $s->where('is_day_off', false)
                 ->whereNotNull('start_time')->whereNotNull('end_time'));
     }

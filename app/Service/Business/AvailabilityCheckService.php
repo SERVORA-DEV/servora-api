@@ -2,14 +2,15 @@
 
 namespace App\Service\Business;
 
+use App\Enums\StaffStatus;
 use App\Models\BranchService;
 use App\Models\Facility;
 use App\Models\ServiceVariant;
 use App\Models\Staff;
 use App\Models\User;
 use App\Repository\SpaBusinessRepository;
-use App\Support\RotationTurn;
-use App\Support\ServiceKind;
+use App\Support\Visits\RotationTurn;
+use App\Support\Catalog\ServiceKind;
 use Carbon\Carbon;
 
 // "Who and what can do this service at this time?" — the front desk's Check Availability.
@@ -70,7 +71,7 @@ class AvailabilityCheckService
     {
         $therapists = Staff::where('spa_branch_id', $branchId)
             ->where('role', 'therapist')
-            ->where('status', 'active')
+            ->where('status', StaffStatus::Active->value)
             ->orderBy('first_name')
             ->get();
         if ($therapists->isEmpty()) {

@@ -2,10 +2,11 @@
 
 namespace App\Http\Resources;
 
+use App\Enums\VerificationStatus;
 use App\Repository\SpaBusinessRepository;
 use App\Repository\SubscriptionRepository;
-use App\Support\OwnerVerificationStatus;
-use App\Support\AdminPermissions;
+use App\Support\Platform\OwnerVerificationStatus;
+use App\Support\Access\AdminPermissions;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -60,18 +61,18 @@ class UserResource extends JsonResource
         // source of truth for name/branch on these roles.
         //
         // A staff login works at the branches the owner gave it, each at a
-        // level (App\Support\AccountScope); the first is where the screens
+        // level (App\Support\Access\AccountScope); the first is where the screens
         // start, and the web switches between them.
         $scope = in_array($this->role, ['manager', 'front_officer'], true)
-            ? \App\Support\AccountScope::allBranches($this->resource)
+            ? \App\Support\Access\AccountScope::allBranches($this->resource)
             : collect();
         if ($scope->isNotEmpty()) {
-            $levels = \App\Support\AccountScope::levels($this->resource);
+            $levels = \App\Support\Access\AccountScope::levels($this->resource);
             $data['staff_name'] = $this->resource->displayName();
             $data['branches'] = $scope->map(fn ($b) => [
                 'uuid' => $b->uuid,
                 'name' => $b->branch_name,
-                'title' => \App\Support\BranchIdentity::title($b->branch_name, $b->code),
+                'title' => \App\Support\Branches\BranchIdentity::title($b->branch_name, $b->code),
                 'area' => filled($b->code) ? trim((string) $b->code) : null,
                 'level' => $levels[$b->id] ?? 'operation',
                 // The owner's main branch (Branches page): tagged MAIN in the top bar.
@@ -81,7 +82,7 @@ class UserResource extends JsonResource
                     'legal_name' => $b->business->legal_name,
                     'registration_number' => $b->business->registration_number,
                     'business_website' => $b->business->website_url,
-                    'business_logo_url' => \App\Services\ImageUploadService::url($b->business->business_logo),
+                    'business_logo_url' => \App\Service\Uploads\ImageUploadService::url($b->business->business_logo),
                     'business_email' => $b->business->business_email,
                     'branch_name' => $b->branch_name,
                     'branch_address' => $b->formatted_address,
@@ -100,7 +101,7 @@ class UserResource extends JsonResource
                 'legal_name' => $business->legal_name,
                 'registration_number' => $business->registration_number,
                 'business_website' => $business->website_url,
-                'business_logo_url' => \App\Services\ImageUploadService::url($business->business_logo),
+                'business_logo_url' => \App\Service\Uploads\ImageUploadService::url($business->business_logo),
                 'business_email' => $business->business_email,
                 'branch_name' => $branch->branch_name,
                 'branch_address' => $branch->formatted_address,
@@ -122,8 +123,8 @@ class UserResource extends JsonResource
             $business = app(SpaBusinessRepository::class)->findForUser($this->resource);
             $owner = $this->role === 'business_owner' ? $this->resource : $business?->owner;
 
-            $identityStatus = $owner?->ownerIdentityVerification?->status ?? 'Unregistered';
-            $businessStatus = $business?->verification_status ?? 'Unregistered';
+            $identityStatus = $owner?->ownerIdentityVerification?->status ?? VerificationStatus::Unregistered->value;
+            $businessStatus = $business?->verification_status ?? VerificationStatus::Unregistered->value;
 
             $data['owner_identity_status'] = $identityStatus;
             $data['business_verification_status'] = $businessStatus;

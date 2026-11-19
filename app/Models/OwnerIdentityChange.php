@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\ChangeRequestStatus;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 
@@ -12,7 +13,7 @@ class OwnerIdentityChange extends Model
 {
     use HasUuids;
 
-    public const OPEN = ['Draft', 'Pending'];
+    public const OPEN = [ChangeRequestStatus::Draft->value, ChangeRequestStatus::Pending->value];
 
     protected $fillable = [
         'uuid', 'user_id',

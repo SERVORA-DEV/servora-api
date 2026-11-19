@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Support\RefundCharge;
+use App\Support\Billing\RefundCharge;
 use PHPUnit\Framework\TestCase;
 
 // Who a refund comes out of: the business, the staff who did the visit, or both.

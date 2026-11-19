@@ -11,12 +11,11 @@ use App\Models\SpaBusiness;
 use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
 use App\Models\User;
-use App\Service\CheckoutService;
-use App\Service\PlanAccessService;
-use App\Service\PlanSwitchService;
+use App\Service\Subscription\CheckoutService;
+use App\Service\Subscription\PlanAccessService;
+use App\Service\Subscription\PlanSwitchService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
-use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\TestCase;
 
 class SubscriptionEntitlementsTest extends TestCase

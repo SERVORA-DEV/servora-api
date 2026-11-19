@@ -11,12 +11,9 @@ use Illuminate\Http\Request;
 
 class ClientProfileController extends Controller
 {
-    private ClientProfileService $clientProfileService;
-
-    public function __construct(ClientProfileService $clientProfileService)
-    {
-        $this->clientProfileService = $clientProfileService;
-    }
+    public function __construct(
+        private ClientProfileService $clientProfileService,
+    ) {}
 
     public function update(ClientProfileRequest $request)
     {

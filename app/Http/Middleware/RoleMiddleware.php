@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Exceptions\NotPermitted;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -16,14 +17,14 @@ class RoleMiddleware
         $user = $request->user();
 
         if (!$user || !in_array($user->role, $roles, true)) {
-            abort(403, 'Unauthorized.');
+            throw new NotPermitted('Unauthorized.');
         }
 
         // A route a manager reaches but the front desk doesn't is Management
         // work: a staff login only sees the branches it has Management at
-        // there (App\Support\AccountScope). An inner group can only narrow it.
+        // there (App\Support\Access\AccountScope). An inner group can only narrow it.
         if (in_array('manager', $roles, true) && ! in_array('front_officer', $roles, true)) {
-            $request->attributes->set(\App\Support\AccountScope::LEVEL_ATTRIBUTE, \App\Models\AccountBranch::MANAGEMENT);
+            $request->attributes->set(\App\Support\Access\AccountScope::LEVEL_ATTRIBUTE, \App\Models\AccountBranch::MANAGEMENT);
         }
 
         return $next($request);
