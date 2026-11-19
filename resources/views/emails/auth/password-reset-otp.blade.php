@@ -1,18 +1,17 @@
 @component('mail::message')
-# Password Reset Request
+# Reset your password
 
-We received a request to reset the password for your {{ config('app.name') }} account.
+We received a request to reset the password for your SERVORA account. Enter this code to continue.
 
-Use the code below to continue. This code expires in {{ $expiresInMinutes }} minutes.
-
-@component('mail::panel')
-<div style="text-align: center; font-size: 28px; letter-spacing: 8px; font-weight: bold;">
+@component('mail::code')
 {{ $otp }}
-</div>
 @endcomponent
 
-If you did not request a password reset, you can safely ignore this email.
+The code expires in {{ $expiresInMinutes }} minutes. Don't share it with anyone. SERVORA will never ask you for it.
 
-Thanks,<br>
-{{ config('app.name') }}
+The SERVORA team
+
+@slot('subcopy')
+If you didn't ask to reset your password, you can ignore this email. Your password stays the same.
+@endslot
 @endcomponent

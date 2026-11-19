@@ -1,16 +1,17 @@
 @component('mail::message')
-# Verify Your Email
+# Confirm your email
 
-Thanks for signing up for {{ config('app.name') }}! Use the code below to verify your email address. This code expires in {{ $expiresInMinutes }} minutes.
+Enter this code in the SERVORA app to finish creating your account.
 
-@component('mail::panel')
-<div style="text-align: center; font-size: 28px; letter-spacing: 8px; font-weight: bold;">
+@component('mail::code')
 {{ $otp }}
-</div>
 @endcomponent
 
-If you did not create this account, you can safely ignore this email.
+The code expires in {{ $expiresInMinutes }} minutes. Don't share it with anyone. SERVORA will never ask you for it.
 
-Thanks,<br>
-{{ config('app.name') }}
+The SERVORA team
+
+@slot('subcopy')
+If you didn't sign up for SERVORA, you can ignore this email.
+@endslot
 @endcomponent

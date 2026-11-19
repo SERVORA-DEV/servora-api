@@ -120,4 +120,24 @@ return [
         'name' => env('MAIL_FROM_NAME', env('APP_NAME', 'Laravel')),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Markdown Mail Settings
+    |--------------------------------------------------------------------------
+    |
+    | Every SERVORA email is a markdown mail built on the components in
+    | resources/views/vendor/mail (the SERVORA wordmark header, the footer,
+    | the one-time code panel) and styled by the theme there: servora.css,
+    | the web app's forest, gold and cream.
+    |
+    */
+
+    'markdown' => [
+        'theme' => 'servora',
+
+        'paths' => [
+            resource_path('views/vendor/mail'),
+        ],
+    ],
+
 ];

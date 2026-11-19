@@ -18,7 +18,7 @@ class TwoFactorLoginOtpMail extends Mailable
 
     public function build()
     {
-        return $this->subject('Your Sign-In Code')
+        return $this->subject('Your SERVORA sign-in code')
             ->markdown('emails.auth.two-factor-login-otp');
     }
 }

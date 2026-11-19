@@ -19,11 +19,13 @@ class ContactEmailVerificationMail extends Mailable
         public string $what,
         public string $email,
         public string $url,
+        // How long the link works (ContactEmail::LINK_DAYS).
+        public int $days = 2,
     ) {}
 
     public function build()
     {
-        return $this->subject('Confirm the email for ' . $this->name)
+        return $this->subject('Confirm the contact email for ' . $this->name)
             ->markdown('emails.contact-email-verify');
     }
 }

@@ -1,16 +1,17 @@
 @component('mail::message')
-# Your Sign-In Code
+# Your sign-in code
 
-Someone is signing in to your {{ config('app.name') }} administrator account. Use the code below to finish signing in. This code expires in {{ $expiresInMinutes }} minutes.
+Enter this code to finish signing in to your SERVORA administrator account.
 
-@component('mail::panel')
-<div style="text-align: center; font-size: 28px; letter-spacing: 8px; font-weight: bold;">
+@component('mail::code')
 {{ $otp }}
-</div>
 @endcomponent
 
-If this wasn't you, change your password immediately — someone else may have it.
+The code expires in {{ $expiresInMinutes }} minutes. Don't share it with anyone. SERVORA will never ask you for it.
 
-Thanks,<br>
-{{ config('app.name') }}
+The SERVORA team
+
+@slot('subcopy')
+If you didn't just try to sign in, change your password now. Someone else may know it.
+@endslot
 @endcomponent

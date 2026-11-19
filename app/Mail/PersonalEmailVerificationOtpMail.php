@@ -20,7 +20,7 @@ class PersonalEmailVerificationOtpMail extends Mailable
 
     public function build()
     {
-        return $this->subject('Verify Your Personal Recovery Email')
+        return $this->subject('Confirm your recovery email')
             ->markdown('emails.auth.personal-email-otp');
     }
 }

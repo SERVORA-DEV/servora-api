@@ -21,7 +21,7 @@ class TwoFactorSetupOtpMail extends Mailable
 
     public function build()
     {
-        return $this->subject('Turn On Two-Factor Authentication')
+        return $this->subject('Confirm two-factor sign-in')
             ->markdown('emails.auth.two-factor-setup-otp');
     }
 }

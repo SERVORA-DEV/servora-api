@@ -20,7 +20,7 @@ class PasswordResetOtpMail extends Mailable
 
     public function build()
     {
-        return $this->subject('Your Password Reset Code')
+        return $this->subject('Your SERVORA password reset code')
             ->markdown('emails.auth.password-reset-otp');
     }
 }

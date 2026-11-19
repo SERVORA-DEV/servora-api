@@ -1,16 +1,17 @@
 @component('mail::message')
-# Turn On Two-Factor Authentication
+# Turn on two-factor sign-in
 
-Use the code below to turn on two-factor authentication for your {{ config('app.name') }} administrator account. From then on, a code is sent to this address each time you sign in. This code expires in {{ $expiresInMinutes }} minutes.
+Enter this code to turn on two-factor sign-in for your SERVORA administrator account. After that, we'll email you a code each time you sign in.
 
-@component('mail::panel')
-<div style="text-align: center; font-size: 28px; letter-spacing: 8px; font-weight: bold;">
+@component('mail::code')
 {{ $otp }}
-</div>
 @endcomponent
 
-If you didn't ask for this, you can ignore this email — nothing changes without the code.
+The code expires in {{ $expiresInMinutes }} minutes. Don't share it with anyone. SERVORA will never ask you for it.
 
-Thanks,<br>
-{{ config('app.name') }}
+The SERVORA team
+
+@slot('subcopy')
+If you didn't ask for this, you can ignore this email. Nothing changes without the code.
+@endslot
 @endcomponent

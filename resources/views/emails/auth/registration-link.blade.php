@@ -1,14 +1,17 @@
 @component('mail::message')
 # Confirm your email
 
-Thanks for signing up for {{ config('app.name') }}! Press the button to confirm your email. Your account is created when you do.
+You're almost done. Confirm this email address and your SERVORA business account will be created.
 
 @component('mail::button', ['url' => $url])
-Confirm my email
+Confirm email
 @endcomponent
 
-The button works for {{ $hours }} hours. If you did not sign up, ignore this email and no account will be created.
+The link expires in {{ $hours }} hours.
 
-Thanks,<br>
-{{ config('app.name') }}
+The SERVORA team
+
+@slot('subcopy')
+If you didn't sign up for SERVORA, ignore this email and no account will be created.
+@endslot
 @endcomponent

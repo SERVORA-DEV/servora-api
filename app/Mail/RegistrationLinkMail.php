@@ -21,7 +21,7 @@ class RegistrationLinkMail extends Mailable
 
     public function build()
     {
-        return $this->subject('Confirm your email to create your account')
+        return $this->subject('Confirm your email to create your SERVORA account')
             ->markdown('emails.auth.registration-link');
     }
 }

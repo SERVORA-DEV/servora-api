@@ -124,6 +124,7 @@ class ContactEmail
                 $isBusiness ? 'your business' : 'this branch',
                 $email,
                 $url,
+                self::LINK_DAYS,
             ));
 
             return true;

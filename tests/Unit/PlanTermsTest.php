@@ -33,7 +33,12 @@ class PlanTermsTest extends TestCase
         $plan->report_access = false;
         $this->assertSame([], PlanTerms::exportFormats($plan));
         $plan->report_access = true;
+        // A plan with no export setting saved exports every format.
         $plan->export_mode = null;
-        $this->assertSame(['pdf', 'excel'], PlanTerms::exportFormats($plan));
+        $this->assertSame(['pdf', 'excel', 'csv'], PlanTerms::exportFormats($plan));
+        $plan->export_mode = 'full';
+        $this->assertSame(['pdf', 'excel', 'csv'], PlanTerms::exportFormats($plan));
+        $plan->export_mode = 'none';
+        $this->assertSame([], PlanTerms::exportFormats($plan));
     }
 }

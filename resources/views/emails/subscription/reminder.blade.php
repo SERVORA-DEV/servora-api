@@ -7,12 +7,13 @@
 {{ $actionLabel }}
 @endcomponent
 
-@if ($alwaysSent)
-You are getting this because your access depends on it.
-@else
-You can switch off the reminders sent before the due date in Business Settings, under Notifications. If a payment becomes overdue you are always told.
-@endif
+The SERVORA team
 
-Thanks,<br>
-{{ config('app.name') }}
+@slot('subcopy')
+@if ($alwaysSent)
+You're receiving this because it affects your access to SERVORA.
+@else
+You can turn off reminders before your due date in Business Settings → Notifications. Overdue notices are always sent.
+@endif
+@endslot
 @endcomponent

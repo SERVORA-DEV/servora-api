@@ -20,7 +20,7 @@ class RegistrationOtpMail extends Mailable
 
     public function build()
     {
-        return $this->subject('Verify Your Email')
+        return $this->subject('Your SERVORA sign-up code')
             ->markdown('emails.auth.registration-otp');
     }
 }

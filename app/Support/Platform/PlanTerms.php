@@ -80,10 +80,11 @@ final class PlanTerms
             return [];
         }
 
+        // A plan with no export setting saved (made before there was one) exports every format.
         return match ($plan->export_mode) {
             'csv' => ['csv'],
-            'full' => ['pdf', 'excel', 'csv'],
-            default => $plan->export_mode === null ? ['pdf', 'excel'] : [],
+            'full', null => ['pdf', 'excel', 'csv'],
+            default => [],
         };
     }
 }

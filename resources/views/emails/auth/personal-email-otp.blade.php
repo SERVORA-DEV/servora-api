@@ -1,16 +1,17 @@
 @component('mail::message')
-# Verify Your Personal Email
+# Confirm your recovery email
 
-You added this address as the personal verification email on your {{ config('app.name') }} administrator account. Use the code below to confirm it's yours. This code expires in {{ $expiresInMinutes }} minutes.
+This address was added as the personal recovery email for a SERVORA administrator account. Enter this code to confirm it's yours.
 
-@component('mail::panel')
-<div style="text-align: center; font-size: 28px; letter-spacing: 8px; font-weight: bold;">
+@component('mail::code')
 {{ $otp }}
-</div>
 @endcomponent
 
-If you did not request this, you can safely ignore this email — your account's personal email will not be changed.
+The code expires in {{ $expiresInMinutes }} minutes. Don't share it with anyone. SERVORA will never ask you for it.
 
-Thanks,<br>
-{{ config('app.name') }}
+The SERVORA team
+
+@slot('subcopy')
+If you didn't add this address, you can ignore this email. The account won't use it.
+@endslot
 @endcomponent
