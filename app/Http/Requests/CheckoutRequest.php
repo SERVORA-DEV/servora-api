@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use App\Rules\ValidEmail;
 use App\Rules\PersonName;
+use App\Rules\PhMobile;
 use Illuminate\Foundation\Http\FormRequest;
 
 // POST business/checkout — see CheckoutService::start. The billing address is
@@ -42,13 +43,14 @@ class CheckoutRequest extends FormRequest
             'billing_address' => 'required|array',
             'billing_address.full_name' => ['required', 'string', 'max:150', new PersonName()],
             'billing_address.email' => ['required', 'email', 'max:150', new ValidEmail()],
-            'billing_address.phone' => ['nullable', 'string', 'max:30', 'regex:/^[0-9+\-\s()]{7,}$/'],
+            'billing_address.phone' => ['nullable', 'string', 'max:30', new PhMobile()],
             'billing_address.line1' => 'required|string|max:200',
             'billing_address.line2' => 'nullable|string|max:200',
             'billing_address.city' => 'required|string|max:100',
             'billing_address.province' => 'nullable|string|max:100',
             'billing_address.postal_code' => 'required|string|max:20',
-            'billing_address.country' => 'required|string|size:2',
+            // SERVORA serves spas in the Philippines only.
+            'billing_address.country' => 'required|in:PH',
             'billing_address.is_business_purchase' => 'sometimes|boolean',
             'billing_address.business_name' => 'required_if_accepted:billing_address.is_business_purchase|nullable|string|max:150',
             'billing_address.tin' => ['nullable', 'string', 'max:30', 'regex:/^[0-9\-\s]{9,20}$/'],
@@ -64,6 +66,7 @@ class CheckoutRequest extends FormRequest
             'billing_address.postal_code.required' => 'Enter the postal code.',
             'billing_address.business_name.required_if_accepted' => 'Enter the registered business name.',
             'billing_address.tin.regex' => 'Enter the TIN as digits, e.g. 123-456-789-000.',
+            'billing_address.country.in' => 'Billing is available for addresses in the Philippines only.',
         ];
     }
 }

@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "resources/views/vendor/mail/html/themes/servora.css"
+        ],
+        "createdAt": "2026-11-19T23:38:52.347Z",
+        "reason": "Claude: .button-red/.button-error use Laravel's standard email-button technique - same-colour borders on all four sides as padding (lines 270-271), not a one-sided accent"
+      }
+    ]
+  }
+}

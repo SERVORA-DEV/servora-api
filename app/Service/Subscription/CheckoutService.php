@@ -767,7 +767,8 @@ class CheckoutService
             'city' => trim($address['city']),
             'province' => $address['province'] ?? null,
             'postal_code' => trim($address['postal_code']),
-            'country' => strtoupper($address['country'] ?? 'PH'),
+            // The Philippines only (CheckoutRequest).
+            'country' => 'PH',
             'is_business_purchase' => $isBusiness,
             'business_name' => $isBusiness ? ($address['business_name'] ?? null) : null,
             'tin' => $isBusiness ? ($address['tin'] ?? null) : null,

@@ -4,6 +4,7 @@ namespace App\Http\Requests\Client;
 
 use App\Rules\ValidEmail;
 use App\Rules\PersonName;
+use App\Rules\PhMobile;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use App\Rules\NoEmoji;
@@ -35,6 +36,7 @@ class ClientProfileRequest extends FormRequest
                 'required',
                 'string',
                 'max:20',
+                new PhMobile(),
                 Rule::unique('users', 'phone_number')
                     ->ignore($userId)
                     ->whereNull('deleted_at'),

@@ -135,6 +135,48 @@ class ClientBookingTest extends TestCase
         return $appointment;
     }
 
+    // ── Philippine mobile numbers ────────────────────────────────────────
+
+    public function test_booking_takes_a_philippine_mobile_in_any_written_form(): void
+    {
+        $this->book($this->client(), ['client' => ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => '+63 917 123 4567', 'gender' => 'Female']]);
+        $this->assertSame(1, Appointment::count());
+    }
+
+    public function test_booking_refuses_a_number_that_is_not_a_philippine_mobile(): void
+    {
+        Sanctum::actingAs($this->client());
+        foreach (['+1 415 555 0134', '028123456', '0917123456'] as $number) {
+            $errors = $this->postJson('/api/client/appointments', [
+                'spa_branch_uuid' => $this->branch->uuid,
+                'appointment_date' => self::DATE,
+                'appointment_time' => '10:00',
+                'services' => [['service_variant_uuid' => $this->variant->uuid]],
+                'client' => ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => $number, 'gender' => 'Female'],
+            ])
+                ->assertStatus(422)
+                ->json('errors');
+            $this->assertSame(['client.phone_number' => ['Enter a Philippine mobile number: 09XX XXX XXXX.']], $errors, $number);
+        }
+        $this->assertSame(0, Appointment::count());
+    }
+
+    public function test_a_companion_number_is_optional_but_must_be_a_philippine_mobile(): void
+    {
+        Sanctum::actingAs($this->client());
+        $this->postJson('/api/client/appointments', [
+            'spa_branch_uuid' => $this->branch->uuid,
+            'appointment_date' => self::DATE,
+            'appointment_time' => '10:00',
+            'services' => [['service_variant_uuid' => $this->variant->uuid]],
+            'client' => ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => '09171234567', 'gender' => 'Female'],
+            'companions' => [['first_name' => 'Leo', 'last_name' => 'Reyes', 'phone_number' => '+44 7700 900123', 'gender' => 'Male']],
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['companions.0.phone_number'])
+            ->assertJsonMissingValidationErrors(['client.phone_number']);
+    }
+
     // ── Bookings ─────────────────────────────────────────────────────────
 
     public function test_my_bookings_lists_only_my_own(): void

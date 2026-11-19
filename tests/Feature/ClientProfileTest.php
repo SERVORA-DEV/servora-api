@@ -154,6 +154,22 @@ class ClientProfileTest extends TestCase
             ->assertJsonValidationErrors(['first_name', 'last_name', 'phone_number']);
     }
 
+    public function test_the_number_must_be_a_philippine_mobile(): void
+    {
+        Sanctum::actingAs($user = $this->client());
+
+        foreach (['+1 415 555 0134', '028123456', '12345678901'] as $number) {
+            $this->patchJson('/api/client/profile', ['first_name' => 'Ana', 'last_name' => 'Reyes', 'phone_number' => $number])
+                ->assertStatus(422)
+                ->assertJsonPath('errors.phone_number.0', 'Enter a Philippine mobile number: 09XX XXX XXXX.');
+        }
+        $this->assertNull($user->fresh()->phone_number);
+
+        // +63 and spaced forms are Philippine mobiles too.
+        $this->patchJson('/api/client/profile', ['first_name' => 'Ana', 'last_name' => 'Reyes', 'phone_number' => '+63 917 123 4567'])
+            ->assertOk();
+    }
+
     public function test_a_business_owner_is_refused(): void
     {
         Sanctum::actingAs(User::factory()->create(['role' => 'business_owner']));

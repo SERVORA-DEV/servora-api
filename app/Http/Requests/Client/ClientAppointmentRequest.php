@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Client;
 
 use App\Rules\PersonName;
+use App\Rules\PhMobile;
 use App\Models\Client;
 use App\Support\ClientProfile;
 use Illuminate\Foundation\Http\FormRequest;
@@ -54,7 +55,7 @@ class ClientAppointmentRequest extends FormRequest
             'client' => 'required|array',
             'client.first_name' => ['required', 'string', 'max:100', new NoEmoji(), new PersonName()],
             'client.last_name' => ['required', 'string', 'max:100', new NoEmoji(), new PersonName()],
-            'client.phone_number' => ['required', 'string', 'max:20', new NoEmoji()],
+            'client.phone_number' => ['required', 'string', 'max:20', new PhMobile(), new NoEmoji()],
             // Asked once: an account that already said has nothing to add.
             // Age is optional (App\Support\ClientProfile).
             'client.gender' => [
@@ -67,7 +68,7 @@ class ClientAppointmentRequest extends FormRequest
             'companions' => 'sometimes|array|max:3',
             'companions.*.first_name' => ['required', 'string', 'max:100', new NoEmoji(), new PersonName()],
             'companions.*.last_name' => ['required', 'string', 'max:100', new NoEmoji(), new PersonName()],
-            'companions.*.phone_number' => ['nullable', 'string', 'max:20', new NoEmoji()],
+            'companions.*.phone_number' => ['nullable', 'string', 'max:20', new PhMobile(), new NoEmoji()],
             'companions.*.gender' => [Client::hasProfile() ? 'required' : 'nullable', Rule::in(ClientProfile::GENDERS)],
             'companions.*.therapist_uuid' => 'nullable|uuid',
         ];

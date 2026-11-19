@@ -130,6 +130,38 @@ class CheckoutUpgradeTest extends TestCase
         return Billing::where('subscription_id', $this->subscription->id)->where('status', 'Paid')->count();
     }
 
+    private function billingAddress(array $changes): array
+    {
+        return ['billing_address' => array_merge([
+            'full_name' => 'Maria Santos', 'email' => 'maria@lotus.test', 'line1' => '12 Acacia St',
+            'city' => 'Davao City', 'postal_code' => '8000', 'country' => 'PH',
+        ], $changes)];
+    }
+
+    public function test_billing_is_for_addresses_in_the_philippines_only(): void
+    {
+        foreach (['US', 'SG', 'ph', ''] as $country) {
+            $this->startCheckout('upgrade', $this->pro, $this->billingAddress(['country' => $country]))
+                ->assertStatus(422)
+                ->assertJsonValidationErrors(['billing_address.country']);
+        }
+        $errors = $this->startCheckout('upgrade', $this->pro, $this->billingAddress(['country' => 'US']))->json('errors');
+        $this->assertSame(['Billing is available for addresses in the Philippines only.'], $errors['billing_address.country']);
+        $this->assertSame([], $this->sessionsOpened);
+    }
+
+    public function test_the_billing_mobile_is_optional_but_must_be_a_philippine_mobile(): void
+    {
+        $errors = $this->startCheckout('upgrade', $this->pro, $this->billingAddress(['phone' => '+1 (415) 555-0134']))
+            ->assertStatus(422)
+            ->json('errors');
+        $this->assertSame(['billing_address.phone' => ['Enter a Philippine mobile number: 09XX XXX XXXX.']], $errors);
+        $this->assertSame([], $this->sessionsOpened);
+
+        $this->startCheckout('upgrade', $this->pro, $this->billingAddress(['phone' => '0917 123 4567']))->assertOk();
+        $this->assertSame('PH', $this->sessionsOpened[0]['country']);
+    }
+
     public function test_an_upgrade_paid_through_checkout_applies_once_the_webhook_says_so(): void
     {
         $expires = $this->subscription->expires_at;
