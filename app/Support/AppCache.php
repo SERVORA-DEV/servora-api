@@ -214,7 +214,7 @@ final class AppCache
         }
         self::bump("biz:{$businessId}");
         self::bump('marketplace');
-        LivePulse::bump($businessId); // the owner's and managers' open screens
+        LivePulse::bump($businessId, 'setup'); // the owner's and managers' open screens
     }
 
     public static function businessVersion(int $businessId): int
