@@ -58,6 +58,35 @@ class ServiceCategoryTest extends TestCase
         $this->assertNull(Service::where('uuid', $uuid)->value('category'));
     }
 
+    // Exactly what the owner's Add window and edit panel send
+    // (servora-web useOwnerServices toApiPayload): the whole form each time.
+    private function webForm(?string $category, array $variants = [['service_location' => 'In Spa', 'duration_minutes' => 60, 'price' => 900]]): array
+    {
+        return [
+            'name' => 'Classic Facial', 'category' => $category, 'service_type' => 'time', 'facility_required' => false,
+            'home_service_available' => false, 'variants' => $variants, 'parts' => [],
+        ];
+    }
+
+    public function test_the_add_window_and_edit_panel_save_the_category(): void
+    {
+        $response = $this->postJson('/api/business/service', $this->webForm('Facial'))
+            ->assertSuccessful()
+            ->assertJsonPath('data.category', 'Facial');
+        $uuid = $response->json('data.uuid');
+        $variant = $response->json('data.variants.0.uuid');
+
+        $edit = fn (?string $category) => $this->patchJson("/api/business/service/{$uuid}",
+            $this->webForm($category, [['service_location' => 'In Spa', 'uuid' => $variant, 'duration_minutes' => 60, 'price' => 900]]));
+
+        $edit('Body Treatment')->assertSuccessful()->assertJsonPath('data.category', 'Body Treatment');
+        $this->assertSame('Body Treatment', Service::where('uuid', $uuid)->value('category'));
+
+        // "Choose a category" again: no category.
+        $edit(null)->assertSuccessful()->assertJsonPath('data.category', null);
+        $this->assertNull(Service::where('uuid', $uuid)->value('category'));
+    }
+
     public function test_a_category_not_on_the_list_is_refused(): void
     {
         $this->create(['category' => 'Pizza'])
