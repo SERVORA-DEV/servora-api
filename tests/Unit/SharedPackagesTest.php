@@ -61,6 +61,24 @@ class SharedPackagesTest extends TestCase
         $this->assertContains('Client B has no service in this package.', $this->editorErrors(2, [['service_uuid' => 'a', 'client_slots' => [1]]]));
     }
 
+    public function test_a_package_is_for_up_to_ten_clients(): void
+    {
+        $this->assertSame(10, Package::MAX_CLIENTS);
+        $this->assertSame('Client J', Package::slotName(10));
+        // Ten clients, the last of them on their own service.
+        $this->assertSame([], $this->editorErrors(10, [['service_uuid' => 'a'], ['service_uuid' => 'b', 'client_slots' => [10]]]));
+        $this->assertNotSame([], $this->editorErrors(11, [['service_uuid' => 'a']]));
+        $this->assertNotSame([], $this->editorErrors(10, [['service_uuid' => 'a', 'client_slots' => [11]]]));
+    }
+
+    public function test_the_app_books_up_to_nine_others_with_the_client(): void
+    {
+        $rule = (new \App\Http\Requests\Client\ClientAppointmentRequest())->setUserResolver(fn () => null)->rules()['companions'];
+        $people = fn (int $n) => ['companions' => array_fill(0, $n, ['first_name' => 'Ana'])];
+        $this->assertTrue(validator($people(9), ['companions' => $rule])->passes());
+        $this->assertFalse(validator($people(10), ['companions' => $rule])->passes());
+    }
+
     public function test_a_client_beyond_the_count_is_refused(): void
     {
         $this->assertContains("Client C isn't in this package — it is for 2 clients.", $this->editorErrors(2, [['service_uuid' => 'a', 'client_slots' => [1, 3]]]));

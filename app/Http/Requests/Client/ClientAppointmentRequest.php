@@ -65,7 +65,7 @@ class ClientAppointmentRequest extends FormRequest
             'client.age' => 'nullable|integer|min:0|max:' . ClientProfile::OLDEST,
             // A package for several clients (a Couples Massage): the others, each booked as their
             // own appointment at the same time (AppointmentService::bookCompanions).
-            'companions' => 'sometimes|array|max:3',
+            'companions' => 'sometimes|array|max:' . (\App\Models\Package::MAX_CLIENTS - 1),
             'companions.*.first_name' => ['required', 'string', 'max:100', new NoEmoji(), new PersonName()],
             'companions.*.last_name' => ['required', 'string', 'max:100', new NoEmoji(), new PersonName()],
             'companions.*.phone_number' => ['nullable', 'string', 'max:20', new PhMobile(), new NoEmoji()],

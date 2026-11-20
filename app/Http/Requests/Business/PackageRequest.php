@@ -62,9 +62,9 @@ class PackageRequest extends FormRequest
             // A package for several clients (a Couples Massage: 2), and which of them get each
             // service ([1] = Client A, [2] = Client B, [1, 2] = both; left out: every client).
             // Every client must get something (withValidator).
-            'client_count' => 'sometimes|integer|min:1|max:4',
+            'client_count' => 'sometimes|integer|min:1|max:' . Package::MAX_CLIENTS,
             'services.*.client_slots' => 'nullable|array',
-            'services.*.client_slots.*' => 'integer|min:1|max:4',
+            'services.*.client_slots.*' => 'integer|min:1|max:' . Package::MAX_CLIENTS,
             'services.*.addon_uuids.*' => 'uuid|distinct',
         ];
     }

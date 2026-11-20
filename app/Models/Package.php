@@ -61,6 +61,9 @@ class Package extends Model
         return $ready;
     }
 
+    /** The most clients one booking of a package can be for (a group of up to 10). Mirrored on the web (utils/sharedPackages MAX_CLIENTS). */
+    public const MAX_CLIENTS = 10;
+
     /** How many clients one booking of it is for (1 until shared packages exist). */
     public function clients(): int
     {
