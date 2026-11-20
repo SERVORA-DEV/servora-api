@@ -42,6 +42,10 @@ class ServiceRequest extends FormRequest
                     ->ignore($this->route('service'), 'uuid'),
             ],
             // The code (SVC-0001…) is given automatically, so none is taken here.
+            // The category is the owner's to choose (Massage, Facial…): optional here, unlike on a
+            // template (see ServiceTemplateRequest, where owners browse the catalog by it). A form
+            // request passes on only the fields it lists, so without this line it is never saved.
+            'category' => ['nullable', Rule::in(config('service_categories'))],
             // Time-based, procedure-based or facility-based (ServiceKind).
             'service_type' => ['sometimes', Rule::in(ServiceKind::ALL)],
             // A facility has to be chosen before the front desk may start it
