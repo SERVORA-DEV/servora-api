@@ -23,7 +23,10 @@ class AnnouncementResource extends JsonResource
             'status' => $this->status,
             'recipient_count' => $this->recipient_count,
             'read_count' => $this->read_count ?? null,
-            'sender' => $sender ? trim("{$sender->first_name} {$sender->last_name}") : null,
+            // The app-update notice is sent by the server itself (mobile:announce-release).
+            'sender' => $sender
+                ? trim("{$sender->first_name} {$sender->last_name}")
+                : (str_starts_with((string) $this->request_id, 'app-release-') ? 'Servora (automatic)' : null),
             'created_at' => optional($this->created_at)->toIso8601String(),
         ];
     }

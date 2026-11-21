@@ -103,6 +103,8 @@ class AnnouncementService
         $query = Announcement::query()
             ->with('sender:id,first_name,last_name')
             ->withCount(['notifications as read_count' => fn ($q) => $q->where('is_read', true)])
+            // The app-update notice's starting point (mobile:announce-release) sent nothing.
+            ->where('status', '!=', 'baseline')
             ->latest('id');
 
         if (! empty($filters['q'])) {

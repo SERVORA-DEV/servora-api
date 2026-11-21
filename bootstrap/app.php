@@ -76,6 +76,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('appointments:close-past-days')->everyTenMinutes()->withoutOverlapping();
         $schedule->command('billings:send-payment-reminders')->hourly();
         $schedule->command('programs:daily')->dailyAt('00:10')->withoutOverlapping();
+        // A higher MOBILE_LATEST_BUILD in .env: every client is told once (feed, pop-up, push).
+        $schedule->command('mobile:announce-release')->everyTenMinutes()->withoutOverlapping();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // A refused form says each problem once ("You already have a service with this name.

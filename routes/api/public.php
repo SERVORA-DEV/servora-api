@@ -25,7 +25,7 @@ Route::get('/business/{uuid}/public', [SpaBusinessController::class, 'publicShow
 Route::get('/servora-reviews', [ServoraReviewController::class, 'published'])->middleware('throttle:public-read');
 
 // The newest mobile app version and the oldest still accepted, so an installed app can offer
-// (or require) the update. Published with `php artisan mobile:release`.
+// (or require) the update. Set in .env (MOBILE_LATEST_VERSION, MOBILE_LATEST_BUILD, MOBILE_APK_URL).
 Route::get('/app/release', [MobileReleaseController::class, 'show'])->middleware('throttle:public-read');
 
 // The client app's spa pages and booking flow.

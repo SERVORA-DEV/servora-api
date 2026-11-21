@@ -98,6 +98,24 @@ class BranchDetailResourceTest extends TestCase
         return collect($this->services())->firstWhere('name', $name);
     }
 
+    public function test_the_branch_contact_is_sent_for_call_and_email_buttons(): void
+    {
+        $this->branch->forceFill(['phone_number' => ' 09171234567 ', 'email' => 'davao@lotusleaf.ph'])->saveQuietly();
+
+        $contact = app(SpaBranchService::class)->publicShow($this->branch->uuid)->getData(true)['data']['contact'];
+
+        $this->assertSame(['phone' => '09171234567', 'email' => 'davao@lotusleaf.ph'], $contact);
+    }
+
+    public function test_an_empty_contact_is_null_not_blank(): void
+    {
+        $this->branch->forceFill(['phone_number' => '', 'email' => null])->saveQuietly();
+
+        $contact = app(SpaBranchService::class)->publicShow($this->branch->uuid)->getData(true)['data']['contact'];
+
+        $this->assertSame(['phone' => null, 'email' => null], $contact);
+    }
+
     public function test_facility_required_is_for_the_spa_only_and_keeps_home_service(): void
     {
         // In the spa it needs a bed; at a client's home it needs none.

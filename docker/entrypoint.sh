@@ -25,4 +25,17 @@ php artisan event:cache
 # Seeding is deliberately absent — run it once by hand from Render Shell.
 php artisan migrate --force
 
+# The scheduler (bootstrap/app.php withSchedule): booking and payment
+# reminders, service-end alerts, closing past days, the app-update notice.
+# Without it none of those ever run. It runs beside Apache for as long as the
+# instance is up, as www-data so the cache files it writes stay writable by the
+# web server, and restarts itself if it ever exits. Reminders missed while a
+# free instance slept go out when it wakes (the reminder job looks 48 h ahead).
+(
+  while true; do
+    su -s /bin/sh www-data -c "php /var/www/html/artisan schedule:work --no-interaction" >&2 || true
+    sleep 5
+  done
+) &
+
 exec apache2-foreground

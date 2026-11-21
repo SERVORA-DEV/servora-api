@@ -11,13 +11,17 @@ use App\Models\SpaBusiness;
 //   - kind 'queue_call': the front desk called the client — the app opens the
 //     queue screen for that booking (reference_uuid is the appointment);
 //   - kind 'reward': points, vouchers, a membership — the app opens that spa's
-//     rewards (business_uuid).
+//     rewards (business_uuid);
+//   - kind 'app_update': a newer app is out — the app opens the download.
 // No extra column: the call is told by its title, and a rewards notice refers
 // to the business (ProgramRewardService::notifyClient). Older rewards notices
 // referred to the visit's appointment instead, so that is looked up too.
 class ClientNotificationLink
 {
     public const QUEUE_CALL_TITLE = 'The spa is ready for you';
+
+    // A newer app is out (mobile:announce-release): the app opens the download.
+    public const APP_UPDATE_TITLE = 'A new Servora app is ready';
 
     // Earlier wording of the same call, so notifications already sent still open the queue.
     private const OLD_QUEUE_CALL_TITLES = ['Your appointment is ready for you'];
@@ -28,6 +32,7 @@ class ClientNotificationLink
             $notification->type === 'Appointment'
                 && in_array($notification->title, [self::QUEUE_CALL_TITLE, ...self::OLD_QUEUE_CALL_TITLES], true) => 'queue_call',
             $notification->type === 'Reward' => 'reward',
+            $notification->type === 'System' && $notification->title === self::APP_UPDATE_TITLE => 'app_update',
             default => null,
         };
     }

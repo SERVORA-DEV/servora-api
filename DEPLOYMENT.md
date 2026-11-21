@@ -61,6 +61,23 @@ curl "https://<service>.onrender.com/api/spas/nearby?lat=14.6&lng=121.0&radius=1
 Then redeploy once and confirm the data survived — that is the check that
 matters, since this repo previously ran `migrate:fresh --seed` on every boot.
 
+## 5. Scheduled jobs (reminders)
+
+`docker/entrypoint.sh` starts `php artisan schedule:work` beside Apache. It
+runs everything in `bootstrap/app.php`'s `withSchedule`: booking and payment
+reminders, service-end alerts, closing past days, and the app-update notice.
+
+A free Render instance sleeps after about 15 minutes with no requests, and the
+scheduler sleeps with it. Keep it awake with a free uptime monitor that opens
+`https://<service>.onrender.com/up` every 5 to 10 minutes (UptimeRobot,
+cron-job.org). One always-on service fits the free tier's 750 hours a month.
+Reminders that came due while it slept still go out when it wakes, because the
+reminder job looks 48 hours ahead and skips only visits that have started.
+
+Check it is running: after a deploy, a booking made more than 24 hours ahead
+gets `reminder_sent_at` set (and a "Booking reminder" notification) once it is
+inside the spa's reminder window.
+
 ---
 
 ## Email (Gmail SMTP)

@@ -24,7 +24,8 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 // Backs the unauthenticated GET /spas/{uuid} branch-detail endpoint. Same
 // "only what's safe to show a stranger" rule as NearbySpaResource/
-// PublicSpaBusinessResource: no email/phone/verification internals. The
+// PublicSpaBusinessResource: no verification internals or owner details; the
+// branch's own contact line and email are sent (see 'contact'). The
 // caller (SpaBranchService::publicShow) is expected to pass in the already
 // Verified+Active $branch (with 'business' and 'schedules' eager-loaded)
 // plus the separately-queried $services/$packages/$therapists collections,
@@ -115,6 +116,13 @@ class BranchDetailResource extends JsonResource
                         'latitude' => $b->latitude,
                         'longitude' => $b->longitude,
                     ])->values(),
+            ],
+
+            // The branch's own phone and email, for "Call" and "Email" on its
+            // page; null when the owner left one empty.
+            'contact' => [
+                'phone' => filled($this->phone_number) ? trim((string) $this->phone_number) : null,
+                'email' => filled($this->email) ? trim((string) $this->email) : null,
             ],
 
             'hours' => BranchHoursCalculator::resolve($this->schedules, Carbon::now()),
