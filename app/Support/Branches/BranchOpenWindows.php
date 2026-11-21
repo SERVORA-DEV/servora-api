@@ -18,11 +18,13 @@ final class BranchOpenWindows
 {
     /**
      * @param  ?array{0: int, 1: int}  $fallback  [open, close] in minutes, used when the date has no hours entered; null = no limit then
+     * @param  ?BranchSchedule  $tomorrow  the next date's hours: a day open round the clock runs on into them
+     *                                     (a visit at 11:30 PM ends after midnight) when they start at midnight
      * @return array{unlimited: bool, closed: bool, windows: list<array{from: int, to: int, close: int}>}
      *         from/to: the start times that can be booked (to is exclusive, never past midnight);
      *         close: when the stretch really ends, which for tonight's hours is past midnight (1620 = 3 AM tomorrow).
      */
-    public static function for(?BranchSchedule $today, ?BranchSchedule $yesterday, ?array $fallback = null): array
+    public static function for(?BranchSchedule $today, ?BranchSchedule $yesterday, ?array $fallback = null, ?BranchSchedule $tomorrow = null): array
     {
         $windows = [];
         $unlimited = false;
@@ -38,6 +40,10 @@ final class BranchOpenWindows
 
             if ($open === null || $close === null) {
                 $unlimited = true;
+            } elseif ($close === $open) {
+                // Open round the clock: every start of the date, and a visit can run on past
+                // midnight for as long as the next date's hours carry on from midnight.
+                $own = ['from' => 0, 'to' => 1440, 'close' => 1440 + self::fromMidnight($tomorrow)];
             } else {
                 $end = $close <= $open ? $close + 1440 : $close;
                 $own = ['from' => $open, 'to' => min($end, 1440), 'close' => $end];
@@ -73,6 +79,28 @@ final class BranchOpenWindows
 
         // Equal times are open round the clock, not "until the same time tomorrow".
         return $close < $open ? $close : 0;
+    }
+
+    /**
+     * How long a date's hours run on from its midnight without a break: 1440 for a day open round
+     * the clock or 12:00 AM – 12:00 AM, the closing time for one opening at 12:00 AM, else 0
+     * (closed, no hours entered, or opening later in the morning).
+     */
+    public static function fromMidnight(?BranchSchedule $row): int
+    {
+        if (! $row || $row->is_closed || ! $row->opening_time || ! $row->closing_time) {
+            return 0;
+        }
+        $open = self::minutes($row->opening_time);
+        $close = self::minutes($row->closing_time);
+        if ($open === $close) {
+            return 1440;
+        }
+        if ($open !== 0) {
+            return 0;
+        }
+
+        return $close === 0 ? 1440 : $close;
     }
 
     /** "09:30" or "09:30:00" as minutes from midnight. */

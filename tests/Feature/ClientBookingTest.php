@@ -289,6 +289,29 @@ class ClientBookingTest extends TestCase
             ->assertStatus(422);
     }
 
+    // ── A branch open 24 hours ──────────────────────────────────────────
+
+    public function test_at_a_24_hour_branch_a_visit_can_run_past_midnight(): void
+    {
+        // Open round the clock every day (saved as 12:00 AM – 12:00 AM), and the
+        // therapist on a night shift that runs past midnight.
+        foreach (['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as $day) {
+            BranchSchedule::updateOrCreate(
+                ['spa_branch_id' => $this->branch->id, 'day_of_week' => $day],
+                ['opening_time' => '00:00:00', 'closing_time' => '00:00:00', 'is_closed' => false],
+            );
+        }
+        StaffSchedule::where('staff_id', $this->therapist->id)->delete();
+        foreach (['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as $day) {
+            StaffSchedule::create(['staff_id' => $this->therapist->id, 'day_of_week' => $day, 'start_time' => '20:00:00', 'end_time' => '02:00:00']);
+        }
+
+        // 11:30 PM for an hour: ends at 12:30 AM, inside the next day's hours.
+        $uuid = $this->book($this->client(), ['appointment_time' => '23:30']);
+
+        $this->assertSame('23:30', substr((string) Appointment::where('uuid', $uuid)->value('appointment_time'), 0, 5));
+    }
+
     // ── One client, one place at a time ─────────────────────────────────
 
     /** The spa allows several bookings per client a day: the time rule is what is tested. */

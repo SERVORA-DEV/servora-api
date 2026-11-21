@@ -143,15 +143,18 @@ class BookingBoardService
     {
         $dayName = Carbon::parse($date)->format('l');
         $before = Carbon::parse($date)->subDay()->format('l');
+        $after = Carbon::parse($date)->addDay()->format('l');
         $rows = BranchSchedule::where('spa_branch_id', $branchId)
-            ->whereIn('day_of_week', [$dayName, $before])
+            ->whereIn('day_of_week', [$dayName, $before, $after])
             ->get()
             ->keyBy('day_of_week');
 
+        // The next date too: a branch open round the clock runs on past midnight into it.
         $set = BranchOpenWindows::for(
             $rows->get($dayName),
             $rows->get($before),
             [BookingBoard::minutes(self::FALLBACK_OPEN), BookingBoard::minutes(self::FALLBACK_CLOSE)],
+            $rows->get($after),
         );
         if ($set['closed']) {
             return ['closed' => true, 'reason' => 'The branch is closed on this day.'];
@@ -166,9 +169,11 @@ class BookingBoardService
         $midnight = Carbon::parse($date)->startOfDay();
         $openAt = $midnight->copy()->addMinutes($open);
         $closeAt = $midnight->copy()->addMinutes($close);
+        // The last start this date offers: a closure covering every start closes the day.
+        $lastStartAt = $midnight->copy()->addMinutes($windows[array_key_last($windows)]['to']);
         $closures = [];
         foreach (BranchClosures::overlapping($branchId, $openAt, $closeAt) as $closure) {
-            if ($closure->starts_at->lte($openAt) && $closure->ends_at->gte($closeAt)) {
+            if ($closure->starts_at->lte($openAt) && $closure->ends_at->gte($lastStartAt)) {
                 return ['closed' => true, 'reason' => BranchClosures::refusal($closure)];
             }
             $closures[] = [

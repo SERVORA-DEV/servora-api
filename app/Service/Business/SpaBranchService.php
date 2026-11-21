@@ -541,10 +541,12 @@ class SpaBranchService
         $model = $this->spaBranchRepository->update($uuid, $payload);
 
         // A new email is confirmed by the button in the email Servora sends to it
-        // (unless it is the owner's own sign-up address).
+        // (unless it is the owner's own sign-up address). Whether that email went
+        // out is said in the answer, so a failed send isn't passed off as sent.
+        $emailConfirmation = null;
         if (array_key_exists('email', $payload)
             && ContactEmail::normalize($payload['email']) !== ContactEmail::normalize($wasEmail)) {
-            ContactEmail::afterSave($model, $wasEmail);
+            $emailConfirmation = ContactEmail::afterSave($model, $wasEmail);
             $model->refresh();
         }
 
@@ -558,7 +560,8 @@ class SpaBranchService
             );
         }
 
-        return new SpaBranchResource($model);
+        // 'sent' | 'failed' | 'verified' | 'none'; null when the email didn't change.
+        return (new SpaBranchResource($model))->additional(['email_confirmation' => $emailConfirmation]);
     }
 
     // POST business/branch/{uuid}/bring-back — switch a branch the plan put

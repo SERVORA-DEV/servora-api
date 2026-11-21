@@ -39,6 +39,11 @@ class BranchHours
         $open = self::minutes($row->opening_time);
         $close = self::minutes($row->closing_time);
 
+        // Equal times are open round the clock (12:00 AM – 12:00 AM included): no limit,
+        // so a night shift (10 PM – 6 AM) fits. Checked before "closing at 12:00 AM".
+        if ($close === $open) {
+            return null;
+        }
         if ($close === 0) {
             $close = 1440;
         } elseif ($close <= $open) {

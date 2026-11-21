@@ -25,8 +25,10 @@ use Illuminate\Support\Facades\DB;
 //    used when a bill is made with it. A cancelled or no-show booking never
 //    kept it, and a refunded bill returns it (ProgramRewardService::onBillReopened).
 // "A day has ended" is App\Support\Visits\StaleVisit (a little after midnight, so a
-// service running past it is not cut off). Nothing from the business day in
-// progress is touched, and a failure on one visit never stops the rest.
+// service running past it is not cut off), and a late visit is kept until its own
+// expected end has passed too (stillGoing: branches open past midnight or 24 hours).
+// Nothing from the business day in progress is touched, and a failure on one visit
+// never stops the rest.
 //
 // Called from two places, like ServiceEndNotifier, so it does not depend on
 // either alone:
@@ -116,7 +118,7 @@ class DayCloser
         $released = 0;
         $vouchers = $this->returnUnbilledVouchers($branchIds);
 
-        // Staff still timed in when their branch opened again: out at that opening, in for the new day (AttendanceRollover).
+        // Staff nobody timed out: out at closing, or at their shift's end at a 24-hour branch (AttendanceRollover).
         try {
             app(AttendanceRollover::class)->forBranches($branchIds ?? \App\Models\SpaBranch::pluck('id')->all());
         } catch (\Throwable $e) {
@@ -124,8 +126,9 @@ class DayCloser
         }
 
         $this->staleQuery(Appointment::query(), $branchIds, [AppointmentStatus::Scheduled->value])
-            ->with('branch.business.settings', 'client', 'queue')
+            ->with('branch.business.settings', 'client', 'queue', 'services.serviceVariant')
             ->orderBy('id')->limit(self::BATCH)->get()
+            ->reject(fn (Appointment $appointment) => $this->stillGoing($appointment))
             ->each(function (Appointment $appointment) use (&$noShows) {
                 try {
                     $this->booking->recordNoShow($appointment, automatic: true);
@@ -136,8 +139,9 @@ class DayCloser
             });
 
         $this->staleQuery(Appointment::query(), $branchIds, [AppointmentStatus::InService->value], unfinished: true)
-            ->with('queue')
+            ->with('queue', 'services.serviceVariant')
             ->orderBy('id')->limit(self::BATCH)->get()
+            ->reject(fn (Appointment $appointment) => $this->stillGoing($appointment))
             ->each(function (Appointment $appointment) use (&$finished) {
                 try {
                     $this->execution->closeStaleVisit($appointment);
@@ -148,8 +152,9 @@ class DayCloser
             });
 
         $this->staleQuery(Appointment::query(), $branchIds, [AppointmentStatus::CheckedIn->value], unfinished: true)
-            ->with('queue')
+            ->with('queue', 'services.serviceVariant')
             ->orderBy('id')->limit(self::BATCH)->get()
+            ->reject(fn (Appointment $appointment) => $this->stillGoing($appointment))
             ->each(function (Appointment $appointment) use (&$released, &$finished) {
                 try {
                     // Something was done before it stalled: closed like a visit left in
@@ -176,6 +181,20 @@ class DayCloser
             });
 
         return ['no_shows' => $noShows, 'finished' => $finished, 'released' => $released, 'vouchers' => $vouchers];
+    }
+
+    /**
+     * A late visit at a branch open past midnight or round the clock (booked 11:30 PM, a
+     * three-hour package): still running, or still expected, a while after the 2 AM line.
+     * It is only closed once its own expected end plus the same grace has passed, so a
+     * service in progress at 2 AM is never cut off and a client still waiting isn't sent away.
+     */
+    private function stillGoing(Appointment $appointment): bool
+    {
+        $start = \Carbon\Carbon::parse($appointment->appointment_date->toDateString().' '.substr((string) $appointment->appointment_time, 0, 5));
+        $minutes = max(app(AppointmentAvailabilityService::class)->estimatedDurationMinutes($appointment), 30);
+
+        return $start->addMinutes($minutes)->addHours(StaleVisit::GRACE_HOURS)->gt(now());
     }
 
     /**

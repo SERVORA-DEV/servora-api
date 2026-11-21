@@ -119,10 +119,12 @@ class BranchDetailResource extends JsonResource
             ],
 
             // The branch's own phone and email, for "Call" and "Email" on its
-            // page; null when the owner left one empty.
+            // page; null when the owner left one empty. The email only once it is
+            // confirmed (its Confirm button pressed: ContactEmail), so clients never
+            // write to an address nobody has proved is the spa's.
             'contact' => [
                 'phone' => filled($this->phone_number) ? trim((string) $this->phone_number) : null,
-                'email' => filled($this->email) ? trim((string) $this->email) : null,
+                'email' => filled($this->email) && \App\Support\Branches\ContactEmail::isVerified($this->resource) ? trim((string) $this->email) : null,
             ],
 
             'hours' => BranchHoursCalculator::resolve($this->schedules, Carbon::now()),

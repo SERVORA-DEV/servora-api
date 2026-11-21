@@ -98,9 +98,18 @@ class BranchDetailResourceTest extends TestCase
         return collect($this->services())->firstWhere('name', $name);
     }
 
+    public function test_an_unconfirmed_branch_email_is_not_shown_to_clients(): void
+    {
+        $this->branch->forceFill(['phone_number' => '09171234567', 'email' => 'davao@lotusleaf.ph', 'email_verified_at' => null])->saveQuietly();
+
+        $contact = app(SpaBranchService::class)->publicShow($this->branch->uuid)->getData(true)['data']['contact'];
+
+        $this->assertSame(['phone' => '09171234567', 'email' => null], $contact);
+    }
+
     public function test_the_branch_contact_is_sent_for_call_and_email_buttons(): void
     {
-        $this->branch->forceFill(['phone_number' => ' 09171234567 ', 'email' => 'davao@lotusleaf.ph'])->saveQuietly();
+        $this->branch->forceFill(['phone_number' => ' 09171234567 ', 'email' => 'davao@lotusleaf.ph', 'email_verified_at' => now()])->saveQuietly();
 
         $contact = app(SpaBranchService::class)->publicShow($this->branch->uuid)->getData(true)['data']['contact'];
 

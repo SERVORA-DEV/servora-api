@@ -6,9 +6,9 @@ use App\Support\Branches\BusinessDay;
 use Carbon\Carbon;
 use Tests\TestCase;
 
-// A branch's working day runs from its opening to its next opening. Staff are not
-// timed out at closing or at the end of their shift: the day only ends when the
-// branch opens again (AttendanceRollover carries them over at that moment).
+// A branch's working day runs from its opening to its next opening: the roster shows
+// that day until the branch opens again. (Timing out whoever was left timed in is
+// AttendanceRollover's: at closing, or at the end of their shift at a 24-hour branch.)
 //
 // No database: the week is handed in.
 //   php artisan test --filter=BusinessDayTest
