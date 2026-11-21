@@ -138,6 +138,31 @@ class HomeServiceBookingTest extends TestCase
         $this->bookHome(self::NEAR, ['home_latitude' => null, 'home_longitude' => null])->assertStatus(422);
     }
 
+    public function test_a_home_visit_needs_a_landmark(): void
+    {
+        $this->offerHomeService();
+
+        $response = $this->bookHome(self::NEAR, ['home_address_notes' => '']);
+
+        $response->assertStatus(422);
+        $this->assertSame(['Please add a landmark so the therapist can find your place.'], $response->json('errors.home_address_notes'));
+        $this->assertSame(0, Appointment::count());
+    }
+
+    public function test_a_saved_home_needs_its_landmark_and_keeps_it(): void
+    {
+        $client = User::factory()->create(['role' => 'client']);
+        Sanctum::actingAs($client);
+        $home = ['home_address' => '12 Acacia St, Davao City', 'home_latitude' => self::NEAR[0], 'home_longitude' => self::NEAR[1]];
+
+        $this->putJson('/api/client/home-address', $home)->assertStatus(422)->assertJsonValidationErrors('home_address_notes');
+
+        $this->putJson('/api/client/home-address', $home + ['home_address_notes' => ' Blue gate beside the chapel '])
+            ->assertOk()
+            ->assertJsonPath('data.home_address_notes', 'Blue gate beside the chapel');
+        $this->assertSame('Blue gate beside the chapel', $client->fresh()->home_address_notes);
+    }
+
     public function test_a_service_not_marked_for_home_service_is_refused(): void
     {
         $this->offerHomeService();

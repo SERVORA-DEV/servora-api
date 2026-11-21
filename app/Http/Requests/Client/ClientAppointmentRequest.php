@@ -50,7 +50,8 @@ class ClientAppointmentRequest extends FormRequest
             // Home service (HomeServiceRules checks the place and the area).
             'service_location' => 'sometimes|in:In Spa,Home Service',
             'home_address' => ['nullable', 'required_if:service_location,Home Service', 'string', 'max:500', new NoEmoji()],
-            'home_address_notes' => 'nullable|string|max:500',
+            // The landmark: how the therapist finds the house. Required for a home visit.
+            'home_address_notes' => ['nullable', 'required_if:service_location,Home Service', 'string', 'max:500', new NoEmoji()],
             'home_latitude' => 'nullable|required_if:service_location,Home Service|numeric|between:-90,90',
             'home_longitude' => 'nullable|required_if:service_location,Home Service|numeric|between:-180,180',
             'client' => 'required|array',
@@ -101,6 +102,7 @@ class ClientAppointmentRequest extends FormRequest
             'appointment_date.after_or_equal' => 'Please choose a future date.',
             'client.gender.required' => 'Please choose your gender.',
             'home_address.required_if' => 'Please enter the address for the home service.',
+            'home_address_notes.required_if' => 'Please add a landmark so the therapist can find your place.',
             'home_latitude.required_if' => 'Please pin the address on the map.',
             'home_longitude.required_if' => 'Please pin the address on the map.',
         ];
