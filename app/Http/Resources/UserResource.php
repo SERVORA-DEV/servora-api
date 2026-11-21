@@ -47,6 +47,10 @@ class UserResource extends JsonResource
         // stay $hidden on User — never exposed even indirectly.
         $data['two_factor_enabled'] = $this->two_factor_confirmed_at !== null;
         $data['personal_email_verified'] = $this->personal_email_verified_at !== null;
+        // Where two-factor codes go (User::codeEmail): the verified personal
+        // email, else the sign-in email — so there is always one.
+        $data['code_email'] = $this->resource->codeEmail();
+        $data['code_email_is_sign_in'] = $this->resource->codesGoToSignInEmail();
 
         // What this administrator may do, so the admin panel can hide the
         // areas and buttons the API would refuse (EnsurePermission).

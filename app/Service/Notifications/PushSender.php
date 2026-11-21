@@ -28,6 +28,8 @@ class PushSender
     // What happened to each device on the last send, for `php artisan push:test`.
     private array $results = [];
 
+    private bool $always = false;
+
     public function results(): array
     {
         return $this->results;
@@ -39,9 +41,14 @@ class PushSender
         dispatch(fn () => app(self::class)->send($id))->afterResponse();
     }
 
-    public function send(int $notificationId): void
+    /**
+     * @param  bool  $always  a test: browsers show it even while a Servora tab is in front
+     *                        (normally that tab's own pop-up shows it instead)
+     */
+    public function send(int $notificationId, bool $always = false): void
     {
         $this->results = [];
+        $this->always = $always;
         try {
             // Gone if it was written inside a transaction that rolled back.
             $notification = Notification::with('user:id,role')->find($notificationId);
@@ -123,6 +130,8 @@ class PushSender
             'body' => $notification->message,
             'type' => $notification->type,
             'url' => $this->webPath($notification),
+            // A test (send(always: true)): shown even with a Servora tab in front (public/sw.js).
+            'always' => $this->always,
         ];
 
         foreach ($subscriptions as $sub) {

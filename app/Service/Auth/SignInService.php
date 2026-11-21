@@ -182,7 +182,8 @@ class SignInService
             'requires_two_factor' => true,
             'challenge_token' => $challengeToken,
             'email' => $user->email,
-            'personal_email_available' => $user->personal_email_verified_at !== null,
+            // Where the code goes (User::codeEmail): always somewhere for an account with an email.
+            'personal_email_available' => $user->codeEmail() !== null,
         ], 200);
     }
 
@@ -341,9 +342,10 @@ class SignInService
 
         $user = $this->userRepository->findByField('id', $challenge['user_id']);
 
-        if (! $user->personal_email || $user->personal_email_verified_at === null) {
+        $to = $user->codeEmail();
+        if ($to === null) {
             return response()->json([
-                'message' => 'No verified personal email on file for this account.',
+                'message' => 'No email on file for this account.',
             ], 422);
         }
 
@@ -355,7 +357,7 @@ class SignInService
                 return response()->json([
                     'message' => "Please wait {$waitSeconds} seconds before requesting another code.",
                     'retry_after' => $waitSeconds,
-                    'masked_email' => $this->maskEmail($user->personal_email),
+                    'masked_email' => $this->maskEmail($to),
                 ], 429);
             }
         }
@@ -367,7 +369,7 @@ class SignInService
         Cache::store('durable')->put($key, $challenge, now()->addMinutes(self::TWO_FACTOR_CHALLENGE_EXPIRY_MINUTES));
 
         $sent = $this->deliver(
-            $user->personal_email,
+            $to,
             new TwoFactorLoginOtpMail($otp, self::OTP_EXPIRY_MINUTES),
             'two-factor login OTP',
         );
@@ -379,8 +381,8 @@ class SignInService
         }
 
         return response()->json([
-            'message' => 'A code has been sent to your personal email.',
-            'masked_email' => $this->maskEmail($user->personal_email),
+            'message' => 'A code has been sent to your email.',
+            'masked_email' => $this->maskEmail($to),
             'retry_after' => self::TWO_FACTOR_EMAIL_RESEND_SECONDS,
         ], 200);
     }

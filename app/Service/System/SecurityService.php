@@ -56,22 +56,24 @@ class SecurityService
 
     // ── Two-factor authentication ───────────────────────────────
     //
-    // The second factor is a 6-digit code emailed to the account's VERIFIED
-    // personal email each time it signs in (SignInService's challenge:
-    // requestTwoFactorEmailCode / verifyTwoFactorLogin). There is no
-    // authenticator app and there are no recovery codes — so the personal
-    // email can't be changed while two-factor is on (submitPersonalEmail),
-    // or the account could be left with nowhere to send a code.
+    // The second factor is a 6-digit code emailed each time the account signs
+    // in (SignInService's challenge: requestTwoFactorEmailCode /
+    // verifyTwoFactorLogin), to User::codeEmail(): the verified personal email,
+    // else the sign-in email, so every account has somewhere to send it. There
+    // is no authenticator app and there are no recovery codes — so the personal
+    // email can't be changed while two-factor is on (submitPersonalEmail), or
+    // the account could be left with nowhere to send a code.
 
     public function twoFactorStatus(User $user)
     {
-        $emailReady = $user->personal_email && $user->personal_email_verified_at !== null;
+        $to = $user->codeEmail();
 
         return response()->json([
             'enabled' => $user->two_factor_confirmed_at !== null,
             'method' => 'email',
-            'personal_email_available' => $emailReady,
-            'sent_to' => $emailReady ? $user->personal_email : null,
+            'personal_email_available' => $to !== null,
+            'sent_to' => $to,
+            'sent_to_sign_in_email' => $user->codesGoToSignInEmail(),
         ], 200);
     }
 
@@ -88,9 +90,10 @@ class SecurityService
             ], 422);
         }
 
-        if (! $user->personal_email || $user->personal_email_verified_at === null) {
+        $to = $user->codeEmail();
+        if ($to === null) {
             return response()->json([
-                'message' => 'Add and verify a personal email first — your sign-in codes are sent there.',
+                'message' => 'Add an email to your account first — your sign-in codes are sent there.',
             ], 422);
         }
 
@@ -102,7 +105,7 @@ class SecurityService
                 return response()->json([
                     'message' => "Please wait {$wait} seconds before asking for another code.",
                     'retry_after' => $wait,
-                    'sent_to' => $user->personal_email,
+                    'sent_to' => $to,
                 ], 429);
             }
         }
@@ -111,7 +114,7 @@ class SecurityService
         $this->securityRepository->refreshPersonalEmailOtp($user, Hash::make($otp));
 
         $sent = $this->deliver(
-            $user->personal_email,
+            $to,
             new TwoFactorSetupOtpMail($otp, self::OTP_EXPIRY_MINUTES),
             'two-factor setup OTP',
         );
@@ -123,8 +126,8 @@ class SecurityService
         }
 
         return response()->json([
-            'message' => 'A code has been sent to your personal email.',
-            'sent_to' => $user->personal_email,
+            'message' => 'A code has been sent to your email.',
+            'sent_to' => $to,
             'retry_after' => self::TWO_FACTOR_SETUP_RESEND_SECONDS,
         ], 200);
     }
@@ -133,7 +136,7 @@ class SecurityService
     {
         if (
             $user->two_factor_confirmed_at !== null
-            || $user->personal_email_verified_at === null
+            || $user->codeEmail() === null
             || ! $user->personal_email_otp_hash
         ) {
             return response()->json([

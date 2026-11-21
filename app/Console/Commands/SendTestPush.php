@@ -48,7 +48,7 @@ class SendTestPush extends Command
         ]);
 
         $this->line("Sending to {$user->email} ({$user->role}, #{$user->id})…");
-        $sender->send($notification->id);
+        $sender->send($notification->id, always: true);
         foreach ($sender->results() as $line) {
             $this->line('  '.$line);
         }

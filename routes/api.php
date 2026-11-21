@@ -34,6 +34,8 @@ Route::middleware('auth:sanctum')->group(function () use ($routes) {
         Route::get('config', 'config');
         Route::post('subscriptions', 'store');
         Route::delete('subscriptions', 'destroy');
+        // A test pop-up to one's own devices, with what each push service answered.
+        Route::post('test', 'test')->middleware('throttle:push-test');
     });
 
     // The client mobile app.

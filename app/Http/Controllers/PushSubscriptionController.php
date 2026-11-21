@@ -4,8 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\PushSubscriptionRequest;
 use App\Http\Requests\PushUnsubscribeRequest;
+use App\Models\Notification;
 use App\Models\PushSubscription;
 use App\Service\Notifications\PushSender;
+use Illuminate\Http\Request;
 
 // The signed-in user's browsers and phones that get a pop-up for each new
 // notification while Servora isn't open (App\Service\Notifications\PushSender). Any role:
@@ -45,6 +47,35 @@ class PushSubscriptionController extends Controller
         );
 
         return response()->json(['message' => 'Pop-ups are on for this device.']);
+    }
+
+    // "Send a test pop-up": a test notification to the caller's own browsers
+    // and phones, sent now, with what each push service answered — so a
+    // missing server key or a dropped device shows on the screen instead of
+    // nothing happening. It lands in their notification list like any other.
+    public function test(Request $request, PushSender $sender)
+    {
+        $user = $request->user();
+        $devices = PushSubscription::where('user_id', $user->id)->count();
+
+        $notification = Notification::create([
+            'user_id' => $user->id,
+            'title' => 'Test pop-up',
+            'message' => 'If you can see this with Servora closed or in the background, pop-ups work on this device.',
+            'type' => 'System',
+        ]);
+        $sender->send($notification->id, always: true);
+        $results = $sender->results();
+
+        $ok = collect($results)->contains(fn ($line) => str_contains($line, 'accepted'));
+
+        return response()->json(['data' => [
+            'sent' => $ok,
+            'devices' => $devices,
+            'web_ready' => $sender->webReady(),
+            'fcm_ready' => $sender->fcmReady(),
+            'results' => $results,
+        ]]);
     }
 
     // Turned off, or signing out: only ever the caller's own row.

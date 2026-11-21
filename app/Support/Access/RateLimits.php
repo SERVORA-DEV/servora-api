@@ -71,6 +71,8 @@ final class RateLimits
         self::perMinute('personal-email-code', 10);
         // A client deleting their account (password-confirmed).
         self::perMinute('account-delete', 5);
+        // "Send a test pop-up" to one's own browsers and phones.
+        self::perMinute('push-test', 3);
 
         // ── The owner's account ───────────────────────────────────────────────
         // A verified owner changing their name or email: the details, the emailed code, confirming it.

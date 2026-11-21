@@ -57,6 +57,27 @@ class User extends Authenticatable implements MustVerifyEmail
         return $role === 'client' ? self::AUDIENCE_MOBILE : self::AUDIENCE_WEB;
     }
 
+    /**
+     * Where two-factor codes go: the personal verification email once it is
+     * verified, else the email the account signs in with. Every account has
+     * the second, so two-factor never waits on adding another address. Null
+     * only for an account with no email at all (signs in by username alone).
+     */
+    public function codeEmail(): ?string
+    {
+        if (filled($this->personal_email) && $this->personal_email_verified_at !== null) {
+            return $this->personal_email;
+        }
+
+        return filled($this->email) ? $this->email : null;
+    }
+
+    /** Codes go to the sign-in email (no separate verified address set). */
+    public function codesGoToSignInEmail(): bool
+    {
+        return $this->codeEmail() !== null && ! (filled($this->personal_email) && $this->personal_email_verified_at !== null);
+    }
+
     // Set only by the database migration/seeder, never from account forms.
     public function isPrimaryAdmin(): bool
     {
