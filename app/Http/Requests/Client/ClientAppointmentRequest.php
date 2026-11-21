@@ -38,7 +38,8 @@ class ClientAppointmentRequest extends FormRequest
             'package_uuid' => 'nullable|uuid|required_without:services',
             'requested_therapist_uuid' => 'nullable|uuid',
             'remarks' => 'nullable|string|max:500',
-            // The client saw they already have a booking at this time and books anyway.
+            // Sent by older apps, from when a booking at the same time was only a warning.
+            // Ignored now: a time that runs over another booking of theirs is refused.
             'acknowledge_overlap' => 'sometimes|boolean',
             // One voucher from their wallet for this booking (held until it is billed).
             'voucher_uuid' => 'nullable|uuid',

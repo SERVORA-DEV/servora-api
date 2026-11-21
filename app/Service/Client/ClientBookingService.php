@@ -168,19 +168,20 @@ class ClientBookingService
                 ->countBy()->filter(fn ($n) => $n >= $dayLimit)->keys()->values()
             : collect();
 
-        // Their upcoming bookings (day, start time, branch), so the app can warn
-        // when the one being made lands on the same day and time.
-        $upcoming = $client
-            ? Appointment::with('branch')->where('client_id', $client->id)
-                ->whereDate('appointment_date', '>=', BookingPolicy::now()->toDateString())
-                ->whereNotIn('status', [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value])
-                ->get()
-                ->map(fn ($a) => [
-                    'date' => Carbon::parse($a->appointment_date)->toDateString(),
-                    'time' => substr((string) $a->appointment_time, 0, 5),
-                    'branch' => $a->branch?->branch_name,
-                ])->values()
-            : collect();
+        // Their upcoming bookings at any spa (day, start, length, branch), so the
+        // app can keep them from picking a time that runs over one; the server
+        // refuses it too (AppointmentBookingService::clientClash).
+        $upcoming = Appointment::with(['branch', 'services.serviceVariant'])
+            ->whereHas('client', fn ($q) => $q->where('user_id', $user->id))
+            ->whereDate('appointment_date', '>=', BookingPolicy::now()->toDateString())
+            ->whereNotIn('status', [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value, AppointmentStatus::Completed->value])
+            ->get()
+            ->map(fn ($a) => [
+                'date' => Carbon::parse($a->appointment_date)->toDateString(),
+                'time' => substr((string) $a->appointment_time, 0, 5),
+                'minutes' => max(1, $this->availabilityService->estimatedDurationMinutes($a)),
+                'branch' => $a->branch?->branch_name,
+            ])->values();
 
         return ['data' => BookingPolicy::missedBookingsNotice($policy, $missed, (string) $branch->business?->business_name) + ['booked_dates' => $busy, 'bookings' => $upcoming]];
     }
@@ -217,6 +218,12 @@ class ClientBookingService
             // must actually be working and free at the new time, or the
             // move is refused rather than silently leaving them unassigned.
             $duration = max($this->availabilityService->estimatedDurationMinutes($appointment), 30);
+
+            // Not onto the time of another booking of theirs (at any spa).
+            if ($clash = $this->booking->clientClash($user, $payload['appointment_date'], $payload['appointment_time'], $duration, $appointment->id)) {
+                return response()->json(['message' => $this->booking->clientClashMessage($clash), 'code' => 'overlaps_existing_booking'], 422);
+            }
+
             $staffIds = $appointment->services
                 ->flatMap(fn ($s) => $s->therapistAssignments->where('assignment_status', AssignmentStatus::Assigned->value)->pluck('staff_id'))
                 ->unique();

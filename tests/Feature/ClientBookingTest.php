@@ -289,6 +289,90 @@ class ClientBookingTest extends TestCase
             ->assertStatus(422);
     }
 
+    // ── One client, one place at a time ─────────────────────────────────
+
+    /** The spa allows several bookings per client a day: the time rule is what is tested. */
+    private function allowSeveralADay(): void
+    {
+        $this->branch->forceFill(['booking_overrides' => ['max_bookings_per_client_per_day' => 5]])->saveQuietly();
+    }
+
+    public function test_the_same_time_twice_is_refused_even_when_the_app_says_book_anyway(): void
+    {
+        $this->allowSeveralADay();
+        $user = $this->client();
+        $this->book($user);
+
+        $response = $this->postJson('/api/client/appointments', [
+            'spa_branch_uuid' => $this->branch->uuid,
+            'appointment_date' => self::DATE,
+            'appointment_time' => '10:00',
+            'services' => [['service_variant_uuid' => $this->variant->uuid]],
+            'client' => ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => '09171234567', 'gender' => 'Female'],
+            'acknowledge_overlap' => true,
+        ]);
+
+        $response->assertStatus(422)->assertJsonPath('code', 'overlaps_existing_booking');
+        $this->assertStringContainsString('10:00 AM to 11:00 AM', $response->json('message'));
+        $this->assertSame(1, Appointment::whereHas('client', fn ($q) => $q->where('user_id', $user->id))->count());
+    }
+
+    public function test_a_time_inside_another_booking_is_refused_and_one_after_it_is_fine(): void
+    {
+        $this->allowSeveralADay();
+        $user = $this->client();
+        $this->book($user);
+
+        $client = ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => '09171234567', 'gender' => 'Female'];
+        $at = fn (string $time) => $this->postJson('/api/client/appointments', [
+            'spa_branch_uuid' => $this->branch->uuid,
+            'appointment_date' => self::DATE,
+            'appointment_time' => $time,
+            'services' => [['service_variant_uuid' => $this->variant->uuid]],
+            'client' => $client,
+        ]);
+
+        $at('10:30')->assertStatus(422)->assertJsonPath('code', 'overlaps_existing_booking');
+        $at('09:30')->assertStatus(422)->assertJsonPath('code', 'overlaps_existing_booking');
+        $at('11:00')->assertSuccessful();
+    }
+
+    public function test_a_cancelled_booking_does_not_hold_its_time(): void
+    {
+        $this->allowSeveralADay();
+        $user = $this->client();
+        $uuid = $this->book($user);
+        Appointment::where('uuid', $uuid)->update(['status' => AppointmentStatus::Cancelled->value]);
+
+        $this->book($user);
+
+        $this->assertSame(2, Appointment::whereHas('client', fn ($q) => $q->where('user_id', $user->id))->count());
+    }
+
+    public function test_moving_a_booking_onto_another_of_theirs_is_refused(): void
+    {
+        $this->allowSeveralADay();
+        $user = $this->client();
+        $this->book($user);
+        $second = $this->book($user, ['appointment_time' => '13:00']);
+
+        $this->patchJson("/api/client/appointments/{$second}/reschedule", ['appointment_date' => self::DATE, 'appointment_time' => '10:30'])
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'overlaps_existing_booking');
+        $this->patchJson("/api/client/appointments/{$second}/reschedule", ['appointment_date' => self::DATE, 'appointment_time' => '11:00'])
+            ->assertOk();
+    }
+
+    public function test_the_app_is_told_each_booking_s_start_and_length(): void
+    {
+        $user = $this->client();
+        $this->book($user);
+
+        $bookings = $this->getJson("/api/client/spas/{$this->branch->uuid}/booking-status")->assertOk()->json('data.bookings');
+
+        $this->assertSame([['date' => self::DATE, 'time' => '10:00', 'minutes' => 60, 'branch' => $this->branch->branch_name]], $bookings);
+    }
+
     public function test_reschedule_is_refused_when_the_chosen_therapist_is_off(): void
     {
         // Only the shifts below (not the every-day ones makeBookable gives).

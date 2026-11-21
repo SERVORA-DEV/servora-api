@@ -418,25 +418,16 @@ class AppointmentBookingService
             return response()->json(['message' => $scheduleCheck['reason']], 422);
         }
 
-        // A booking of theirs already at this day and time (any branch of the
-        // business) is a warning, not a refusal: the app shows it before they
-        // confirm and sends acknowledge_overlap when they book anyway. Without
-        // it (a retried request after a slow network, or an app that did not
-        // know) the booking is held back with a code the app understands.
-        $overlap = Appointment::with('branch')
-            ->whereHas('branch', fn ($q) => $q->where('spa_business_id', $branch->spa_business_id))
-            ->whereDate('appointment_date', $payload['appointment_date'])
-            ->where('appointment_time', 'like', substr($payload['appointment_time'], 0, 5).'%')
-            ->whereNotIn('status', [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value])
-            ->whereHas('client', fn ($q) => $q->where('user_id', $user->id))
-            ->first();
-        if ($overlap && empty($payload['acknowledge_overlap'])) {
-            $at = Carbon::parse($payload['appointment_date'].' '.$payload['appointment_time'])->format('g:i A');
-
+        // A booking of theirs (at any spa) that runs over this time is refused:
+        // nobody can be in two places at once. Older apps still send
+        // acknowledge_overlap from when this was only a warning; it no longer
+        // lets the booking through.
+        $clash = $this->clientClash($user, $payload['appointment_date'], $payload['appointment_time'], $this->requestedMinutes($payload) ?? 30);
+        if ($clash) {
             return response()->json([
-                'message' => "You already have a booking at {$at} that day ({$overlap->branch?->branch_name}). Tap Confirm Booking again to book this one too.",
+                'message' => $this->clientClashMessage($clash),
                 'code' => 'overlaps_existing_booking',
-            ], 409);
+            ], 422);
         }
 
         // Show therapist profiles off, or Client Can Choose Staff off (for the
@@ -852,6 +843,43 @@ class AppointmentBookingService
             ->whereNotIn('status', [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value])
             ->when($exceptAppointmentId, fn ($q) => $q->where('id', '!=', $exceptAppointmentId))
             ->count();
+    }
+
+    /**
+     * A booking of this signed-in client (at any spa) whose time runs over
+     * [$date $time, +$minutes): nobody can be in two places at once, so a new
+     * booking or a move onto it is refused. Each booking's span is its services'
+     * length (AppointmentAvailabilityService::estimatedDurationMinutes).
+     * Cancelled, missed and finished visits don't count; $exceptAppointmentId is
+     * the booking being moved.
+     */
+    public function clientClash(User $user, string $date, string $time, int $minutes, ?int $exceptAppointmentId = null): ?Appointment
+    {
+        $start = Carbon::parse($date.' '.substr($time, 0, 5));
+        $end = $start->copy()->addMinutes(max(1, $minutes));
+
+        return Appointment::with(['branch', 'services.serviceVariant'])
+            ->whereHas('client', fn ($q) => $q->where('user_id', $user->id))
+            ->whereDate('appointment_date', $date)
+            ->whereNotIn('status', [AppointmentStatus::Cancelled->value, AppointmentStatus::NoShow->value, AppointmentStatus::Completed->value])
+            ->when($exceptAppointmentId, fn ($q) => $q->where('id', '!=', $exceptAppointmentId))
+            ->get()
+            ->first(function (Appointment $other) use ($date, $start, $end) {
+                $from = Carbon::parse($date.' '.substr((string) $other->appointment_time, 0, 5));
+                $to = $from->copy()->addMinutes(max(1, $this->availabilityService->estimatedDurationMinutes($other)));
+
+                return $start->lt($to) && $end->gt($from);
+            });
+    }
+
+    // What a client is told when the time runs over a booking they already have.
+    public function clientClashMessage(Appointment $other): string
+    {
+        $from = Carbon::parse($other->appointment_date->toDateString().' '.substr((string) $other->appointment_time, 0, 5));
+        $to = $from->copy()->addMinutes(max(1, $this->availabilityService->estimatedDurationMinutes($other)));
+        $where = $other->branch?->branch_name ? " at {$other->branch->branch_name}" : '';
+
+        return "You already have a booking from {$from->format('g:i A')} to {$to->format('g:i A')} that day{$where}. Pick a time after it ends or another day.";
     }
 
     // What a client is told when a day already holds the most bookings the
