@@ -14,6 +14,7 @@ use App\Service\Client\BookingPolicy;
 use App\Service\Uploads\ImageUploadService;
 use App\Support\AppCache;
 use App\Support\Branches\BranchHoursCalculator;
+use App\Support\Catalog\ServiceKind;
 use App\Support\Programs\ProgramChannel;
 use App\Support\Visits\ReminderPolicy;
 use App\Support\Branches\SocialLinks;
@@ -168,7 +169,7 @@ class BranchDetailResource extends JsonResource
                         'category' => $service->category,
                         'description' => $service->description,
                         // Bookable as a home visit (the owner's tick).
-                        'home_service_available' => (bool) $service->home_service_available,
+                        'home_service_available' => (bool) $service->home_service_available && ServiceKind::canGoHome($service->service_type),
                         // Done by several staff at once: one part each, so the client can pick who
                         // does which (empty for a one-person service).
                         'parts' => $service->relationLoaded('parts')
@@ -178,7 +179,9 @@ class BranchDetailResource extends JsonResource
                         // dropdown labels, and sorting by price instead would let
                         // a custom_price override reorder it in a way that reads
                         // as a bug.
-                        'home_variants' => $rows->filter(fn ($bs) => $bs->serviceVariant->service_location === 'Home Service' && $service->home_service_available && ! $service->facility_required)
+                        // Home options: the owner ticked home service and it isn't facility-based.
+                        // "Facility required" is about the spa only, so it doesn't count here.
+                        'home_variants' => $rows->filter(fn ($bs) => $bs->serviceVariant->service_location === 'Home Service' && $service->home_service_available && ServiceKind::canGoHome($service->service_type))
                             ->sortBy(fn ($bs) => $bs->serviceVariant->duration_minutes)
                             ->map(fn ($bs) => ['service_variant_uuid' => $bs->serviceVariant->uuid, 'duration_minutes' => (int) $bs->serviceVariant->duration_minutes, 'price' => (float) ($bs->custom_price ?? $bs->serviceVariant->price)])->values(),
                         'variants' => $rows->filter(fn ($bs) => ($bs->serviceVariant->service_location ?? 'In Spa') === 'In Spa')

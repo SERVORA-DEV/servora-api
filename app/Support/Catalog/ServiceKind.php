@@ -52,6 +52,16 @@ class ServiceKind
         return self::of($kind) !== self::FACILITY;
     }
 
+    /**
+     * May it be done at a client's home? Only if someone performs it: a facility-based one (a sauna)
+     * stays in the spa. "Facility required" on any other service is about the spa only — a home
+     * visit has no facility — so it never stops a home visit.
+     */
+    public static function canGoHome(?string $kind): bool
+    {
+        return self::needsTherapist($kind);
+    }
+
     /** A facility has to be chosen before it can start: always for a facility-based one, else the owner's tick. */
     public static function needsFacility(?string $kind, bool $required = false): bool
     {

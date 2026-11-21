@@ -84,6 +84,46 @@ class BranchDetailResourceTest extends TestCase
             ->getData(true)['data']['services'];
     }
 
+    /** A home-service option of a service, offered at this branch. */
+    private function homeOption(Service $service, int $minutes, float $price): void
+    {
+        $variant = ServiceVariant::factory()->create([
+            'service_id' => $service->id, 'duration_minutes' => $minutes, 'price' => $price, 'service_location' => 'Home Service',
+        ]);
+        BranchService::factory()->create(['spa_branch_id' => $this->branch->id, 'service_variant_id' => $variant->id]);
+    }
+
+    private function serviceNamed(string $name): array
+    {
+        return collect($this->services())->firstWhere('name', $name);
+    }
+
+    public function test_facility_required_is_for_the_spa_only_and_keeps_home_service(): void
+    {
+        // In the spa it needs a bed; at a client's home it needs none.
+        [$service] = $this->offer('Signature Massage', [60 => 550], [
+            'service_type' => 'time', 'facility_required' => true, 'home_service_available' => true,
+        ]);
+        $this->homeOption($service, 60, 900);
+
+        $row = $this->serviceNamed('Signature Massage');
+        $this->assertTrue($row['home_service_available']);
+        $this->assertSame([60], array_column($row['home_variants'], 'duration_minutes'));
+        $this->assertSame([900.0], array_map('floatval', array_column($row['home_variants'], 'price')));
+    }
+
+    public function test_a_facility_based_service_is_never_a_home_service(): void
+    {
+        // Nobody performs a sauna: even a stale tick on it doesn't make it bookable at home.
+        [$sauna] = $this->offer('Sauna Steam Bath', [60 => 450], ['service_type' => 'facility', 'facility_required' => true]);
+        $sauna->forceFill(['home_service_available' => true])->saveQuietly();
+        $this->homeOption($sauna, 60, 700);
+
+        $row = $this->serviceNamed('Sauna Steam Bath');
+        $this->assertFalse($row['home_service_available']);
+        $this->assertSame([], $row['home_variants']);
+    }
+
     public function test_variants_of_one_service_collapse_into_a_single_entry(): void
     {
         [$service] = $this->offer('Swedish Massage', [30 => 400, 60 => 650, 90 => 900]);

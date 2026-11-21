@@ -58,6 +58,24 @@ class ClientAppointmentResource extends JsonResource
         );
     }
 
+    // Until when the client may still cancel from the app: the start time less
+    // the spa's cancellation window. Null when there is no window (they may
+    // cancel up to the start) or when cancelling isn't allowed at all.
+    public static function cancelUntil(Appointment $appointment): ?Carbon
+    {
+        $branch = $appointment->branch;
+        if (! $branch) {
+            return null;
+        }
+        $policy = BookingPolicy::for($branch);
+        $window = (int) ($policy['cancellation_window_hours'] ?? 0);
+        if (! $policy['allow_cancellation'] || $window <= 0) {
+            return null;
+        }
+
+        return Carbon::parse($appointment->appointment_date->format('Y-m-d') . ' ' . $appointment->appointment_time)->subHours($window);
+    }
+
     private function bookedVoucher(): ?array
     {
         if (! Appointment::holdsVouchers() || ! $this->client_voucher_id) {
@@ -210,6 +228,8 @@ class ClientAppointmentResource extends JsonResource
             'review' => $this->review ? new ClientReviewResource($this->review) : null,
 
             'can_cancel' => ($cancelProblem = self::changeProblem($this->resource, 'cancel')) === null,
+            // While it can be cancelled: until when (the app says "Free to cancel until …").
+            'cancel_until' => $cancelProblem === null ? self::cancelUntil($this->resource)?->toIso8601String() : null,
             'can_reschedule' => ($rescheduleProblem = self::changeProblem($this->resource, 'reschedule')) === null,
             // Why not, for a still-upcoming booking the app shows the buttons
             // for (e.g. inside the spa's cancellation window).

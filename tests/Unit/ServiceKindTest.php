@@ -26,6 +26,15 @@ class ServiceKindTest extends TestCase
 
     // A facility-based service always needs one; anything else only when the
     // owner ticked "Facility required" — a foot soak in the lounge usually doesn't.
+    public function test_only_a_facility_based_service_stays_out_of_home_service(): void
+    {
+        // "Facility required" is about the spa only; it isn't asked here at all.
+        $this->assertTrue(ServiceKind::canGoHome('time'));
+        $this->assertTrue(ServiceKind::canGoHome('procedure'));
+        $this->assertTrue(ServiceKind::canGoHome(null));
+        $this->assertFalse(ServiceKind::canGoHome('facility'));
+    }
+
     public function test_a_facility_based_service_always_needs_a_facility_and_others_only_when_ticked(): void
     {
         $this->assertTrue(ServiceKind::needsFacility('facility'));

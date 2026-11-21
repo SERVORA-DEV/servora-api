@@ -209,6 +209,33 @@ class ClientBookingTest extends TestCase
         $this->patchJson("/api/client/appointments/{$theirs}/reschedule", ['appointment_date' => self::DATE, 'appointment_time' => '14:00'])->assertNotFound();
     }
 
+    public function test_the_app_is_told_until_when_a_booking_can_be_cancelled(): void
+    {
+        $me = $this->client();
+        $uuid = $this->book($me);
+
+        // No cancellation window: free to cancel up to the start, so no deadline to show.
+        \App\Models\SpaBusinessSetting::updateOrCreate(['spa_business_id' => $this->business->id], ['booking_defaults' => ['cancellation_window_hours' => 0]]);
+        \App\Service\Client\BookingPolicy::flush();
+        $this->getJson("/api/client/appointments/{$uuid}")
+            ->assertOk()
+            ->assertJsonPath('data.can_cancel', true)
+            ->assertJsonPath('data.cancel_until', null);
+
+        // A 24-hour window: until 10:00 the day before.
+        \App\Models\SpaBusinessSetting::updateOrCreate(['spa_business_id' => $this->business->id], ['booking_defaults' => ['cancellation_window_hours' => 24]]);
+        \App\Service\Client\BookingPolicy::flush();
+        $until = $this->getJson("/api/client/appointments/{$uuid}")->assertOk()->assertJsonPath('data.can_cancel', true)->json('data.cancel_until');
+        $this->assertSame('2027-03-01 10:00', \Carbon\Carbon::parse($until)->timezone(config('app.timezone'))->format('Y-m-d H:i'));
+
+        // Cancelling switched off: nothing to show.
+        \App\Models\SpaBusinessSetting::updateOrCreate(['spa_business_id' => $this->business->id], ['booking_defaults' => ['cancellation_window_hours' => 24, 'allow_cancellation' => false]]);
+        \App\Service\Client\BookingPolicy::flush();
+        $this->getJson("/api/client/appointments/{$uuid}")
+            ->assertJsonPath('data.can_cancel', false)
+            ->assertJsonPath('data.cancel_until', null);
+    }
+
     public function test_a_client_can_cancel_their_scheduled_booking(): void
     {
         $me = $this->client();
