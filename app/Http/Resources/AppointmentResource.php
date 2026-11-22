@@ -40,9 +40,7 @@ class AppointmentResource extends JsonResource
             'cancelled_at' => optional($this->cancelled_at)->toIso8601String(),
             'cancellation_reason' => $this->cancellation_reason,
             'remarks' => $this->remarks,
-            'subtotal' => (float) $this->subtotal,
-            'discount_amount' => (float) $this->discount_amount,
-            'total_amount' => (float) $this->total_amount,
+            ...app(\App\Service\Business\BillingService::class)->appointmentPricing($this->resource),
             // On the desk's list: the client whose shared package covers this visit (Client B's
             // Couples Massage), or null. Only the client who bought it pays for it.
             // The list sets it for a whole page in one query; a single read with its packages

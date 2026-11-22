@@ -178,9 +178,7 @@ class ClientAppointmentResource extends JsonResource
             'cancelled_at' => optional($this->cancelled_at)->toIso8601String(),
             'cancellation_reason' => $this->cancellation_reason,
             'remarks' => $this->remarks,
-            'subtotal' => (float) $this->subtotal,
-            'discount_amount' => (float) $this->discount_amount,
-            'total_amount' => (float) $this->total_amount,
+            ...app(\App\Service\Business\BillingService::class)->appointmentPricing($this->resource),
             'total_duration_minutes' => app(AppointmentAvailabilityService::class)->estimatedDurationMinutes($this->resource),
 
             'branch' => $branch ? [

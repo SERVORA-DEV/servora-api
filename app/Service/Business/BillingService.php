@@ -303,6 +303,52 @@ class BillingService
         ];
     }
 
+    // Read-only quote before checkout; once billed the recorded bill is authoritative.
+    // Reuse programDiscount so targeted/free-service vouchers follow checkout's rules.
+    public function appointmentPricing(Appointment $appointment): array
+    {
+        if ($bill = $appointment->billing) {
+            return ['subtotal' => (float) ($bill->subtotal ?? $bill->amount),
+                'discount_amount' => (float) $bill->discount_amount,
+                'discount_reason' => $bill->discount_reason,
+                'total_amount' => (float) $bill->amount];
+        }
+        $result = ['subtotal' => (float) $appointment->total_amount + (float) $appointment->discount_amount,
+            'discount_amount' => (float) $appointment->discount_amount,
+            'discount_reason' => null, 'total_amount' => (float) $appointment->total_amount];
+        $program = null;
+        $reason = null;
+        if (Appointment::holdsVouchers() && $appointment->client_voucher_id) {
+            $voucher = $appointment->voucher;
+            if ($voucher?->isUsable()) {
+                $program = $voucher->dealProgram();
+                $reason = $program ? 'Voucher: ' . $program->name : null;
+            }
+        } elseif (Appointment::holdsDiscounts() && $appointment->discount_program_id && $appointment->client) {
+            $discount = $appointment->discountProgram;
+            $picked = $discount ? $this->rewards->memberDiscountFor($appointment->client, $discount->uuid, ProgramChannel::whereOf($appointment)) : null;
+            if ($picked instanceof CustomerProgram) {
+                $program = $picked;
+                $reason = 'Discount: ' . $program->name;
+            }
+        }
+        if (! $program) {
+            return $result;
+        }
+        $quote = new Billing(['subtotal' => $result['subtotal'], 'amount' => $result['total_amount']]);
+        $quote->setRelation('appointment', $appointment);
+        $derived = $this->programDiscount($quote, $program);
+        if (is_array($derived)) {
+            [$type, $value] = $derived;
+            $base = $result['total_amount'];
+            $off = $type === 'percent' ? round($base * min($value, 100) / 100, 2) : round(min($value, $base), 2);
+            $result['discount_amount'] += max(0, $off);
+            $result['discount_reason'] = $reason;
+            $result['total_amount'] = round(max(0, $result['total_amount'] - $off), 2);
+        }
+        return $result;
+    }
+
     // The voucher a client booked with in the app (appointments.client_voucher_id)
     // goes on the bill when it is made: worked out from the bill's own services
     // like one the front desk applies, but by the system rather than a person.

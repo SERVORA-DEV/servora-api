@@ -162,6 +162,61 @@ class MemberDiscountBookingTest extends TestCase
         $this->assertSame(0, Appointment::count());
     }
 
+    public function test_reserved_discount_is_quoted_before_check_in_on_mobile_and_web(): void
+    {
+        $uuid = $this->book(['discount_program_uuid' => $this->memberDiscount->uuid])->assertSuccessful()->json('data.uuid');
+        $appointment = Appointment::where('uuid', $uuid)->firstOrFail();
+        $appointment->update(['subtotal' => 2700, 'total_amount' => 2700]);
+        $this->getJson('/api/client/appointments/' . $uuid)->assertOk()
+            ->assertJsonPath('data.total_amount', 2430)
+            ->assertJsonPath('data.discount_amount', 270)
+            ->assertJsonPath('data.discount_reason', 'Discount: Members Discount');
+        $web = (new \App\Http\Resources\AppointmentResource($appointment->fresh()))->resolve();
+        $this->assertEquals(2430, $web['total_amount']);
+        $this->assertNull($appointment->fresh()->billing);
+        $this->assertNull($appointment->fresh()->check_in_at);
+    }
+
+    public function test_a_reserved_free_service_shows_zero_without_consuming_the_voucher(): void
+    {
+        $this->voucherProgram->update(['name' => 'Free Massage', 'values' => ['dealType' => 'Free service', 'usableOn' => 'Swedish Massage']]);
+        $voucher = app(ProgramRewardService::class)->issueVoucher($this->client, $this->voucherProgram, 'membership', membership: $this->held);
+        $uuid = $this->book(['voucher_uuid' => $voucher->uuid])->assertSuccessful()->json('data.uuid');
+        $this->getJson('/api/client/appointments/' . $uuid)->assertOk()
+            ->assertJsonPath('data.total_amount', 0)
+            ->assertJsonPath('data.discount_amount', 1000)
+            ->assertJsonPath('data.discount_reason', 'Voucher: Free Massage');
+        $this->assertSame('available', $voucher->fresh()->status);
+        $appointment = Appointment::where('uuid', $uuid)->firstOrFail();
+        $this->assertNull($appointment->billing);
+        $web = (new \App\Http\Resources\AppointmentResource($appointment))->resolve();
+        $this->assertEquals(0, $web['total_amount']);
+    }
+
+    public function test_mobile_uses_the_recorded_bill_discount_after_checkout(): void
+    {
+        $uuid = $this->book(['discount_program_uuid' => $this->memberDiscount->uuid])->assertSuccessful()->json('data.uuid');
+        $appointment = Appointment::where('uuid', $uuid)->firstOrFail();
+        $bill = $this->bill($appointment);
+        $bill->update(['amount' => 850, 'discount_amount' => 150, 'discount_reason' => 'Approved discount']);
+        $this->getJson('/api/client/appointments/' . $uuid)->assertOk()
+            ->assertJsonPath('data.total_amount', 850)
+            ->assertJsonPath('data.discount_amount', 150)
+            ->assertJsonPath('data.discount_reason', 'Approved discount');
+    }
+
+    public function test_a_reserved_money_off_voucher_is_shown_before_billing(): void
+    {
+        $voucher = app(ProgramRewardService::class)->issueVoucher($this->client, $this->voucherProgram, 'membership', membership: $this->held);
+        $uuid = $this->book(['voucher_uuid' => $voucher->uuid])->assertSuccessful()->json('data.uuid');
+        $this->getJson('/api/client/appointments/' . $uuid)->assertOk()
+            ->assertJsonPath('data.subtotal', 1000)
+            ->assertJsonPath('data.discount_amount', 50)
+            ->assertJsonPath('data.total_amount', 950)
+            ->assertJsonPath('data.discount_reason', 'Voucher: Welcome New Client');
+        $this->assertSame('available', $voucher->fresh()->status);
+    }
+
     public function test_someone_who_is_not_a_member_cannot_book_with_it(): void
     {
         $this->held->update(['status' => 'cancelled']);
