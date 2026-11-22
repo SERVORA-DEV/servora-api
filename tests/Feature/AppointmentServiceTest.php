@@ -607,8 +607,11 @@ class AppointmentServiceTest extends TestCase
 
     public function test_a_facility_based_service_always_needs_a_facility(): void
     {
-        // Not ticked, and still: facility-based means it always does.
-        $line = $this->checkedInWith($this->variantOf(['service_type' => 'facility', 'facility_required' => false]));
+        // Not ticked, and still: facility-based means it always does. Facility A has it turned on
+        // (without one that does, it couldn't be booked at all — FacilityCoverage).
+        $variant = $this->variantOf(['service_type' => 'facility', 'facility_required' => false]);
+        $this->facilityA->services()->attach($variant->service_id);
+        $line = $this->checkedInWith($variant);
 
         $refused = $this->service->startService($this->owner, $line->uuid);
         $this->assertInstanceOf(JsonResponse::class, $refused);

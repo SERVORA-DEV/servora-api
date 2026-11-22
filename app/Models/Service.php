@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\Catalog\ServiceKind;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -27,6 +28,8 @@ class Service extends Model
         // A facility has to be chosen before the front desk may start it
         // (App\Support\Catalog\ServiceKind::needsFacility).
         'facility_required',
+        // A facility-based service the client stays in as long as they like (Service::isOpenStay).
+        'open_stay',
         'description',
         'image_path',
         'is_active',
@@ -42,8 +45,35 @@ class Service extends Model
             'is_active' => 'boolean',
             'home_service_available' => 'boolean',
             'facility_required' => 'boolean',
+            'open_stay' => 'boolean',
             'is_template' => 'boolean',
         ];
+    }
+
+    /**
+     * Whether the open-stay columns exist yet (migration 2026_01_01_000820). Until then
+     * every service has a fixed length and nothing reads or writes them.
+     */
+    public static function hasOpenStay(): bool
+    {
+        $known = Cache::get('schema:open_stay');
+        if (is_bool($known)) {
+            return $known;
+        }
+        $ready = Schema::hasColumn('services', 'open_stay') && Schema::hasColumn('appointment_services', 'open_stay');
+        $ready ? Cache::forever('schema:open_stay', true) : Cache::put('schema:open_stay', false, 60);
+
+        return $ready;
+    }
+
+    /**
+     * Open stay: a facility-based service (a sauna) the client stays in as long as they like,
+     * for one price. Its lengths are a usual stay, used only to plan the facility and closing
+     * time — never a limit; the visit ends when the desk checks the client out.
+     */
+    public function isOpenStay(): bool
+    {
+        return self::hasOpenStay() && (bool) $this->open_stay && ServiceKind::of($this->service_type) === ServiceKind::FACILITY;
     }
 
     public function uniqueIds()

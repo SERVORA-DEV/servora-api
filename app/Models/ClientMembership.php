@@ -74,7 +74,13 @@ class ClientMembership extends Model
     /** A membership program's bundle, as a plain list that can be kept. */
     public static function perksOf(CustomerProgram $program): array
     {
-        return $program->items->map(fn (CustomerProgram $item) => [
+        return $program->items->map(fn (CustomerProgram $item) => self::perkRow($item))->values()->all();
+    }
+
+    /** One perk (a voucher or discount in the bundle) as it is kept. */
+    public static function perkRow(CustomerProgram $item): array
+    {
+        return [
             'id' => $item->id,
             'uuid' => $item->uuid,
             'type' => $item->type,
@@ -82,7 +88,7 @@ class ClientMembership extends Model
             'audience' => $item->audience,
             'is_active' => (bool) $item->is_active,
             'values' => $item->values,
-        ])->values()->all();
+        ];
     }
 
     /** The membership's name when it was sold — its own copy first. */

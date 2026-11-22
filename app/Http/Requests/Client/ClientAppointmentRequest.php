@@ -46,6 +46,9 @@ class ClientAppointmentRequest extends FormRequest
             // A first-visit voucher not claimed yet (the program's uuid): it is
             // given to the client with this booking and used on it.
             'first_visit_program_uuid' => 'nullable|uuid',
+            // Or, instead of a voucher, a discount their membership includes. One program a
+            // booking: a voucher or a member discount, never both.
+            'discount_program_uuid' => 'nullable|uuid|prohibits:voucher_uuid,first_visit_program_uuid',
 
             // Home service (HomeServiceRules checks the place and the area).
             'service_location' => 'sometimes|in:In Spa,Home Service',
@@ -105,6 +108,7 @@ class ClientAppointmentRequest extends FormRequest
             'home_address_notes.required_if' => 'Please add a landmark so the therapist can find your place.',
             'home_latitude.required_if' => 'Please pin the address on the map.',
             'home_longitude.required_if' => 'Please pin the address on the map.',
+            'discount_program_uuid.prohibits' => 'Use either a voucher or your member discount on a booking, not both.',
         ];
     }
 }

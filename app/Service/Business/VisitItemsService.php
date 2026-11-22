@@ -492,6 +492,10 @@ class VisitItemsService
                 throw new ActionRefused('This package can\'t be booked right now: '.($item->service?->name ?? 'one of its services').' is no longer on the menu.');
             }
         }
+        // Each facility-based service in it needs a facility here that has it turned on.
+        if (! $home) {
+            self::refuseWithoutFacility($appointment->spa_branch_id, $package->packageServiceItems->map(fn ($item) => $item->theService()?->id));
+        }
 
         $price = $home ? (float) ($branchPackage->home_custom_price ?? $package->home_price) : (float) ($branchPackage->custom_price ?? $package->default_price);
 
@@ -607,6 +611,16 @@ class VisitItemsService
         return $appointmentPackage;
     }
 
+    // A facility-based service no facility at the branch has turned on can't be booked: there is
+    // nowhere to put the client (App\Support\Catalog\FacilityCoverage). Rolls the booking back.
+    private static function refuseWithoutFacility(int $branchId, iterable $serviceIds): void
+    {
+        $missing = \App\Support\Catalog\FacilityCoverage::unhandled($branchId, $serviceIds);
+        if ($missing->isNotEmpty()) {
+            throw new ActionRefused($missing->pluck('name')->implode(', ').' can\'t be booked at this branch right now: no facility here is set up for it.');
+        }
+    }
+
     // Aborts the surrounding transaction (422) if the variant isn't
     // bookable at this branch at all — a hard data-integrity condition, not
     // a soft business-rule branch like the availability checks below.
@@ -625,6 +639,11 @@ class VisitItemsService
         // Done by several staff at once: the branch must have that many who can do it.
         if ($shortage = ServiceParts::shortage($branchId, $variant)) {
             throw new ActionRefused($shortage);
+        }
+        // A facility-based service (a sauna) needs a facility here that has it turned on —
+        // for a client's booking and the front desk alike (FacilityCoverage).
+        if (! $appointment->isHomeService()) {
+            self::refuseWithoutFacility($branchId, [$variant->service_id]);
         }
 
         $branchService = BranchService::where('service_variant_id', $variant->id)

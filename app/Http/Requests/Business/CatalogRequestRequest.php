@@ -44,6 +44,7 @@ class CatalogRequestRequest extends FormRequest
             'service' => [
                 'payload.serviceType' => ['nullable', Rule::in(ServiceKind::ALL)],
                 'payload.facilityRequired' => 'nullable|boolean',
+                'payload.openStay' => 'nullable|boolean',
                 'payload.homeServiceAvailable' => 'nullable|boolean',
                 'payload.code' => 'nullable|string|max:20',
                 'payload.description' => 'nullable|string|max:2000',

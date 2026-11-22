@@ -25,6 +25,8 @@ class ServiceResource extends JsonResource
             // A facility has to be chosen before the front desk may start it.
             'facility_required' => \App\Models\Service::hasFacilityRequirement()
                 && \App\Support\Catalog\ServiceKind::needsFacility($this->service_type, (bool) $this->facility_required),
+            // Stay as long as you like (a sauna): its lengths are a usual stay, not a limit.
+            'open_stay' => $this->resource->isOpenStay(),
             'description' => $this->description,
 
             // source_template_id is deliberately not exposed: it's provenance

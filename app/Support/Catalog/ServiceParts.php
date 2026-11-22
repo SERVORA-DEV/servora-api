@@ -86,7 +86,10 @@ final class ServiceParts
      */
     public static function needOf(\App\Models\Appointment $appointment): int
     {
-        return max(self::lineNeedOf($appointment), 1 + \App\Support\Catalog\SharedPackages::openSlots($appointment));
+        $line = self::lineNeedOf($appointment);
+
+        // Only facility-based services (a sauna): no therapist, for the client or the others on it.
+        return $line === 0 ? 0 : max($line, 1 + \App\Support\Catalog\SharedPackages::openSlots($appointment));
     }
 
     private static function lineNeedOf(\App\Models\Appointment $appointment): int
@@ -95,7 +98,7 @@ final class ServiceParts
             ->filter(fn ($s) => ! in_array($s->status, [AppointmentServiceStatus::Cancelled->value], true))
             ->map(fn ($s) => $s->serviceVariant?->service_id);
 
-        return (int) collect(\App\Models\Service::staffNeededFor($ids))->push(1)->max();
+        return self::staffFor($ids);
     }
 
     /** The same, for the options a client is looking at (service_variants.uuid). */
@@ -104,9 +107,66 @@ final class ServiceParts
         if (! $variantUuids) {
             return 1;
         }
-        $ids = \App\Models\ServiceVariant::whereIn('uuid', $variantUuids)->pluck('service_id');
 
-        return (int) collect(\App\Models\Service::staffNeededFor($ids))->push(1)->max();
+        return self::staffFor(\App\Models\ServiceVariant::whereIn('uuid', $variantUuids)->pluck('service_id'));
+    }
+
+    /**
+     * Staff a set of services needs at once: the most any one of them needs, at least one, or none
+     * when every one is facility-based (ServiceKind::needsTherapist): nobody is assigned to those.
+     * Nothing known yet: one, as before.
+     */
+    public static function staffFor(iterable $serviceIds): int
+    {
+        $ids = collect($serviceIds)->filter()->unique()->values();
+        if ($ids->isEmpty()) {
+            return 1;
+        }
+        $kinds = Service::whereIn('id', $ids)->pluck('service_type', 'id');
+        $withStaff = $ids->filter(fn ($id) => ServiceKind::needsTherapist($kinds[$id] ?? null));
+        if ($withStaff->isEmpty()) {
+            return 0;
+        }
+
+        return (int) collect(Service::staffNeededFor($withStaff))->push(1)->max();
+    }
+
+    /** The facility-based ones among these services (ids): each is put in a facility of its own kind. */
+    public static function roomServices(iterable $serviceIds): array
+    {
+        $ids = collect($serviceIds)->filter()->map(fn ($id) => (int) $id)->unique()->values();
+        if ($ids->isEmpty()) {
+            return [];
+        }
+
+        return Service::whereIn('id', $ids)->get(['id', 'service_type'])
+            ->filter(fn ($s) => ! ServiceKind::needsTherapist($s->service_type))
+            ->pluck('id')->map(fn ($id) => (int) $id)->values()->all();
+    }
+
+    /** The same for a booking's live lines. */
+    public static function roomServicesOf(\App\Models\Appointment $appointment): array
+    {
+        return self::roomServices($appointment->services
+            ->filter(fn ($s) => ! in_array($s->status, [AppointmentServiceStatus::Cancelled->value], true))
+            ->map(fn ($s) => $s->serviceVariant?->service_id));
+    }
+
+    /** The services of a package (ids). */
+    public static function packageServiceIds(\App\Models\Package $package): array
+    {
+        $package->loadMissing('packageServiceItems');
+
+        return $package->packageServiceItems->map(fn ($i) => $i->theService()?->id)->filter()->values()->all();
+    }
+
+    /** Whether a package needs a therapist: any of its services does (a sauna-only one doesn't). */
+    public static function packageNeedsStaff(\App\Models\Package $package): bool
+    {
+        $package->loadMissing('packageServiceItems');
+        $services = $package->packageServiceItems->map(fn ($i) => $i->theService())->filter();
+
+        return $services->isEmpty() || $services->contains(fn ($s) => ServiceKind::needsTherapist($s->service_type));
     }
 
     /** "Upper body", "Upper body and Lower body", "A, B and C". */

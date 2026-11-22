@@ -34,7 +34,9 @@ use Illuminate\Support\Facades\DB;
 //   onBillReopened()  a voided/refunded bill gives those back
 //   redeemPoints()    points → a "Redeem loyalty points" voucher
 //   issueMembershipVouchers()  the vouchers a membership bundles, per period
+//   giveNewPerks()    what was added to a membership, for today's members too
 //   runDaily()        expiry (memberships, vouchers, points) + birthday vouchers
+//                     + perks members are missing (giveNewPerks)
 //
 // Everything here runs inside the caller's transaction and is safe to repeat
 // for the same bill: points are keyed to the bill, voucher counts are derived
@@ -364,6 +366,36 @@ class ProgramRewardService
         return true;
     }
 
+    /**
+     * A discount the client's active membership includes, as the membership was
+     * sold with it, when it can be used where they are ($where: app or desk);
+     * otherwise why not. What a member books with in the app, instead of a voucher.
+     */
+    public function memberDiscountFor(Client $client, string $programUuid, string $where): CustomerProgram|string
+    {
+        if (! $this->enabledFor($client->spa_business_id)) {
+            return 'This spa isn\'t running its rewards right now.';
+        }
+        if (! AppOnlyPrograms::usesHeld($client->usesApp())) {
+            return AppOnlyPrograms::MESSAGE;
+        }
+        $membership = $client->activeMembership()->with('program.items')->first();
+        if (! $membership) {
+            return 'Member discounts are for members — your membership isn\'t active.';
+        }
+        $program = CustomerProgram::withTrashed()->where('uuid', $programUuid)
+            ->where('spa_business_id', $client->spa_business_id)->where('type', 'discount')->first();
+        if (! $program || ! in_array($program->id, $membership->perkIds(), true)) {
+            return 'That discount isn\'t part of your membership.';
+        }
+        if (! ProgramChannel::allows(ProgramChannel::of($program), $where)
+            || ($membership->program && ! ProgramChannel::allows(ProgramChannel::of($membership->program), $where))) {
+            return 'That discount can\'t be used here. ' . ProgramChannel::refusalAt($where);
+        }
+
+        return $membership->held($program);
+    }
+
     // ── First visit: there for the first booking, not earned after it ─────
 
     /**
@@ -438,6 +470,70 @@ class ProgramRewardService
         }
 
         return $count;
+    }
+
+    /**
+     * Vouchers and discounts just added to a membership ($itemIds), for the clients who are
+     * members now: each joins their membership's kept copy of its perks (so the member
+     * discount can be used), each new active voucher goes in their wallet until the
+     * membership ends, and they are told. A perk taken out of the bundle stays with
+     * today's members (it is what they were sold). Returns how many members got something.
+     */
+    public function giveNewPerks(CustomerProgram $membershipProgram, array $itemIds): int
+    {
+        $items = CustomerProgram::whereIn('id', $itemIds)->get();
+        if ($items->isEmpty() || ! $this->enabledFor($membershipProgram->spa_business_id)) {
+            return 0;
+        }
+
+        $members = ClientMembership::with('client')
+            ->where('customer_program_id', $membershipProgram->id)
+            ->where('status', MembershipStatus::Active->value)
+            ->where('ends_at', '>', now())
+            ->get();
+
+        $given = 0;
+        foreach ($members as $membership) {
+            if (! $membership->client || ! AppOnlyPrograms::allows($membership->client->usesApp())) {
+                continue;
+            }
+            // The perks not in the membership's own copy yet join it. Without a copy (older
+            // records) a membership reads the bundle as it is now, so they are already its.
+            $keeps = \App\Support\Activity\History::ready() && is_array($membership->perks);
+            $have = $keeps ? array_map('intval', array_column($membership->perks, 'id')) : [];
+            $newPerks = $keeps ? $items->reject(fn (CustomerProgram $item) => in_array($item->id, $have, true))->values() : collect();
+            if ($newPerks->isNotEmpty()) {
+                $membership->forceFill(['perks' => array_values(array_merge(
+                    $membership->perks,
+                    $newPerks->map(fn (CustomerProgram $item) => ClientMembership::perkRow($item))->all(),
+                ))])->saveQuietly();
+            }
+
+            // Each voucher of the bundle this membership hasn't given yet (never twice).
+            $given_ids = ClientVoucher::where('client_membership_id', $membership->id)->pluck('customer_program_id')->map(fn ($id) => (int) $id)->all();
+            $vouchers = $items->where('type', 'voucher')->where('is_active', true)
+                ->filter(fn (CustomerProgram $v) => ! in_array($v->id, $given_ids, true)
+                    && (! $keeps || in_array($v->id, $have, true) || $newPerks->contains('id', $v->id)))
+                ->values();
+            foreach ($vouchers as $voucher) {
+                $this->issueVoucher($membership->client, $voucher, 'membership', membership: $membership, expiresAt: $membership->ends_at);
+            }
+
+            // Told once, about what is new to them.
+            $told = $newPerks->concat($vouchers)->unique('id');
+            if ($told->isEmpty()) {
+                continue;
+            }
+            $this->notifyClient(
+                $membership->client,
+                'New in your membership',
+                ($membership->displayName() ?: 'Your membership') . ' now includes ' . $told->pluck('name')->implode(', ') . '.'
+                    . ($vouchers->isNotEmpty() ? ' Your new vouchers are in your wallet.' : ''),
+            );
+            $given++;
+        }
+
+        return $given;
     }
 
     // ── Progress (for the client app's "how to earn") ─────────────────────
@@ -522,6 +618,17 @@ class ProgramRewardService
             });
 
         $counts['birthday'] = $this->issueBirthdayVouchers();
+
+        // Perks added to a membership while the owner's save didn't reach everyone (or before
+        // this ran at all): today's members get what they are missing (giveNewPerks: never twice).
+        $counts['member_perks'] = 0;
+        CustomerProgram::with('items')->where('type', 'membership')
+            ->whereHas('items')
+            ->get()
+            ->filter(fn (CustomerProgram $p) => $this->enabledFor($p->spa_business_id))
+            ->each(function (CustomerProgram $p) use (&$counts) {
+                $counts['member_perks'] += DB::transaction(fn () => $this->giveNewPerks($p, $p->items->pluck('id')->all()));
+            });
 
         return $counts;
     }

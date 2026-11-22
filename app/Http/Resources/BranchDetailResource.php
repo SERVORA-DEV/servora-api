@@ -14,6 +14,7 @@ use App\Service\Client\BookingPolicy;
 use App\Service\Uploads\ImageUploadService;
 use App\Support\AppCache;
 use App\Support\Branches\BranchHoursCalculator;
+use App\Support\Catalog\FacilityCoverage;
 use App\Support\Catalog\ServiceKind;
 use App\Support\Programs\ProgramChannel;
 use App\Support\Visits\ReminderPolicy;
@@ -78,6 +79,8 @@ class BranchDetailResource extends JsonResource
         $display = $this->resource->displaySettings();
         $showRating = $display['show_reviews'] && $display['show_rating_badge'];
         $price = fn ($value) => (float) $value;
+        // What the facilities here can take (facility-based services need one).
+        $handled = FacilityCoverage::handledAt((int) $this->id);
 
         return [
             'uuid' => $this->uuid,
@@ -166,8 +169,12 @@ class BranchDetailResource extends JsonResource
             // for one branch (BranchService.is_available), so the relation would
             // advertise durations this branch doesn't actually offer. Same reason
             // custom_price is still read per row.
+            //
+            // A facility-based service (a sauna) is left out while no facility here has it
+            // turned on (FacilityCoverage): there would be nowhere to put the client.
             'services' => $this->services
-                ->filter(fn ($bs) => $bs->serviceVariant?->service !== null)
+                ->filter(fn ($bs) => $bs->serviceVariant?->service !== null
+                    && FacilityCoverage::offers($bs->serviceVariant->service->service_type, (int) $bs->serviceVariant->service->id, $handled))
                 ->groupBy(fn ($bs) => $bs->serviceVariant->service_id)
                 ->map(function ($rows) use ($price) {
                     $service = $rows->first()->serviceVariant->service;
@@ -180,6 +187,12 @@ class BranchDetailResource extends JsonResource
                         'description' => $service->description,
                         // Bookable as a home visit (the owner's tick).
                         'home_service_available' => (bool) $service->home_service_available && ServiceKind::canGoHome($service->service_type),
+                        // False for a facility-based service (a sauna): nobody does it, so the app
+                        // doesn't ask the client to choose a therapist for it.
+                        'needs_therapist' => ServiceKind::needsTherapist($service->service_type),
+                        // Stay as long as you like (a sauna): each option's minutes are a usual
+                        // stay, used for planning — the app shows "Open stay", not a length.
+                        'open_stay' => $service->isOpenStay(),
                         // Done by several staff at once: one part each, so the client can pick who
                         // does which (empty for a one-person service).
                         'parts' => $service->relationLoaded('parts')
@@ -213,7 +226,10 @@ class BranchDetailResource extends JsonResource
             // duration_minutes is what a booking of this package will take:
             // its fixed duration — the minutes each service has in it, plus
             // the add-ons that come with it (App\Support\Catalog\PackagePlan).
-            'packages' => $this->packages->map(function ($bp) use ($price) {
+            // A package with a facility-based service no facility here handles is left out too.
+            'packages' => $this->packages->filter(fn ($bp) => $bp->package->packageServiceItems
+                ->every(fn ($i) => ! $i->theService() || FacilityCoverage::offers($i->theService()->service_type, (int) $i->theService()->id, $handled)))
+                ->map(function ($bp) use ($price) {
                 $items = $bp->package->packageServiceItems->filter(fn ($i) => $i->theService() !== null)->values();
 
                 return [
@@ -224,6 +240,8 @@ class BranchDetailResource extends JsonResource
                     // How many clients one booking of it is for (a Couples Massage: 2): the app
                     // then asks for the others' details.
                     'client_count' => $bp->package->clients(),
+                    // False when every service in it is facility-based (ServiceParts::packageNeedsStaff).
+                    'needs_therapist' => $items->isEmpty() || $items->contains(fn ($i) => ServiceKind::needsTherapist($i->theService()->service_type)),
                     // Each service in it, with what it is worth in the package:
                     // a voucher for that service takes that much off.
                     'services' => $items->map(fn ($i) => [
@@ -232,7 +250,13 @@ class BranchDetailResource extends JsonResource
                         'category' => $i->theService()->category,
                         'price' => $i->unitPrice(),
                         'home_price' => (float) ($i->home_price ?? $i->guideVariant(true)?->price ?? 0),
+                        'open_stay' => $i->theService()->isOpenStay(),
                     ])->values(),
+                    // Something in it is an open stay: duration_minutes counts its usual stay.
+                    'open_stay' => $items->contains(fn ($i) => $i->theService()->isOpenStay()),
+                    // …and how many of duration_minutes that is, so the rest reads as "1h + open stay".
+                    'open_stay_minutes' => (int) $items->filter(fn ($i) => $i->theService()->isOpenStay())
+                        ->sum(fn ($i) => (int) ($i->minutes() ?? 0) * max(1, (int) $i->quantity)),
                     'included_services' => $items->map(fn ($i) => $i->theService()->name)
                         ->merge($bp->package->includedAddons()->map(fn ($row) => $row->addon->name))
                         ->values(),

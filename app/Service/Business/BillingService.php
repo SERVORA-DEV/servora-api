@@ -311,6 +311,11 @@ class BillingService
     public function applyReservedVoucher(Billing $billing): void
     {
         $appointment = Appointment::holdsVouchers() && $billing->appointment_id ? Appointment::find($billing->appointment_id) : null;
+        if ($appointment && ! $appointment->client_voucher_id && Appointment::holdsDiscounts() && $appointment->discount_program_id) {
+            $this->applyReservedDiscount($billing, $appointment);
+
+            return;
+        }
         if (! $appointment?->client_voucher_id) {
             return;
         }
@@ -341,6 +346,40 @@ class BillingService
 
         $billing->update($this->discountFields($subtotal, $type, $value, $discount, 'Voucher: ' . $program->name, null, $program, $voucher, (float) ($billing->credit_amount ?? 0)));
         $voucher->update(['status' => VoucherStatus::Used->value, 'used_at' => now(), 'used_billing_id' => $billing->id, 'used_by' => null]);
+        $this->settle($billing->fresh());
+    }
+
+    // The member discount a client booked with in the app (appointments.discount_program_id)
+    // goes on the bill when it is made, checked again as the front desk's would be (their
+    // membership may have ended since). When it can't, the bill stays at full price and the
+    // client is told why.
+    private function applyReservedDiscount(Billing $billing, Appointment $appointment): void
+    {
+        $program = CustomerProgram::withTrashed()->find($appointment->discount_program_id);
+        $client = $appointment->client;
+        $picked = $program && $client
+            ? app(ProgramRewardService::class)->memberDiscountFor($client, $program->uuid, ProgramChannel::whereOf($appointment))
+            : 'it is no longer offered';
+        $derived = is_string($picked) ? $picked : $this->programDiscount($billing, $picked);
+        $subtotal = (float) ($billing->subtotal ?? $billing->amount);
+        if (is_array($derived)) {
+            [$type, $value] = $derived;
+            $discount = $type === 'percent' ? round($subtotal * min($value, 100) / 100, 2) : round(min($value, $subtotal), 2);
+        }
+        if (! is_array($derived) || $discount <= 0) {
+            $appointment->update(['discount_program_id' => null]);
+            $name = $program?->name ? "Your member discount “{$program->name}”" : 'Your member discount';
+            $why = is_string($derived) && $derived !== '' ? rtrim($derived, '.') : 'it could not be used on this visit';
+            app(ClientNotifier::class)->appointment(
+                $appointment,
+                "Your member discount wasn't applied",
+                "{$name} couldn't be applied to your bill for booking {$appointment->appointment_number}: {$why}. The bill shows the full price. If you think this is a mistake, please ask the spa.",
+            );
+
+            return;
+        }
+
+        $billing->update($this->discountFields($subtotal, $type, $value, $discount, 'Discount: ' . $picked->name, null, $picked, null, (float) ($billing->credit_amount ?? 0)));
         $this->settle($billing->fresh());
     }
 

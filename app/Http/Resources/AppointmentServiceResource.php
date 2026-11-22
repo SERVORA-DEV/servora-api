@@ -23,6 +23,9 @@ class AppointmentServiceResource extends JsonResource
             // A facility has to be chosen before it can start (the booking's
             // own copy — AppointmentServiceItem::needsFacility).
             'facility_required' => $this->resource->needsFacility(),
+            // An open stay (a sauna): duration_minutes is its usual stay, never a limit — no
+            // "over time"; it ends when the client is checked out (its own copy).
+            'open_stay' => $this->resource->isOpenStay(),
             'duration_minutes' => $this->resource->lengthMinutes(),
             'quantity' => (int) $this->quantity,
             'sort_order' => (int) $this->sort_order,

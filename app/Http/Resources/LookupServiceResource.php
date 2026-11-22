@@ -33,6 +33,8 @@ class LookupServiceResource extends JsonResource
             'service_type' => ServiceKind::of($this->serviceVariant->service?->service_type),
             'facility_required' => Service::hasFacilityRequirement()
                 && ServiceKind::needsFacility($this->serviceVariant->service?->service_type, (bool) $this->serviceVariant->service?->facility_required),
+            // Stay as long as you like (a sauna): duration_minutes is a usual stay, for planning.
+            'open_stay' => (bool) $this->serviceVariant->service?->isOpenStay(),
             'description' => $this->serviceVariant->service?->description,
             'duration_minutes' => $this->serviceVariant->duration_minutes,
             'service_location' => $this->serviceVariant->service_location ?? 'In Spa',

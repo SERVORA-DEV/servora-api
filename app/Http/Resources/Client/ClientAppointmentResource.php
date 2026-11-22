@@ -91,6 +91,21 @@ class ClientAppointmentResource extends JsonResource
         ] : null;
     }
 
+    // The member discount the client booked with instead of a voucher.
+    private function bookedDiscount(): ?array
+    {
+        if (! Appointment::holdsDiscounts() || ! $this->discount_program_id) {
+            return null;
+        }
+        $program = $this->discountProgram;
+
+        return $program ? [
+            'uuid' => $program->uuid,
+            'name' => $program->name,
+            'deal' => app(\App\Service\Business\CustomerProgramService::class)->discountText($program),
+        ] : null;
+    }
+
     /** @return array{reschedules_used: ?int, reschedules_left: ?int} */
     private function rescheduleAllowance(): array
     {
@@ -198,6 +213,10 @@ class ClientAppointmentResource extends JsonResource
                     'price' => (float) $s->subtotal,
                     'status' => $s->status,
                     'package_name' => $s->sourceAppointmentPackage?->displayName(),
+                    // False for a facility-based service (a sauna): the app shows no therapist for it.
+                    'needs_therapist' => \App\Support\Catalog\ServiceKind::needsTherapist($s->kind()),
+                    // An open stay: duration_minutes is a usual stay, not a length (its own copy).
+                    'open_stay' => $s->isOpenStay(),
                 ]),
             'packages' => $this->packages->map(fn ($p) => [
                 'uuid' => $p->uuid,
@@ -253,6 +272,7 @@ class ClientAppointmentResource extends JsonResource
             // The voucher booked with (held for this booking, put on the bill
             // when it is made); null for none.
             'voucher' => $this->bookedVoucher(),
+            'member_discount' => $this->bookedDiscount(),
 
             'created_at' => optional($this->created_at)->toIso8601String(),
         ];

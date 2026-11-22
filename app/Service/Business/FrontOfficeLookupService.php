@@ -21,6 +21,7 @@ use App\Repository\Business\FacilityRepository;
 use App\Repository\Business\StaffRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Service\Client\BookingPolicy;
+use App\Support\Catalog\FacilityCoverage;
 use App\Support\Programs\ProgramChannel;
 use App\Support\Programs\ServicePromotions;
 use App\Support\Programs\VoucherTarget;
@@ -201,7 +202,13 @@ class FrontOfficeLookupService
     public function services(User $user)
     {
         $branchIds = $this->branchIds($user);
-        $rows = $this->branchServiceRepository->listBookableForBranches($branchIds);
+        // A facility-based service (a sauna) isn't offered at a branch where no facility has it
+        // turned on: there would be nowhere to put the client (FacilityCoverage).
+        $handled = FacilityCoverage::handledByBranch($branchIds);
+        $rows = $this->branchServiceRepository->listBookableForBranches($branchIds)
+            ->filter(fn ($row) => ! $row->serviceVariant?->service
+                || FacilityCoverage::offers($row->serviceVariant->service->service_type, (int) $row->serviceVariant->service->id, $handled[(int) $row->spa_branch_id] ?? []))
+            ->values();
 
         // Each service carries the vouchers and discounts that cover it (a small mark on the
         // menu; the Programs page has the details).
@@ -287,7 +294,14 @@ class FrontOfficeLookupService
             return LookupPackageResource::collection(collect());
         }
 
-        return LookupPackageResource::collection($this->branchPackageRepository->listBookableForBranches($this->branchIds($user)));
+        $branchIds = $this->branchIds($user);
+        $handled = FacilityCoverage::handledByBranch($branchIds);
+
+        // Nor a package with one in it.
+        return LookupPackageResource::collection($this->branchPackageRepository->listBookableForBranches($branchIds)
+            ->filter(fn ($row) => ! $row->package || $row->package->packageServiceItems->every(
+                fn ($item) => ! $item->theService() || FacilityCoverage::offers($item->theService()->service_type, (int) $item->theService()->id, $handled[(int) $row->spa_branch_id] ?? [])))
+            ->values());
     }
 
     // Backs the appointment modal's time-slot filtering. front_officer has

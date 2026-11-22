@@ -41,6 +41,8 @@ use Illuminate\Support\Facades\DB;
 // is given back as a warning with each choice — the desk decides.
 class ServiceExtensionService
 {
+    public const OPEN_STAY = 'An open stay has no time limit — the client stays until they are checked out.';
+
     public function __construct(
         private SpaBusinessRepository $spaBusinessRepository,
         private AppointmentRepository $appointmentRepository,
@@ -64,6 +66,10 @@ class ServiceExtensionService
         // An add-on is not a length of a service: there is nothing longer to move it to.
         if ($service->isAddon()) {
             return ['data' => ['can_extend' => false, 'reason' => 'An add-on rides with its main service — extend the main service, or add another add-on.', 'options' => []]];
+        }
+        // An open stay (a sauna) has no time limit: the client stays until they are checked out.
+        if ($service->isOpenStay()) {
+            return ['data' => ['can_extend' => false, 'reason' => self::OPEN_STAY, 'options' => []]];
         }
 
         $problem = ServiceExtension::problem(
@@ -171,6 +177,9 @@ class ServiceExtensionService
 
             if ($service->isAddon()) {
                 return response()->json(['message' => 'An add-on rides with its main service — extend the main service, or add another add-on.'], 422);
+            }
+            if ($service->isOpenStay()) {
+                return response()->json(['message' => self::OPEN_STAY], 422);
             }
 
             $fromPackage = $service->source_appointment_package_id !== null;

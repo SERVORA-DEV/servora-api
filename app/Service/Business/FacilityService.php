@@ -65,6 +65,9 @@ class FacilityService
         $model = $this->facilityRepository->create($payload);
         if ($serviceUuids !== null) {
             $model->services()->sync(Service::whereIn('uuid', $serviceUuids)->pluck('id'));
+            // What a facility takes decides which facility-based services the app offers
+            // (FacilityCoverage); a change to the list alone doesn't touch the facility row.
+            \App\Support\AppCache::bumpBusiness($business->id);
         }
 
         $this->managerChanges->tell(
@@ -115,6 +118,8 @@ class FacilityService
         $model = $this->facilityRepository->update($uuid, $payload);
         if ($serviceUuids !== null) {
             $model->services()->sync(Service::whereIn('uuid', $serviceUuids)->pluck('id'));
+            // The app's menu follows what facilities take (FacilityCoverage).
+            \App\Support\AppCache::bumpBusiness($business->id);
         }
 
         $this->managerChanges->tell(

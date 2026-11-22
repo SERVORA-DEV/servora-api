@@ -29,9 +29,17 @@ class LookupPackageResource extends JsonResource
             'includes' => $this->package->packageServiceItems
                 ->filter(fn ($item) => $item->theService() !== null)
                 ->map(fn ($item) => ($item->quantity > 1 ? "{$item->quantity} × " : '').$item->theService()->name
+                    // An open stay (a sauna) says so: no fixed time in the package.
+                    .($item->theService()->isOpenStay() ? ' (open stay)' : '')
                     // …and the add-ons that come with that service.
                     .$this->package->includedAddons()->where('service_id', $item->theService()->id)->map(fn ($row) => " + {$row->addon->name}")->implode(''))
                 ->values(),
+            // Something in it is an open stay: duration_minutes counts its usual stay, for planning.
+            'open_stay' => $this->package->packageServiceItems->contains(fn ($item) => (bool) $item->theService()?->isOpenStay()),
+            // …and how many of those minutes are its usual stay, so the rest reads as "1h + open stay".
+            'open_stay_minutes' => (int) $this->package->packageServiceItems
+                ->filter(fn ($item) => (bool) $item->theService()?->isOpenStay())
+                ->sum(fn ($item) => (int) ($item->minutes() ?? 0) * max(1, (int) $item->quantity)),
             'service_uuids' => $this->package->packageServiceItems
                 ->map(fn ($item) => $item->theService()?->uuid)
                 ->filter()->unique()->values(),

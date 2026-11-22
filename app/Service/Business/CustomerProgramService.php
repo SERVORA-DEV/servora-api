@@ -541,6 +541,14 @@ class CustomerProgramService
 
         $membership = $client->activeMembership()->with('program.items')->first();
         $memberItemIds = $membership?->perkIds() ?? [];
+        // The member discounts that can be booked with in the app (ProgramRewardService::memberDiscountFor).
+        $bookableIds = \App\Models\Appointment::holdsDiscounts() && $membership
+            && AppOnlyPrograms::usesHeld($client->usesApp())
+            && (! $membership->program || ProgramChannel::allows(ProgramChannel::of($membership->program), ProgramChannel::APP))
+            ? $catalogue->where('type', 'discount')
+                ->filter(fn ($p) => in_array($p->id, $memberItemIds, true) && ProgramChannel::allows(ProgramChannel::of($p), ProgramChannel::APP))
+                ->pluck('id')
+            : collect();
         $wallet = ClientVoucher::with('program')->where('client_id', $client->id)->where('status', VoucherStatus::Available->value)
             ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
             ->orderBy('expires_at')->get()
@@ -638,6 +646,12 @@ class CustomerProgramService
                 'members_only' => $p->audience === 'members',
                 'channel' => ProgramChannel::of($p),
                 'locked' => $p->audience === 'members' && ! in_array($p->id, $memberItemIds, true),
+                // A discount this client's membership includes: the app offers it to book with,
+                // instead of a voucher (one program a booking). `kind`/`value` work out what it
+                // takes off, as the bill will (percent of the total, or pesos).
+                'bookable' => $bookableIds->contains($p->id),
+                'kind' => ($membership ? $membership->held($p) : $p)->value('kind') === '₱' ? 'amount' : 'percent',
+                'value' => (float) ($membership ? $membership->held($p) : $p)->value('percent', 0),
             ])->values(),
             'memberships' => $catalogue->where('type', 'membership')->map(fn ($p) => [
                 'program_uuid' => $p->uuid,
@@ -809,7 +823,13 @@ class CustomerProgramService
             $ids = CustomerProgram::whereIn('uuid', $uuids)->where('spa_business_id', $business->id)
                 ->where(fn ($q) => $q->where('type', 'voucher')->orWhere(fn ($d) => $d->where('type', 'discount')->where('audience', 'members')))
                 ->pluck('id')->all();
+            $before = $program->items()->pluck('customer_programs.id')->map(fn ($id) => (int) $id)->all();
             $program->items()->sync($ids);
+            // Added to the bundle: today's members get it too, not only those who join from now.
+            $added = array_values(array_diff(array_map('intval', $ids), $before));
+            if ($added) {
+                $this->rewards->giveNewPerks($program, $added);
+            }
         }
     }
 

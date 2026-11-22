@@ -333,20 +333,31 @@ class SpaBranchService
             $home = $home || (bool) $own?->isHomeService();
         }
 
+        $package = ! empty($query['package_uuid'])
+            ? \App\Models\Package::where('uuid', $query['package_uuid'])->where('spa_business_id', $branch->spa_business_id)->first()
+            : null;
+        $variants = $query['service_variant_uuids'] ?? [];
+        $need = match (true) {
+            // Only facility-based services (a sauna): no therapist is held for it.
+            $package !== null && ! \App\Support\Catalog\ServiceParts::packageNeedsStaff($package) => 0,
+            // A package for several clients holds a staff member for each of them.
+            $package !== null => max(\App\Support\Catalog\ServiceParts::needOfVariants($variants), $package->clients()),
+            default => \App\Support\Catalog\ServiceParts::needOfVariants($variants),
+        };
+
+        // A facility-based service (a sauna) is only offered when a facility for it is free.
+        $serviceIds = \App\Models\ServiceVariant::whereIn('uuid', $variants)->pluck('service_id')
+            ->merge($package ? \App\Support\Catalog\ServiceParts::packageServiceIds($package) : []);
+
         return ['data' => app(BookingSlotService::class)->slots(
             $branch,
             $query['date'],
             (int) $query['duration_minutes'],
-            $therapist,
+            $need === 0 ? null : $therapist,
             $excludeId,
             $home,
-            max(
-                \App\Support\Catalog\ServiceParts::needOfVariants($query['service_variant_uuids'] ?? []),
-                // A package for several clients holds a staff member for each of them.
-                ! empty($query['package_uuid'])
-                    ? (int) (\App\Models\Package::where('uuid', $query['package_uuid'])->where('spa_business_id', $branch->spa_business_id)->first()?->clients() ?? 1)
-                    : 1,
-            ),
+            $need,
+            \App\Support\Catalog\ServiceParts::roomServices($serviceIds),
         )];
     }
 

@@ -500,6 +500,16 @@ class AppointmentBookingService
                 Appointment::whereKey($appointment->id)->update(['client_voucher_id' => $voucher->id]);
             }
 
+            // Or a discount their membership includes, held the same way. One program a booking:
+            // the request refuses a voucher and a discount together.
+            if (! empty($payload['discount_program_uuid'])) {
+                throw_if(! Appointment::holdsDiscounts(), ActionRefused::class, 'Member discounts can\'t be booked in the app yet. Ask the spa to apply it at the counter.');
+                throw_if(! empty($payload['voucher_uuid']) || ! empty($payload['first_visit_program_uuid']), ActionRefused::class, 'Use either a voucher or your member discount on a booking, not both.');
+                $discount = app(ProgramRewardService::class)->memberDiscountFor($client, $payload['discount_program_uuid'], ProgramChannel::APP);
+                throw_if(is_string($discount), ActionRefused::class, is_string($discount) ? $discount : '');
+                Appointment::whereKey($appointment->id)->update(['discount_program_id' => $discount->id]);
+            }
+
             $warnings = [];
 
             // Every service on a home visit must be one the owner marked for
@@ -524,6 +534,11 @@ class AppointmentBookingService
             );
             throw_if($serviceTimeProblem !== null, ActionRefused::class, (string) $serviceTimeProblem);
 
+            $need = ServiceParts::needOf($appointment);
+            // Only facility-based services (a sauna): nobody does it, so a therapist sent with it is dropped.
+            if ($need === 0) {
+                unset($payload['requested_therapist_uuid']);
+            }
             $requestedStaff = ! empty($payload['requested_therapist_uuid'])
                 ? $this->assignments->resolveStaffForBranch($payload['requested_therapist_uuid'], $branch->id)
                 : null;
@@ -535,7 +550,8 @@ class AppointmentBookingService
                 $requestedStaff,
                 $appointment->id,
                 (bool) $home,
-                ServiceParts::needOf($appointment),
+                $need,
+                ServiceParts::roomServicesOf($appointment),
             );
             throw_if($slotProblem !== null, ActionRefused::class, (string) $slotProblem);
 

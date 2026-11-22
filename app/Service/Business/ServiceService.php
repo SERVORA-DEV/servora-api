@@ -104,14 +104,21 @@ class ServiceService
         if (! Service::hasFacilityRequirement()) {
             unset($payload['facility_required']);
         }
+        if (! Service::hasOpenStay()) {
+            unset($payload['open_stay']);
+        }
 
         if (! Service::hasTypes()) {
-            unset($payload['service_type']);
+            unset($payload['service_type'], $payload['open_stay']);
 
             return $payload;
         }
 
         $kind = $payload['service_type'] ?? $existing?->service_type;
+        // Only a facility-based service can be an open stay; changed to another kind, it isn't one.
+        if (Service::hasOpenStay() && ServiceKind::of($kind) !== ServiceKind::FACILITY) {
+            $payload['open_stay'] = false;
+        }
         if (! ServiceKind::needsTherapist($kind)) {
             $payload['home_service_available'] = false;
         }

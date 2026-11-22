@@ -51,6 +51,9 @@ class ServiceRequest extends FormRequest
             // A facility has to be chosen before the front desk may start it
             // (always true for a facility-based service — ServiceService).
             'facility_required' => ['sometimes', 'boolean'],
+            // A facility-based service the client stays in as long as they like: its lengths are
+            // a usual stay, used only for planning (Service::isOpenStay). Off for any other kind.
+            'open_stay' => ['sometimes', 'boolean'],
 
             // Provenance for a service started from an admin template.
             // Constrained to actual template rows so it can't be pointed at
@@ -156,6 +159,12 @@ class ServiceRequest extends FormRequest
                 }
                 if (! ServiceKind::hasLengths($kind) && $count !== 1) {
                     $validator->errors()->add('variants', 'A procedure-based service has one price — keep a single option.');
+                }
+                // An open stay has one price too: its one option's length is the usual stay.
+                $openStay = $this->has('open_stay') ? $this->boolean('open_stay')
+                    : ($serviceUuid ? (bool) Service::where('uuid', $serviceUuid)->value('open_stay') : false);
+                if (Service::hasOpenStay() && $kind === ServiceKind::FACILITY && $openStay && $count !== 1) {
+                    $validator->errors()->add('variants', 'An open stay has one price — keep a single option. Its length is the usual stay, used only for planning.');
                 }
             }
 

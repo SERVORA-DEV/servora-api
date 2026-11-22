@@ -5,10 +5,12 @@ namespace App\Service\Client;
 use App\Enums\AppointmentStatus;
 use App\Enums\AssignmentStatus;
 use App\Enums\AttendanceStatus;
+use App\Enums\FacilityStatus;
 use App\Enums\StaffStatus;
 use App\Models\Appointment;
 use App\Models\Attendance;
 use App\Models\BranchSchedule;
+use App\Models\Facility;
 use App\Models\SpaBranch;
 use App\Models\Staff;
 use App\Models\StaffSchedule;
@@ -18,6 +20,7 @@ use App\Service\Business\HomeServiceRules;
 use App\Support\Branches\BranchClosures;
 use App\Support\Branches\BranchOpenWindows;
 use App\Support\Branches\HourlyCapacity;
+use App\Support\Visits\RoomCapacity;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -35,7 +38,10 @@ use Illuminate\Support\Collection;
 //    A requested therapist must also be on shift and not already booked;
 //  - the hour has room: the owner's "bookings per hour" limit counts the
 //    reservations whose start falls in the same clock hour (8:34 is in the
-//    8 PM hour — App\Support\Branches\HourlyCapacity).
+//    8 PM hour — App\Support\Branches\HourlyCapacity);
+//  - a facility-based service (a sauna) has a facility free for it: one with the
+//    service turned on, in rotation, with room for one more client.
+//    A booking of only those needs no therapist at all (ServiceParts::staffFor).
 //
 // Everything for the day is loaded once (a handful of queries) and checked
 // in memory, so listing a whole day of slots costs the same as one check.
@@ -60,8 +66,10 @@ class BookingSlotService
     public function __construct(private AppointmentAvailabilityService $availabilityService) {}
 
     // @return array{date: string, duration_minutes: int, closed_reason: ?string, slots: list<array{time: string, available: bool, reason: ?string}>, hours: list<array{hour: string, booked: int, limit: int, full: bool}>}
-    // $need: staff the booking needs at once (a service done by several staff; ServiceParts::needOf).
-    public function slots(SpaBranch $branch, string $date, int $duration, ?Staff $therapist = null, ?int $excludeAppointmentId = null, bool $home = false, int $need = 1): array
+    // $need: staff the booking needs at once (a service done by several staff; ServiceParts::needOf),
+    // 0 for facility-based services only. $roomServices: its facility-based services (service ids,
+    // ServiceParts::roomServices), each needing a facility free for it.
+    public function slots(SpaBranch $branch, string $date, int $duration, ?Staff $therapist = null, ?int $excludeAppointmentId = null, bool $home = false, int $need = 1, array $roomServices = []): array
     {
         $duration = max($duration, 1);
         $policy = BookingPolicy::for($branch);
@@ -81,7 +89,7 @@ class BookingSlotService
             return $result;
         }
 
-        $ctx = $this->loadDay($branch, $date, $excludeAppointmentId, $home);
+        $ctx = $this->loadDay($branch, $date, $excludeAppointmentId, $home, $roomServices !== []);
         $hourLimit = HourlyCapacity::limitFor($branch);
         $hourCounts = $hourLimit > 0 ? HourlyCapacity::bookedByHour($branch->id, $date, $excludeAppointmentId) : [];
         $hours = [];
@@ -97,7 +105,8 @@ class BookingSlotService
                 $end->gt($closeAt) => 'past_closing',
                 (bool) $this->closureProblem($day, $start, $end) => 'closed',
                 HourlyCapacity::isFull($hourLimit, $hourCounts[$start->hour] ?? 0) => 'hour_full',
-                default => $this->capacityProblem($ctx, $date, $start, $end, $therapist, $need),
+                default => $this->capacityProblem($ctx, $date, $start, $end, $therapist, $need)
+                    ?? $this->roomProblem($ctx, $start, $end, $roomServices),
             };
             $hours[] = $start->hour;
             $result['slots'][] = [
@@ -114,7 +123,7 @@ class BookingSlotService
 
     // Why this exact booking can't be made, or null. Booking and reschedule
     // call this after the policy checks.
-    public function bookingProblem(SpaBranch $branch, string $date, string $time, int $duration, ?Staff $therapist = null, ?int $excludeAppointmentId = null, bool $home = false, int $need = 1): ?string
+    public function bookingProblem(SpaBranch $branch, string $date, string $time, int $duration, ?Staff $therapist = null, ?int $excludeAppointmentId = null, bool $home = false, int $need = 1, array $roomServices = []): ?string
     {
         $duration = max($duration, 1);
         $day = $this->dayWindow($branch->id, $date);
@@ -143,10 +152,13 @@ class BookingSlotService
             return $hourProblem;
         }
 
-        $problem = $this->capacityProblem($this->loadDay($branch, $date, $excludeAppointmentId, $home), $date, $start, $end, $therapist, $need);
+        $ctx = $this->loadDay($branch, $date, $excludeAppointmentId, $home, $roomServices !== []);
+        $problem = $this->capacityProblem($ctx, $date, $start, $end, $therapist, $need)
+            ?? $this->roomProblem($ctx, $start, $end, $roomServices);
 
         return match ($problem) {
             null => null,
+            'room_full' => 'Every facility for that service is taken at that time. Please pick another time.',
             'therapist_not_home' => HomeServiceRules::staffRefusal($therapist),
             'therapist_unavailable' => "{$this->nameOf($therapist)} isn't free at that time. Please pick another time or therapist.",
             default => 'That time just filled up. Please pick another time.',
@@ -416,7 +428,7 @@ class BookingSlotService
 
     // Therapists, their shifts and leave, and the day's bookings as busy
     // windows (each tagged with the therapists assigned to it, if any).
-    private function loadDay(SpaBranch $branch, string $date, ?int $excludeAppointmentId, bool $home = false): array
+    private function loadDay(SpaBranch $branch, string $date, ?int $excludeAppointmentId, bool $home = false, bool $withRooms = false): array
     {
         $all = Staff::where('spa_branch_id', $branch->id)
             ->where('role', 'therapist')
@@ -442,11 +454,16 @@ class BookingSlotService
         $needs = \App\Models\Service::staffNeededFor($busy->flatMap(fn (Appointment $a) => $a->services->map(fn ($s) => $s->serviceVariant?->service_id)));
         // A package bought for several clients holds the staff for those not added yet.
         $open = \App\Support\Catalog\SharedPackages::openSlotsFor($busy->pluck('id'));
+        $kinds = \App\Models\Service::whereIn('id', $busy->flatMap(fn (Appointment $a) => $a->services->map(fn ($s) => $s->serviceVariant?->service_id))->filter()->unique()->values())
+            ->pluck('service_type', 'id');
         $busy = $busy
-            ->map(function (Appointment $a) use ($date, $needs, $open) {
+            ->map(function (Appointment $a) use ($date, $needs, $open, $kinds) {
                 // A home visit keeps its staff for the trip there and back too (HomeServiceRules).
                 [$start, $end] = \App\Service\Business\HomeServiceRules::blockedWindow($a, max($this->availabilityService->estimatedDurationMinutes($a), 30));
-                $need = max((int) $a->services->map(fn ($s) => $needs[$s->serviceVariant?->service_id] ?? 1)->push(1)->max(), 1 + ($open[$a->id] ?? 0));
+                // Only facility-based services (a sauna): it holds no therapist.
+                $need = $this->facilityOnly($a, $kinds)
+                    ? 0
+                    : max((int) $a->services->map(fn ($s) => $needs[$s->serviceVariant?->service_id] ?? 1)->push(1)->max(), 1 + ($open[$a->id] ?? 0));
 
                 return [
                     'need' => $need,
@@ -455,7 +472,11 @@ class BookingSlotService
                     'home' => $a->isHomeService(),
                     'staff' => $a->services
                         ->flatMap(fn ($s) => $s->therapistAssignments->whereIn('assignment_status', [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value])->pluck('staff_id'))
-                        ->unique()->values()->all(),
+                        ->filter()->unique()->values()->all(),
+                    // The facilities it is in (a client each).
+                    'rooms' => $a->services
+                        ->flatMap(fn ($s) => $s->therapistAssignments->whereIn('assignment_status', [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value])->pluck('facility_id'))
+                        ->filter()->map(fn ($id) => (int) $id)->unique()->values()->all(),
                 ];
             });
 
@@ -468,7 +489,69 @@ class BookingSlotService
         // A home visit being booked keeps its staff for the trip there and back too.
         $travel = $home ? \App\Service\Business\HomeServiceRules::travelMinutes($branch->id) : 0;
 
-        return ['therapists' => $therapists, 'others' => $others, 'home' => $home, 'travel' => $travel, 'schedules' => $schedules, 'prevSchedules' => $prevSchedules, 'onLeave' => $onLeave, 'busy' => $busy];
+        return ['therapists' => $therapists, 'others' => $others, 'home' => $home, 'travel' => $travel, 'schedules' => $schedules, 'prevSchedules' => $prevSchedules, 'onLeave' => $onLeave, 'busy' => $busy,
+            // Facilities only when a facility-based service is being booked (and never for a home visit).
+            'rooms' => $withRooms && ! $home ? $this->loadRooms($branch) : collect()];
+    }
+
+    /** Every live line of the booking is a facility-based service (ServiceKind::needsTherapist). */
+    private function facilityOnly(Appointment $a, Collection $kinds): bool
+    {
+        $ids = $a->services
+            ->reject(fn ($s) => $s->status === \App\Enums\AppointmentServiceStatus::Cancelled->value)
+            ->map(fn ($s) => $s->serviceVariant?->service_id)
+            ->filter();
+
+        return $ids->isNotEmpty() && $ids->every(fn ($id) => ! \App\Support\Catalog\ServiceKind::needsTherapist($kinds[$id] ?? null));
+    }
+
+    // The branch's facilities a booking could be put in (in rotation, not under maintenance), with
+    // how many clients each holds and the services it has turned on.
+    private function loadRooms(SpaBranch $branch): Collection
+    {
+        $rooms = Facility::with('services:id')
+            ->where('spa_branch_id', $branch->id)
+            ->where('is_available', true)
+            ->where(fn ($q) => $q->whereNull('status')->orWhere('status', '!=', FacilityStatus::Maintenance->value))
+            ->get();
+
+        return $rooms->map(fn (Facility $f) => [
+            'id' => $f->id,
+            'limit' => $f->clientLimit(),
+            'services' => $f->services->pluck('id')->all(),
+        ]);
+    }
+
+    // 'room_full' when a facility-based service in the booking ($roomServices, service ids) has no
+    // facility free for it then: one that has the service turned on (FacilityCoverage), is in use
+    // and has room for one more client. None at all (or all under maintenance): no time is free.
+    private function roomProblem(array $ctx, Carbon $start, Carbon $end, array $roomServices): ?string
+    {
+        if (! $roomServices) {
+            return null;
+        }
+        $rooms = $ctx['rooms'] ?? collect();
+        $overlapping = $ctx['busy']->filter(fn ($b) => ! empty($b['rooms']) && $start->lt($b['end']) && $end->gt($b['start']));
+
+        foreach ($roomServices as $serviceId) {
+            $suitable = $rooms->filter(fn ($r) => in_array($serviceId, $r['services'], true));
+            if ($suitable->isEmpty()) {
+                return 'room_full';
+            }
+            $free = $suitable->contains(function ($r) use ($overlapping, $start, $end) {
+                $windows = $overlapping
+                    ->filter(fn ($b) => in_array($r['id'], $b['rooms'], true))
+                    ->map(fn ($b) => [max($b['start']->getTimestamp(), $start->getTimestamp()), min($b['end']->getTimestamp(), $end->getTimestamp())])
+                    ->values()->all();
+
+                return RoomCapacity::hasSpace(RoomCapacity::peak($windows), $r['limit']);
+            });
+            if (! $free) {
+                return 'room_full';
+            }
+        }
+
+        return null;
     }
 
     // null = bookable; 'full' = no therapist left; 'therapist_unavailable'
@@ -481,6 +564,11 @@ class BookingSlotService
         // A home visit keeps its staff from the travel time before it to the travel time after it.
         $start = $start->copy()->subMinutes($ctx['travel'] ?? 0);
         $end = $end->copy()->addMinutes($ctx['travel'] ?? 0);
+
+        // Only facility-based services (a sauna): nobody is assigned, so the therapists don't limit it.
+        if ($need <= 0) {
+            return null;
+        }
 
         $overlapping = $ctx['busy']->filter(fn ($b) => $start->lt($b['end']) && $end->gt($b['start']));
         $takenStaff = $overlapping->flatMap(fn ($b) => $b['staff'])->unique()->all();
@@ -522,7 +610,7 @@ class BookingSlotService
         }
 
         // This booking needs $need of them (more than one for a service done by several staff).
-        return $free >= $needed + max(1, $need) ? null : 'full';
+        return $free >= $needed + $need ? null : 'full';
     }
 
     private function onShift(array $ctx, int $staffId, string $date, Carbon $start, Carbon $end): bool

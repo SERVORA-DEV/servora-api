@@ -68,6 +68,8 @@ class Appointment extends Model
         'remarks',
         // The voucher the client booked with (Appointment::holdsVouchers).
         'client_voucher_id',
+        // Or the member discount they booked with instead (Appointment::holdsDiscounts).
+        'discount_program_id',
         // Booking rules someone went ahead despite, each with its reason
         // (App\Service\Business\PolicyGate).
         'policy_overrides',
@@ -183,6 +185,28 @@ class Appointment extends Model
         $ready ? Cache::forever('schema:client_voucher_id', true) : Cache::put('schema:client_voucher_id', false, 60);
 
         return $ready;
+    }
+
+    /**
+     * Whether appointments.discount_program_id exists yet (the migration has
+     * been run). Until then the app isn't offered a member discount to book with.
+     */
+    public static function holdsDiscounts(): bool
+    {
+        $known = Cache::get('schema:discount_program_id');
+        if (is_bool($known)) {
+            return $known;
+        }
+        $ready = Schema::hasColumn('appointments', 'discount_program_id');
+        $ready ? Cache::forever('schema:discount_program_id', true) : Cache::put('schema:discount_program_id', false, 60);
+
+        return $ready;
+    }
+
+    // The member discount the client booked with (Appointment::holdsDiscounts).
+    public function discountProgram()
+    {
+        return $this->belongsTo(CustomerProgram::class, 'discount_program_id')->withTrashed();
     }
 
     /**

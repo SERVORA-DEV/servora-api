@@ -46,6 +46,8 @@ class AppointmentServiceItem extends Model
         // Whether a facility had to be chosen before it could start, as it
         // was when booked (null: booked before this existed).
         'facility_required',
+        // An open stay (Service::isOpenStay), as it was when booked: untimed, ends at check-out.
+        'open_stay',
         'service_category',
         'quantity',
         'sort_order',
@@ -74,6 +76,7 @@ class AppointmentServiceItem extends Model
             'extra_charge' => 'decimal:2',
             'refunded_amount' => 'decimal:2',
             'facility_required' => 'boolean',
+            'open_stay' => 'boolean',
         ];
     }
 
@@ -139,6 +142,19 @@ class AppointmentServiceItem extends Model
             $this->facility_required = ServiceKind::needsFacility($this->service_type, (bool) $service?->facility_required);
         }
         $this->service_category = $service?->category;
+        if (Service::hasOpenStay()) {
+            $this->open_stay = (bool) $service?->isOpenStay();
+        }
+    }
+
+    /** Booked as an open stay (Service::isOpenStay): its length is a usual stay, never a limit. */
+    public function isOpenStay(): bool
+    {
+        if (! Service::hasOpenStay() || $this->addon_id !== null) {
+            return false;
+        }
+
+        return (bool) History::own($this->open_stay, fn () => $this->serviceVariant?->service?->isOpenStay());
     }
 
     // ── What it was when it was booked — its own copy first, the menu only

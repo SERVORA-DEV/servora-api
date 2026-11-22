@@ -256,6 +256,7 @@ class ClientBookingService
                 $appointment->id,
                 $appointment->isHomeService(),
                 \App\Support\Catalog\ServiceParts::needOf($appointment->loadMissing('services.serviceVariant')),
+                \App\Support\Catalog\ServiceParts::roomServicesOf($appointment),
             );
             if ($slotProblem) {
                 return response()->json(['message' => $slotProblem], 422);

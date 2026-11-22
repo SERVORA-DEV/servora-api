@@ -48,6 +48,8 @@ class PackageResource extends JsonResource
                     'name' => $item->theService()->name,
                     'category' => $item->theService()->category,
                     'service_type' => ServiceKind::of($item->theService()->service_type),
+                    // An open stay (a sauna): its minutes here are a usual stay, for planning.
+                    'open_stay' => $item->theService()->isOpenStay(),
                     'duration_minutes' => $item->minutes(),
                     'home_duration_minutes' => $item->home_duration_minutes,
                     'home_price' => $item->home_price !== null ? (float) $item->home_price : null,

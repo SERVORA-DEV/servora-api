@@ -144,6 +144,8 @@ class BranchDetailResourceTest extends TestCase
         // Nobody performs a sauna: even a stale tick on it doesn't make it bookable at home.
         [$sauna] = $this->offer('Sauna Steam Bath', [60 => 450], ['service_type' => 'facility', 'facility_required' => true]);
         $sauna->forceFill(['home_service_available' => true])->saveQuietly();
+        // A sauna room, so the sauna is offered at all (FacilityCoverage).
+        \App\Models\Facility::factory()->create(['spa_branch_id' => $this->branch->id, 'name' => 'Sauna Room'])->services()->attach($sauna->id);
         $this->homeOption($sauna, 60, 700);
 
         $row = $this->serviceNamed('Sauna Steam Bath');
