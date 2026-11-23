@@ -141,7 +141,8 @@ class ClientAppointmentResource extends JsonResource
         // Each therapist once, with the part they do of a service done by several at once
         // ("Upper body"); part is null otherwise.
         $therapists = $this->services
-            ->flatMap(fn ($s) => $s->therapistAssignments->whereNotIn('assignment_status', [AssignmentStatus::Cancelled->value])->filter(fn ($a) => $a->staff)->map(fn ($a) => ['staff' => $a->staff, 'part' => $a->part_name]))
+            // Not one who handed the service over to someone else (ServicePause).
+            ->flatMap(fn ($s) => $s->therapistAssignments->whereNotIn('assignment_status', [AssignmentStatus::Cancelled->value, AssignmentStatus::HandedOver->value])->filter(fn ($a) => $a->staff)->map(fn ($a) => ['staff' => $a->staff, 'part' => $a->part_name]))
             ->unique(fn ($row) => $row['staff']->id)
             ->map(fn ($row) => ['uuid' => $row['staff']->uuid, 'name' => trim("{$row['staff']->first_name} {$row['staff']->last_name}"), 'part' => $row['part']])
             ->values();

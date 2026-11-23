@@ -25,6 +25,11 @@ Route::controller(AppointmentServiceController::class)->group(function () {
 
         Route::post('start', 'startService')->middleware('permission:appointment_complete');
         Route::post('complete', 'completeService')->middleware('permission:appointment_complete');
+        // The client steps out: the clock stops, the therapist and room stay held. While
+        // paused, another therapist (and room) can take over (App\Support\Visits\ServicePause).
+        Route::post('pause', 'pauseService')->middleware('permission:appointment_complete');
+        Route::post('resume', 'resumeService')->middleware('permission:appointment_complete');
+        Route::post('change-therapist', 'changeTherapist')->middleware('permission:appointment_update');
 
         // The client wants longer: a longer length of the same service.
         Route::get('extend-options', 'extendOptions')->middleware('permission:appointment_view');

@@ -218,7 +218,7 @@ class FrontOfficeDashboardService
         $rows = $query->with([
             'client',
             'services.serviceVariant.service',
-            'services.therapistAssignments' => fn ($q) => $q->where('assignment_status', '!=', AssignmentStatus::Cancelled->value),
+            'services.therapistAssignments' => fn ($q) => $q->whereNotIn('assignment_status', [AssignmentStatus::Cancelled->value, AssignmentStatus::HandedOver->value]),
             'services.therapistAssignments.staff',
             'services.therapistAssignments.facility',
             'queue',

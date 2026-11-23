@@ -23,6 +23,7 @@ use App\Support\Visits\RotationTurn;
 use App\Support\Catalog\ServiceKind;
 use App\Support\Catalog\ServiceParts;
 use App\Support\Visits\StaleVisit;
+use App\Support\Visits\ServicePause;
 use Carbon\Carbon;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Support\Facades\DB;
@@ -858,6 +859,279 @@ class VisitAssignmentService
             ->first();
     }
 
+    // ── Change of therapist while paused (App\Support\Visits\ServicePause) ──
+
+    // The client wants someone else, or the therapist can't go on: while the service is paused
+    // the front desk gives it to another therapist who is available now (timed in, qualified,
+    // not off, not busy). The one who stopped is marked Handed Over — they keep when they
+    // worked, and are free at once; the new one carries on from the same point (the clock
+    // continues where it was) and is paid for the service on completing it. Optionally in
+    // another room. The services of the same sitting (same staff, same room) go with it.
+    //
+    // $payload: staff_uuid (the new one), reason, facility_uuid? (another room),
+    // assignment_uuid? (who is replaced, when several do the service at once).
+    public function changeTherapist(User $user, string $appointmentServiceUuid, array $payload, ?\Illuminate\Http\Request $request = null)
+    {
+        if (! ServicePause::ready()) {
+            return response()->json(['message' => 'Changing the therapist of a service in progress is not available yet.'], 422);
+        }
+        if (! $this->spaBusinessRepository->findForUser($user)) {
+            return response()->json(['message' => 'No spa business found for this account.'], 422);
+        }
+        $branchIds = $this->branchIds($user);
+
+        return DB::transaction(function () use ($branchIds, $appointmentServiceUuid, $payload, $user, $request) {
+            $service = AppointmentServiceItem::whereHas('appointment', fn ($q) => $q->whereIn('spa_branch_id', $branchIds))
+                ->where('uuid', $appointmentServiceUuid)
+                ->lockForUpdate()
+                ->with('serviceVariant', 'appointment', 'therapistAssignments')
+                ->firstOrFail();
+            $appointment = $service->appointment;
+
+            if ($refusal = $this->addonFollows($service, 'changes therapist')) {
+                return $refusal;
+            }
+            if ($stale = StaleVisit::refusal($appointment)) {
+                return $stale;
+            }
+            if ($service->status !== AppointmentServiceStatus::InProgress->value || ! ServicePause::isPaused($service)) {
+                return response()->json(['message' => 'Pause the service first, then change the therapist.'], 422);
+            }
+            if ($appointment->isHomeService()) {
+                return response()->json(['message' => 'A home visit keeps its therapist: they are at the client\'s home.'], 422);
+            }
+            if (! ServiceKind::needsTherapist($this->kindOf($service))) {
+                return response()->json(['message' => 'This service needs no staff.'], 422);
+            }
+
+            // Who is replaced: the one doing it, or the one named when several do it at once.
+            $working = $service->therapistAssignments
+                ->where('assignment_status', AssignmentStatus::InProgress->value)
+                ->whereNotNull('staff_id')
+                ->values();
+            $old = ! empty($payload['assignment_uuid'])
+                ? $working->firstWhere('uuid', $payload['assignment_uuid'])
+                : ($working->count() === 1 ? $working->first() : null);
+            if (! $old) {
+                return response()->json(['message' => $working->isEmpty()
+                    ? 'Nobody is doing this service to be replaced.'
+                    : 'Choose which therapist to replace.'], 422);
+            }
+
+            $staff = $this->resolveStaffForBranch((string) $payload['staff_uuid'], $appointment->spa_branch_id);
+            if (! $staff) {
+                return response()->json(['message' => 'Staff member not found or inactive at this branch.'], 422);
+            }
+            if ($staff->id === $old->staff_id) {
+                return response()->json(['message' => 'That therapist is already doing this service.'], 422);
+            }
+
+            // The services of this sitting (same staff, same room), all paused together.
+            $lines = app(ServiceExecutionService::class)->sittingMates($service, AppointmentServiceStatus::InProgress->value)
+                ->prepend($service)
+                ->filter(fn (AppointmentServiceItem $line) => ServicePause::isPaused($line))
+                ->values();
+            $lines->each(fn (AppointmentServiceItem $line) => $line->loadMissing('serviceVariant', 'therapistAssignments'));
+
+            // A package's services run one after another in one sitting, all in progress until the
+            // package is completed. Those whose time had run out when it was paused are done: they
+            // are completed for the one who did them (and paid to them). Only the rest is handed
+            // over, its clock going on from where the finished ones ended.
+            [$finished, $lines, $carryOnFrom] = $this->finishedBeforePause($lines, (int) $old->staff_id);
+
+            if ($problem = $this->takeOverProblem($staff, $appointment, $lines)) {
+                return response()->json(['message' => $problem], 422);
+            }
+
+            $facility = null;
+            if (! empty($payload['facility_uuid'])) {
+                $facility = Facility::where('uuid', $payload['facility_uuid'])->where('spa_branch_id', $appointment->spa_branch_id)->first();
+                if (! $facility) {
+                    return response()->json(['message' => 'Facility not found at this branch.'], 422);
+                }
+                foreach ($lines as $line) {
+                    $mine = $line->therapistAssignments->where('assignment_status', AssignmentStatus::InProgress->value)->firstWhere('staff_id', $old->staff_id);
+                    if ((int) $facility->id !== (int) $mine?->facility_id) {
+                        $check = $this->checkRoomEligibility($facility, $appointment, $line, $mine?->id);
+                        if (! $check['ok']) {
+                            return response()->json(['message' => $check['reason']], 422);
+                        }
+                    }
+                }
+            }
+
+            $reason = trim((string) ($payload['reason'] ?? ''));
+            $newName = trim("{$staff->first_name} {$staff->last_name}");
+            foreach ($finished as $done) {
+                app(ServiceExecutionService::class)->completeFinishedLine($done['line'], $done['from'], $done['to']);
+                app(\App\Repository\AuditLogRepository::class)->record(
+                    $user->id, 'appointment_services', $done['line']->id, 'Update',
+                    ['service' => $done['line']->displayName(), 'status' => AppointmentServiceStatus::InProgress->value],
+                    ['service' => $done['line']->displayName(), 'status' => AppointmentServiceStatus::Completed->value, 'therapist' => $old->staffName(), 'reason' => 'Done before the package was handed over'],
+                    $request,
+                );
+            }
+            foreach ($lines as $line) {
+                $ids = collect([$line->id])->merge($line->addons()->pluck('id'))->all();
+                $rows = TherapistAssignment::whereIn('appointment_service_id', $ids)
+                    ->where('assignment_status', AssignmentStatus::InProgress->value)
+                    ->where('staff_id', $old->staff_id)
+                    ->get();
+                foreach ($rows as $row) {
+                    $this->handOver($row, $staff, $facility, Carbon::parse($line->paused_at), $reason, $newName, $carryOnFrom);
+                }
+                app(\App\Repository\AuditLogRepository::class)->record(
+                    $user->id, 'appointment_services', $line->id, 'Replace',
+                    ['therapist' => $old->staffName()],
+                    array_filter(['service' => $line->displayName(), 'therapist' => $newName, 'facility' => $facility?->name, 'reason' => $reason]),
+                    $request,
+                );
+            }
+
+            return new AppointmentResource($this->appointmentRepository->findByUuid($appointment->uuid));
+        });
+    }
+
+    // Why this therapist can't take over these paused services now, or null. Available now: an
+    // active therapist, timed in today, not off, qualified for each service, not in another
+    // client's service, and not already on (or handed over from) any of these services.
+    private function takeOverProblem(Staff $staff, Appointment $appointment, $lines): ?string
+    {
+        $name = trim("{$staff->first_name} {$staff->last_name}");
+        if ($staff->role !== 'therapist') {
+            return 'This employee doesn\'t perform services.';
+        }
+        $today = BusinessDay::forBranch((int) $appointment->spa_branch_id);
+        if ($away = $this->availabilityService->leaveOn($staff->id, $today)) {
+            return "{$name} is off today ({$away}). Pick someone else.";
+        }
+        $timedIn = Attendance::where('staff_id', $staff->id)
+            ->where('attendance_date', BusinessDay::attendanceDate($appointment->spa_branch_id, $today))
+            ->whereNotNull('check_in_at')
+            ->whereNull('check_out_at')
+            ->exists();
+        if (! $timedIn) {
+            return "{$name} isn't timed in right now. Pick someone who is here.";
+        }
+        foreach ($lines as $line) {
+            $serviceId = $line->serviceVariant?->service_id;
+            if ($serviceId && ! ($q = $this->availabilityService->isStaffQualified($staff->id, $serviceId))['ok']) {
+                return $q['reason'];
+            }
+            $theirs = $line->therapistAssignments->firstWhere('staff_id', $staff->id);
+            if ($theirs && $theirs->assignment_status !== AssignmentStatus::Cancelled->value) {
+                return $theirs->assignment_status === AssignmentStatus::HandedOver->value
+                    ? "{$name} already handed this service over. Pick someone else."
+                    : "{$name} is already on this service.";
+            }
+        }
+        $busy = $this->availabilityService->isStaffCurrentlyBusy($staff->id, null, $lines->pluck('id')->all());
+        if (! $busy['ok']) {
+            return $busy['reason'];
+        }
+        // Held for another client's reservation that hasn't arrived yet: not while what is left of
+        // this service would run into it — the same rule as starting a service.
+        $appointment->loadMissing('branch');
+        $grace = $appointment->branch
+            ? (int) (\App\Service\Client\BookingPolicy::for($appointment->branch)['reservation_grace_minutes'] ?? \App\Support\Visits\ReservationHold::DEFAULT_GRACE_MINUTES)
+            : \App\Support\Visits\ReservationHold::DEFAULT_GRACE_MINUTES;
+        $left = (int) $lines->max(function (AppointmentServiceItem $line) {
+            $started = $line->therapistAssignments->where('assignment_status', AssignmentStatus::InProgress->value)->pluck('started_at')->filter()->min();
+            $length = $line->lengthMinutes() ?? 30;
+
+            return $started ? max(1, $length - (int) Carbon::parse($started)->diffInMinutes(Carbon::parse($line->paused_at), true)) : $length;
+        });
+        if ($held = $this->availabilityService->reservedElsewhere($staff->id, $appointment->id, now(), max(1, $left), $grace)) {
+            return $held;
+        }
+
+        return null;
+    }
+
+    // One row handed over: the old therapist stops at the pause, the new one carries on in
+    // their place (same part of the service, same start, so the clock goes on where it was).
+    // Of a paused sitting's services (a package: one after another, by their order), the ones
+    // whose time had run out by the pause — each with when it ran — and the ones left, with when
+    // the first of them began. The last one is never counted done: the client is still there for
+    // it, even past its time. One service alone, or no start to go by: nothing is split.
+    //
+    // @return array{0: Collection<int, array{line: AppointmentServiceItem, from: Carbon, to: Carbon}>, 1: Collection<int, AppointmentServiceItem>, 2: ?Carbon}
+    private function finishedBeforePause($lines, int $staffId): array
+    {
+        $none = [collect(), $lines, null];
+        if ($lines->count() < 2) {
+            return $none;
+        }
+        $ordered = $lines->sortBy([['sort_order', 'asc'], ['id', 'asc']])->values();
+        $starts = $ordered->flatMap(fn (AppointmentServiceItem $line) => $line->therapistAssignments
+            ->where('assignment_status', AssignmentStatus::InProgress->value)
+            ->where('staff_id', $staffId)
+            ->pluck('started_at'))
+            ->filter();
+        $pausedAt = $ordered->first()->paused_at;
+        if ($starts->isEmpty() || ! $pausedAt) {
+            return $none;
+        }
+        $start = Carbon::parse($starts->min());
+        $ranMinutes = (Carbon::parse($pausedAt)->getTimestamp() - $start->getTimestamp()) / 60;
+
+        $finished = collect();
+        $minutes = 0;
+        foreach ($ordered->slice(0, -1) as $line) {
+            $length = $line->lengthMinutes();
+            if ($length === null) {
+                break;
+            }
+            // Its add-ons are part of its time.
+            $length += (int) $line->liveAddons()->sum(fn (AppointmentServiceItem $addon) => $addon->lengthMinutes() ?? 0);
+            if ($minutes + $length > $ranMinutes) {
+                break;
+            }
+            $finished->push(['line' => $line, 'from' => $start->copy()->addMinutes($minutes), 'to' => $start->copy()->addMinutes($minutes + $length)]);
+            $minutes += $length;
+        }
+        if ($finished->isEmpty()) {
+            return $none;
+        }
+        $doneIds = $finished->map(fn (array $done) => $done['line']->id)->all();
+
+        return [$finished, $ordered->reject(fn (AppointmentServiceItem $line) => in_array($line->id, $doneIds, true))->values(), $start->copy()->addMinutes($minutes)];
+    }
+
+    // $startedAt: when this part of a package really began, after the services of it that were
+    // already done (finishedBeforePause); null keeps the start as it is.
+    private function handOver(TherapistAssignment $row, Staff $staff, ?Facility $facility, Carbon $stoppedAt, string $reason, string $newName, ?Carbon $startedAt = null): void
+    {
+        $values = [
+            'staff_id' => $staff->id,
+            'facility_id' => $facility?->id ?? $row->facility_id,
+            'assignment_status' => AssignmentStatus::InProgress->value,
+            'assigned_at' => now(),
+            'started_at' => $startedAt ?? $row->started_at,
+            'completed_at' => null,
+            'remarks' => null,
+            'service_part_id' => $row->service_part_id,
+            'part_name' => $row->part_name,
+            'commission_share' => $row->commission_share,
+            'commission_amount' => null,
+            'commission_rate' => null,
+            'commission_type' => null,
+        ];
+
+        $row->update([
+            'assignment_status' => AssignmentStatus::HandedOver->value,
+            'started_at' => $startedAt ?? $row->started_at,
+            'completed_at' => $stoppedAt,
+            'remarks' => trim(($row->remarks ? $row->remarks.' · ' : '')."Handed over to {$newName}".($reason !== '' ? ": {$reason}" : '').'.'),
+        ]);
+
+        // One row per person per service: a cancelled one of theirs is used again.
+        $earlier = TherapistAssignment::where('appointment_service_id', $row->appointment_service_id)->where('staff_id', $staff->id)->first();
+        $earlier
+            ? $earlier->update($values)
+            : TherapistAssignment::create($values + ['appointment_service_id' => $row->appointment_service_id]);
+    }
+
     // Qualification -> schedule, in that order, so the first failing check
     // gives the most useful reason. Never throws — the caller decides
     // whether a failure is fatal (explicit assignTherapist action) or just
@@ -1020,8 +1294,41 @@ class VisitAssignmentService
             return $roomCheck;
         }
 
+        $before = $assignment->facility_id;
+        $moving = $before && (int) $before !== (int) $facility->id && $service->status === AppointmentServiceStatus::InProgress->value;
+
+        // A paused package (one sitting: same staff, same room) moves as one. Every service of it
+        // must fit the new room before anything moves.
+        $mates = collect();
+        if ($moving && ServicePause::isPaused($service)) {
+            $mates = app(ServiceExecutionService::class)->sittingMates($service, AppointmentServiceStatus::InProgress->value)
+                ->filter(fn (AppointmentServiceItem $mate) => ServicePause::isPaused($mate))
+                ->values();
+            foreach ($mates as $mate) {
+                $row = $mate->therapistAssignments->where('assignment_status', AssignmentStatus::InProgress->value)->firstWhere('facility_id', $before);
+                $check = $this->checkRoomEligibility($facility, $appointment, $mate, $row?->id);
+                if (! $check['ok']) {
+                    return $check;
+                }
+            }
+        }
+
         $this->therapistAssignmentRepository->assignFacility($assignment, $facility->id);
         $this->roomForEveryPart($service, $assignment->id, $facility);
+        // A service under way (paused, or moved while running): its add-ons are in the room with it,
+        // so they move too — else the old room would stay taken by this client until it is completed.
+        // So do the rest of a paused package, with their add-ons.
+        if ($moving) {
+            $ids = collect([$service])->merge($mates)
+                ->flatMap(fn (AppointmentServiceItem $line) => $line->addons()->pluck('id')->push($line->id))
+                ->reject(fn ($id) => (int) $id === (int) $service->id)
+                ->all();
+            TherapistAssignment::whereIn('appointment_service_id', $ids)
+                ->whereIn('assignment_status', [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value])
+                ->where('facility_id', $before)
+                ->get()
+                ->each(fn (TherapistAssignment $row) => $row->update(['facility_id' => $facility->id]));
+        }
 
         return ['ok' => true, 'reason' => null];
     }

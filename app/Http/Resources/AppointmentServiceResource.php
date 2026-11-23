@@ -37,6 +37,10 @@ class AppointmentServiceResource extends JsonResource
             'extra_charge' => (float) ($this->extra_charge ?? 0),
             'points_earned' => (int) $this->points_earned,
             'status' => $this->status,
+            // Paused while in progress (App\Support\Visits\ServicePause): when it was paused (null
+            // when running), and how long it has been paused before now in all.
+            'paused_at' => \App\Support\Visits\ServicePause::ready() ? optional($this->paused_at)->toIso8601String() : null,
+            'paused_minutes' => \App\Support\Visits\ServicePause::ready() ? (int) $this->paused_minutes : 0,
             'notes' => $this->notes,
             // An add-on: the main service it rides with (AppointmentResource
             // hands each line its parent, so this asks nothing more).

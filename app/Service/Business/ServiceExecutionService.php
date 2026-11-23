@@ -32,7 +32,10 @@ use App\Support\Catalog\ServiceParts;
 use App\Support\Visits\ServiceStartRules;
 use App\Support\Catalog\SharedPackages;
 use App\Support\Visits\StaleVisit;
+use App\Repository\AuditLogRepository;
+use App\Support\Visits\ServicePause;
 use Carbon\Carbon;
+use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -105,6 +108,14 @@ class ServiceExecutionService
 
         $dayEnd = Carbon::parse($appointment->appointment_date)->endOfDay();
         $at = $startedAt ? $startedAt->copy()->addMinutes($minutes) : $dayEnd;
+        // Left paused when the day ended: it stopped when it was paused.
+        if (ServicePause::isPaused($service)) {
+            $pausedAt = Carbon::parse($service->paused_at);
+            if ($pausedAt->lessThan($at)) {
+                $at = $pausedAt;
+            }
+            $service->update(['paused_at' => null]);
+        }
         if ($at->greaterThan($dayEnd)) {
             $at = $dayEnd;
         }
@@ -431,12 +442,85 @@ class ServiceExecutionService
         return ['ok' => true, 'reason' => null];
     }
 
+    // ── Pause and resume (App\Support\Visits\ServicePause) ───────────────
+
+    // The client steps out: the clock stops, the therapist and the room stay held.
+    // The services of the same sitting (same staff, same room) pause with it.
+    public function pauseService(User $user, string $appointmentServiceUuid, ?string $reason = null, ?Request $request = null)
+    {
+        return $this->pauseOrResume($user, $appointmentServiceUuid, true, $reason, $request);
+    }
+
+    public function resumeService(User $user, string $appointmentServiceUuid, ?Request $request = null)
+    {
+        return $this->pauseOrResume($user, $appointmentServiceUuid, false, null, $request);
+    }
+
+    private function pauseOrResume(User $user, string $appointmentServiceUuid, bool $pause, ?string $reason, ?Request $request)
+    {
+        if (! ServicePause::ready()) {
+            return response()->json(['message' => 'Pausing a service is not available yet.'], 422);
+        }
+        if (! $this->spaBusinessRepository->findForUser($user)) {
+            return response()->json(['message' => 'No spa business found for this account.'], 422);
+        }
+        $branchIds = $this->branchIds($user);
+
+        return DB::transaction(function () use ($branchIds, $appointmentServiceUuid, $pause, $reason, $user, $request) {
+            $service = AppointmentServiceItem::whereHas('appointment', fn ($q) => $q->whereIn('spa_branch_id', $branchIds))
+                ->where('uuid', $appointmentServiceUuid)
+                ->lockForUpdate()
+                ->with('therapistAssignments', 'appointment')
+                ->firstOrFail();
+
+            if ($refusal = $this->addonFollows($service, $pause ? 'is paused' : 'is resumed')) {
+                return $refusal;
+            }
+            if ($stale = StaleVisit::refusal($service->appointment)) {
+                return $stale;
+            }
+            if ($service->status !== AppointmentServiceStatus::InProgress->value) {
+                return response()->json(['message' => $pause ? 'Only a service in progress can be paused.' : 'Only a service in progress can be resumed.'], 422);
+            }
+            if ($pause && $service->isOpenStay()) {
+                return response()->json(['message' => 'An open stay has no clock to stop: the client stays as long as they like.'], 422);
+            }
+            if ($pause === ServicePause::isPaused($service)) {
+                return response()->json(['message' => $pause ? 'This service is already paused.' : 'This service is not paused.'], 422);
+            }
+
+            $now = now();
+            // Pausing: this service and the ones of its sitting (same staff, same room).
+            // Resuming: every service of the visit that was paused with it (the same moment), even
+            // one moved to another room or given to someone else while paused — none is left behind.
+            $lines = $pause
+                ? $this->sittingMates($service, AppointmentServiceStatus::InProgress->value)->prepend($service)
+                    ->filter(fn (AppointmentServiceItem $line) => ! ServicePause::isPaused($line))
+                : AppointmentServiceItem::where('appointment_id', $service->appointment_id)
+                    ->where('status', AppointmentServiceStatus::InProgress->value)
+                    ->where('paused_at', $service->paused_at)
+                    ->lockForUpdate()
+                    ->get();
+            foreach ($lines as $line) {
+                $pause ? $line->update(['paused_at' => $now]) : ServicePause::end($line, $now);
+                app(AuditLogRepository::class)->record(
+                    $user->id, 'appointment_services', $line->id, 'Update',
+                    ['service' => $line->displayName(), 'clock' => $pause ? 'Running' : 'Paused'],
+                    array_filter(['service' => $line->displayName(), 'clock' => $pause ? 'Paused' : 'Running', 'reason' => $pause ? $reason : null, 'paused_minutes' => $pause ? null : (int) $line->fresh()->paused_minutes]),
+                    $request,
+                );
+            }
+
+            return new AppointmentResource($this->appointmentRepository->findByUuid($service->appointment->uuid));
+        });
+    }
+
     // The services of this visit that are one sitting with $service: the same
     // staff in the same facility, in the same state ($status: 'Pending' to start
     // them, 'In Progress' to complete them). Needs staff and a facility on
     // $service — without a room nothing says they are in one place. Add-ons are
     // not listed: they ride with their own main service.
-    private function sittingMates(AppointmentServiceItem $service, string $status = AppointmentServiceStatus::Pending->value): Collection
+    public function sittingMates(AppointmentServiceItem $service, string $status = AppointmentServiceStatus::Pending->value): Collection
     {
         $assigned = $status === AppointmentServiceStatus::Pending->value ? AssignmentStatus::Assigned->value : AssignmentStatus::InProgress->value;
         $service->loadMissing('therapistAssignments');
@@ -599,6 +683,11 @@ class ServiceExecutionService
     // add-ons are completed with it. Returns the staff who were doing it.
     public function completeLine(AppointmentServiceItem $service, $now): array
     {
+        // Completed while paused: the pause ends first, so the time used leaves it out.
+        if (ServicePause::isPaused($service)) {
+            ServicePause::end($service, Carbon::parse($now));
+            $service->load('therapistAssignments');
+        }
         $this->startAddons($service, $now);
         $staffIds = $service->therapistAssignments
             ->where('assignment_status', AssignmentStatus::InProgress->value)
@@ -613,6 +702,22 @@ class ServiceExecutionService
         $this->completeAddons($service, $now);
 
         return $staffIds;
+    }
+
+    // A package service that was already done when its sitting was paused and handed to another
+    // therapist (VisitAssignmentService::changeTherapist): completed as it really ran — from $from
+    // to $to, before the pause, which is no part of it — so whoever did it is the one paid.
+    public function completeFinishedLine(AppointmentServiceItem $service, Carbon $from, Carbon $to): void
+    {
+        $service->update(['paused_at' => null]);
+        $this->startAddons($service, $from);
+        $service->load('therapistAssignments');
+        foreach ($service->therapistAssignments->where('assignment_status', AssignmentStatus::InProgress->value) as $assignment) {
+            $assignment->update(['assignment_status' => AssignmentStatus::Completed->value, 'started_at' => $from, 'completed_at' => $to]);
+        }
+        $service->update(['status' => AppointmentServiceStatus::Completed->value]);
+        app(CommissionCalculator::class)->freeze($service);
+        $this->completeAddons($service, $to);
     }
 
     // A visit covered by another client's shared package (Client B of a Couples Massage) with

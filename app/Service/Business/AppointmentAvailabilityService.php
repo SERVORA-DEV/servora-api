@@ -960,7 +960,8 @@ class AppointmentAvailabilityService
         $now = now();
         $running = $services->where('status', AppointmentServiceStatus::InProgress->value)->map(function ($service) use ($now) {
             $started = $service->therapistAssignments->pluck('started_at')->filter()->min();
-            $length = $service->lengthMinutes() ?? 30;
+            // Paused now: its clock is stopped (App\Support\Visits\ServicePause).
+            $length = ($service->lengthMinutes() ?? 30) + \App\Support\Visits\ServicePause::currentMinutes($service, $now);
 
             return $started ? max(0, (int) ceil($now->diffInMinutes(Carbon::parse($started)->addMinutes($length), false))) : $length;
         })->max() ?? 0;

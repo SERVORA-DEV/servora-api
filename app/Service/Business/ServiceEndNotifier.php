@@ -94,6 +94,8 @@ class ServiceEndNotifier
             ->where('ta.assignment_status', AssignmentStatus::InProgress->value)
             ->whereNotNull('ta.started_at')
             ->where('s.status', AssignmentStatus::InProgress->value)
+            // Paused: its clock is stopped, so it isn't running out (App\Support\Visits\ServicePause).
+            ->when(\App\Support\Visits\ServicePause::ready(), fn ($q) => $q->whereNull('s.paused_at'))
             ->whereNull('a.deleted_at')
             // Not one left running from a day that is over: DayCloser finishes those, there is nothing to check on.
             ->where('a.appointment_date', '>=', StaleVisit::today())

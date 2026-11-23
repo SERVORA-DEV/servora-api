@@ -367,7 +367,8 @@ class ServiceExtensionService
     {
         $first = $service->therapistAssignments->where('assignment_status', AssignmentStatus::InProgress->value)->whereNotNull('started_at')->min('started_at');
 
-        return $first ? Carbon::parse($first) : null;
+        // Paused now: the clock is stopped, so it ends that much later (App\Support\Visits\ServicePause).
+        return $first ? Carbon::parse($first)->addMinutes(\App\Support\Visits\ServicePause::currentMinutes($service)) : null;
     }
 
     /** Every length of this line's service offered at its branch, at the branch's price. */

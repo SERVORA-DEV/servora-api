@@ -65,11 +65,16 @@ class AppointmentServiceItem extends Model
         'refunded_amount',
         'status',
         'notes',
+        // Paused while in progress (App\Support\Visits\ServicePause): when, and how long in all.
+        'paused_at',
+        'paused_minutes',
     ];
 
     protected function casts(): array
     {
         return [
+            'paused_at' => 'datetime',
+            'paused_minutes' => 'integer',
             'unit_price' => 'decimal:2',
             'discount_amount' => 'decimal:2',
             'subtotal' => 'decimal:2',

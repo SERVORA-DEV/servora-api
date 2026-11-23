@@ -371,7 +371,7 @@ class DashboardService
             ->leftJoin('staff as st', 'st.id', '=', 'ta.staff_id')
             ->leftJoin('facilities as f', 'f.id', '=', 'ta.facility_id')
             ->whereIn('ta.appointment_service_id', $services->pluck('id')->all() ?: [0])
-            ->where('ta.assignment_status', '!=', AssignmentStatus::Cancelled->value)
+            ->whereNotIn('ta.assignment_status', [AssignmentStatus::Cancelled->value, AssignmentStatus::HandedOver->value])
             ->get([
                 'ta.appointment_service_id',
                 DB::raw(($own ? "coalesce(ta.staff_name, nullif(trim(concat(st.first_name, ' ', st.last_name)), ''))" : "nullif(trim(concat(st.first_name, ' ', st.last_name)), '')") . ' as staff'),

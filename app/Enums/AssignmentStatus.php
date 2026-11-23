@@ -12,4 +12,8 @@ enum AssignmentStatus: string
     case InProgress = 'In Progress';
     case Completed = 'Completed';
     case Cancelled = 'Cancelled';
+    // Stopped part-way and gave the client to another therapist while the service was paused
+    // (App\Support\Visits\ServicePause). Keeps when they worked; earns nothing — the therapist
+    // who finishes the service is paid for it (CommissionCalculator pays Completed rows only).
+    case HandedOver = 'Handed Over';
 }

@@ -7,6 +7,8 @@ use App\Http\Requests\Business\AddAddonRequest;
 use App\Http\Requests\Business\AppointmentServiceRequest;
 use App\Http\Requests\Business\AutoAssignRequest;
 use App\Http\Requests\Business\BatchAssignmentRequest;
+use App\Http\Requests\Business\ChangeTherapistRequest;
+use App\Http\Requests\Business\PauseServiceRequest;
 use App\Http\Requests\Business\ExtendServiceRequest;
 use App\Service\Business\AssignmentPlanner;
 use App\Http\Requests\Business\FacilityAssignmentRequest;
@@ -87,6 +89,23 @@ class AppointmentServiceController extends Controller
     public function completeService(Request $request, string $uuid)
     {
         return $this->execution->completeService($request->user(), $uuid);
+    }
+
+    // The client steps out: the clock stops (App\Support\Visits\ServicePause).
+    public function pauseService(PauseServiceRequest $request, string $uuid)
+    {
+        return $this->execution->pauseService($request->user(), $uuid, $request->validated()['reason'] ?? null, $request);
+    }
+
+    public function resumeService(Request $request, string $uuid)
+    {
+        return $this->execution->resumeService($request->user(), $uuid, $request);
+    }
+
+    // While paused: another therapist (and, if wanted, another room) carries on.
+    public function changeTherapist(ChangeTherapistRequest $request, string $uuid)
+    {
+        return $this->assignments->changeTherapist($request->user(), $uuid, $request->validated(), $request);
     }
 
     // A service in progress, moved to a longer length of the same service.

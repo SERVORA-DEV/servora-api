@@ -182,11 +182,19 @@ class TherapistQueueCalculator
      */
     private function lastCompletedAt(array $staffIds, string $date): array
     {
+        // A therapist who handed a paused service over to someone else also
+        // goes to the back, from the moment of the hand-over (updated_at: the
+        // row is final from then on). Their completed_at is when they stopped
+        // working, which can be long before: the client was paused meanwhile
+        // and the therapist stayed with them.
+        $handedOver = AssignmentStatus::HandedOver->value;
+        $turnAt = "CASE WHEN assignment_status = '{$handedOver}' THEN updated_at ELSE completed_at END";
+
         return TherapistAssignment::query()
             ->whereIn('staff_id', $staffIds)
-            ->where('assignment_status', AssignmentStatus::Completed->value)
-            ->whereDate('completed_at', $date)
-            ->selectRaw('staff_id, MAX(completed_at) as last_completed_at')
+            ->whereIn('assignment_status', [AssignmentStatus::Completed->value, $handedOver])
+            ->whereRaw("DATE({$turnAt}) = ?", [$date])
+            ->selectRaw("staff_id, MAX({$turnAt}) as last_completed_at")
             ->groupBy('staff_id')
             ->pluck('last_completed_at', 'staff_id')
             ->map(fn ($value) => Carbon::parse($value))
@@ -203,7 +211,7 @@ class TherapistQueueCalculator
      * busy. The rotation must not inherit that.
      *
      * Note both states keep their position in the queue — only completing a
-     * service moves a therapist to the back. A client who cancels or no-shows
+     * service (or handing a paused one over) moves a therapist to the back. A client who cancels or no-shows
      * therefore never costs their therapist a turn. And only 'in_service'
      * takes them out of "next up": someone merely assigned is standing free
      * (App\Support\Visits\RotationTurn).

@@ -145,6 +145,10 @@ class AssignmentPlanner
             ->get()
             ->each(function (TherapistAssignment $a) use (&$until, $column) {
                 $end = Carbon::parse($a->started_at)->addMinutes($a->appointmentService?->lengthMinutes() ?? 30);
+                // Paused now: the clock is stopped, so the end moves on with it (ServicePause).
+                if ($a->appointmentService) {
+                    $end->addMinutes(\App\Support\Visits\ServicePause::currentMinutes($a->appointmentService));
+                }
                 // A home visit: the staff is back only after the trip back.
                 $visit = $a->appointmentService?->appointment;
                 if ($column === 'staff_id' && $visit?->isHomeService()) {
