@@ -37,6 +37,10 @@ class AppointmentListResource extends JsonResource
                     fn ($list) => $list->where('status', '!=', \App\Enums\AppointmentServiceStatus::Cancelled->value))
                 ->map(fn ($s) => [
                     'service_name' => $s->displayName(),
+                    // With the bill's status below: a visit whose services are all done but not yet
+                    // paid reads "Awaiting payment" in the owner's list, as it does at the desk.
+                    'status' => $s->status,
+                    'is_addon' => (bool) $s->parent_appointment_service_id,
                     'therapist_assignments' => $s->therapistAssignments
                         ->whereNotIn('assignment_status', [\App\Enums\AssignmentStatus::Cancelled->value, \App\Enums\AssignmentStatus::HandedOver->value])
                         ->map(fn ($a) => ['staff_name' => $a->staffName()])->values(),
@@ -47,6 +51,7 @@ class AppointmentListResource extends JsonResource
                 'line_at' => $this->queue->lineTime()->copy()->utc()->format('Y-m-d\\TH:i:s.u\\Z'),
             ] : null,
             'created_at' => $this->created_at,
+            'billing_status' => $this->relationLoaded('billing') ? $this->billing?->status : null,
         ];
     }
 }

@@ -38,7 +38,9 @@ class AppointmentRepository
     public function paginateForBranches(array $spaBranchIds, array $filters, int $perPage = 15, bool $list = false, string $sort = 'date')
     {
         $with = $list
-            ? ['client', 'branch', 'services.serviceVariant.service', 'services.therapistAssignments.staff', 'queue']
+            // 'billing' (the bill row only, not its payments): a finished visit not yet paid
+            // reads "Awaiting payment" in the owner's list, as it does at the desk.
+            ? ['client', 'branch', 'services.serviceVariant.service', 'services.therapistAssignments.staff', 'queue', 'billing']
             : [
                 'client', 'branch',
                 'services.serviceVariant.service',
