@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Enums\AppointmentServiceStatus;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -39,8 +40,10 @@ class BillingListResource extends JsonResource
             'client_name' => $client ? trim("{$client->first_name} {$client->last_name}") : null,
             'client_phone' => $client?->phone_number,
 
+            // What is on the bill: not a service taken off the visit (removed, or voided with a reason).
             'services' => $appointment
-                ? $appointment->services->map(fn ($service) => $service->displayName())->filter()->values()
+                ? $appointment->services->where('status', '!=', AppointmentServiceStatus::Cancelled->value)
+                    ->map(fn ($service) => $service->displayName())->filter()->values()
                 : [],
 
             'payments' => PaymentResource::collection($this->whenLoaded('payments')),

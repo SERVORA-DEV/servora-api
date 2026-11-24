@@ -1328,6 +1328,14 @@ class VisitAssignmentService
                 ->where('facility_id', $before)
                 ->get()
                 ->each(fn (TherapistAssignment $row) => $row->update(['facility_id' => $facility->id]));
+        } elseif (! $before && $service->status === AppointmentServiceStatus::InProgress->value) {
+            // A service under way that had no facility is given one (while paused): its add-ons are
+            // with it, so they are in it too — else they would show as a client with no facility.
+            TherapistAssignment::whereIn('appointment_service_id', $service->addons()->pluck('id'))
+                ->where('assignment_status', AssignmentStatus::InProgress->value)
+                ->whereNull('facility_id')
+                ->get()
+                ->each(fn (TherapistAssignment $row) => $row->update(['facility_id' => $facility->id]));
         }
 
         return ['ok' => true, 'reason' => null];

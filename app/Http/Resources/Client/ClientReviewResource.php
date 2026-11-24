@@ -25,7 +25,9 @@ class ClientReviewResource extends JsonResource
             'appointment_uuid' => $appointment?->uuid,
             'appointment_date' => $appointment ? optional($appointment->appointment_date)->format('Y-m-d') : null,
             'services' => $appointment && $appointment->relationLoaded('services')
-                ? $appointment->services->map(fn ($s) => $s->displayName())->filter()->unique()->values()
+                // What the client had: not a service taken off the visit (removed, or voided).
+                ? $appointment->services->where('status', '!=', \App\Enums\AppointmentServiceStatus::Cancelled->value)
+                    ->map(fn ($s) => $s->displayName())->filter()->unique()->values()
                 : [],
             'branch' => $branch ? [
                 'uuid' => $branch->uuid,

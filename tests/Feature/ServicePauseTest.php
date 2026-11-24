@@ -190,6 +190,57 @@ class ServicePauseTest extends TestCase
         $this->refused($this->execution->pauseService($this->owner, $line->uuid), 'Only a service in progress');
     }
 
+    public function test_the_home_visit_page_is_told_when_it_was_paused(): void
+    {
+        $line = $this->running();
+        $door = app(\App\Service\Business\HomeVisitDoorService::class);
+        $this->assertNull($door->visit($line->appointment)['paused_at'], 'running: nothing paused');
+
+        $this->at('10:20');
+        $this->ok($this->execution->pauseService($this->owner, $line->uuid), 'pause');
+        $page = $door->visit($line->appointment->fresh());
+        // The page stops its countdown there.
+        $this->assertSame(Carbon::parse(self::DATE.' 10:20:00')->toIso8601String(), $page['paused_at']);
+        $this->assertSame($page['paused_at'], $page['services'][0]['paused_at']);
+
+        $this->at('10:30');
+        $this->ok($this->execution->resumeService($this->owner, $line->uuid), 'resume');
+        $page = $door->visit($line->appointment->fresh());
+        $this->assertNull($page['paused_at']);
+        // Its start moved on by the pause, so the countdown carries on from where it stopped.
+        $this->assertSame(Carbon::parse(self::DATE.' 11:10:00')->toIso8601String(), $page['ends_at']);
+    }
+
+    public function test_a_paused_service_with_no_facility_can_be_given_one(): void
+    {
+        $this->at('08:30');
+        $created = $this->ok($this->appointments->createAppointment($this->owner, [
+            'spa_branch_uuid' => $this->branch->uuid,
+            'client_uuid' => $this->client->uuid,
+            'appointment_date' => self::DATE,
+            'appointment_time' => '10:00',
+            'appointment_type' => 'Reservation',
+        ]), 'createAppointment');
+        $appointment = Appointment::where('uuid', $created->resource->uuid)->firstOrFail();
+        $appointment->update(['status' => AppointmentStatus::CheckedIn->value, 'check_in_at' => now()]);
+        $this->ok($this->appointments->addService($this->owner, $appointment->uuid, ['service_variant_uuid' => $this->massage->uuid]), 'addService');
+        $line = AppointmentServiceItem::where('appointment_id', $appointment->id)->latest('id')->firstOrFail();
+        $this->ok($this->appointments->assignTherapist($this->owner, $line->uuid, ['staff_uuid' => $this->alice->uuid]), 'assign Alice, no facility');
+        $this->at('10:00');
+        $this->ok($this->execution->startService($this->owner, $line->uuid), 'startService');
+        $this->assertNull($this->row($line, $this->alice)->facility_id);
+
+        $this->at('10:20');
+        $this->ok($this->execution->pauseService($this->owner, $line->uuid), 'pause');
+        $this->ok($this->assignments->assignRoom($this->owner, $this->row($line, $this->alice)->uuid, ['facility_uuid' => $this->roomB->uuid]), 'add a facility');
+        $this->assertSame($this->roomB->id, $this->row($line, $this->alice)->facility_id);
+        $this->assertSame(AssignmentStatus::InProgress->value, $this->row($line, $this->alice)->assignment_status, 'still under way');
+
+        $this->at('10:30');
+        $this->ok($this->execution->resumeService($this->owner, $line->uuid), 'resume');
+        $this->assertNull($line->fresh()->paused_at);
+    }
+
     public function test_a_paused_therapist_is_still_busy(): void
     {
         $line = $this->running();

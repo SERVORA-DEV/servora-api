@@ -29,10 +29,18 @@ class AppointmentListResource extends JsonResource
             'client' => ['full_name' => $client ? trim("{$client->first_name} {$client->last_name}") : null],
             'branch_uuid' => $this->branch?->uuid,
             'branch_name' => $this->branch?->branch_name,
-            'services' => $this->services->map(fn ($s) => [
-                'service_name' => $s->displayName(),
-                'therapist_assignments' => $s->therapistAssignments->map(fn ($a) => ['staff_name' => $a->staffName()])->values(),
-            ])->values(),
+            // What the visit is: not a service taken off it (removed, or voided) — unless the whole
+            // booking was called off, which still shows what was booked. Its staff: not one taken off,
+            // nor one who handed it over while it was paused.
+            'services' => $this->services
+                ->when(! in_array($this->status, [\App\Enums\AppointmentStatus::Cancelled->value, \App\Enums\AppointmentStatus::NoShow->value], true),
+                    fn ($list) => $list->where('status', '!=', \App\Enums\AppointmentServiceStatus::Cancelled->value))
+                ->map(fn ($s) => [
+                    'service_name' => $s->displayName(),
+                    'therapist_assignments' => $s->therapistAssignments
+                        ->whereNotIn('assignment_status', [\App\Enums\AssignmentStatus::Cancelled->value, \App\Enums\AssignmentStatus::HandedOver->value])
+                        ->map(fn ($a) => ['staff_name' => $a->staffName()])->values(),
+                ])->values(),
             'queue' => $this->queue ? [
                 'queue_number' => $this->queue->queue_number,
                 'queue_status' => $this->queue->queue_status,

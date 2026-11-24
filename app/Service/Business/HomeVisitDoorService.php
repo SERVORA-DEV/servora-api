@@ -186,6 +186,8 @@ class HomeVisitDoorService
                 'status' => $line->status,
                 'started_at' => $started?->toIso8601String(),
                 'ends_at' => $started && $minutes ? $started->copy()->addMinutes($minutes)->toIso8601String() : null,
+                // Paused at the desk: the clock stands still from then (ServicePause); on resume its start moves on.
+                'paused_at' => $line->status === AppointmentServiceStatus::InProgress->value && $line->paused_at ? Carbon::parse($line->paused_at)->toIso8601String() : null,
             ];
         })->values();
 
@@ -213,6 +215,8 @@ class HomeVisitDoorService
             'server_now' => now()->toIso8601String(),
             'started_at' => $running->min('started_at'),
             'ends_at' => $running->max('ends_at'),
+            // When what is under way was paused at the desk (null while it runs): the page stops its countdown there.
+            'paused_at' => $running->isNotEmpty() && $running->every(fn ($s) => $s['paused_at']) ? $running->min('paused_at') : null,
             'bill' => [
                 'billing_number' => $billing?->billing_number,
                 'status' => $billing?->status,
