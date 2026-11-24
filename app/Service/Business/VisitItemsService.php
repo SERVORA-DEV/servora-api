@@ -258,9 +258,8 @@ class VisitItemsService
         });
     }
 
-    // Takes a service that has already started or finished off the visit —
-    // added by mistake, the client changed their mind part-way, it had to be
-    // stopped. Unlike removeService() above (not started yet, no questions
+    // Takes a service that has finished off the visit — added by mistake, the
+    // client stopped part-way (completed early, then voided) and is not charged. Unlike removeService() above (not started yet, no questions
     // asked) this needs a reason, which is kept on the line with who did it,
     // and it is only allowed while nothing has been settled against it
     // (App\Support\Visits\ServiceVoidRules).
@@ -289,11 +288,12 @@ class VisitItemsService
                 ->with(['services.therapistAssignments', 'packages', 'queue'])
                 ->firstOrFail();
 
-            // Only a service that has not started can be taken off a visit
-            // (removeService). One that has is part of the record: what the client
-            // paid for it is handed back at checkout instead (a refund for that service).
-            if (in_array($service->status, [AppointmentServiceStatus::InProgress->value, AppointmentServiceStatus::Completed->value], true)) {
-                return response()->json(['message' => 'A service that has started cannot be cancelled. If the client paid for it, refund that service at checkout.'], 422);
+            // One still running is completed first — that keeps when it really ended
+            // and frees the therapist and the room — and then it can be voided: the
+            // client stopped part-way and is not charged for it. Once it is paid for,
+            // the rules below send the desk to a refund for that service instead.
+            if ($service->status === AppointmentServiceStatus::InProgress->value) {
+                return response()->json(['message' => 'Complete this service first (Complete early if it stopped part-way), then void it.'], 422);
             }
 
             $line = $appointment->services->firstWhere('id', $service->id) ?? $service;

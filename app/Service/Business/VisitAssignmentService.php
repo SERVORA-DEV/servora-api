@@ -1317,11 +1317,11 @@ class VisitAssignmentService
         $this->roomForEveryPart($service, $assignment->id, $facility);
         // A service under way (paused, or moved while running): its add-ons are in the room with it,
         // so they move too — else the old room would stay taken by this client until it is completed.
-        // So do the rest of a paused package, with their add-ons.
+        // So do the rest of a paused package, with their add-ons, and the other staff on a service
+        // done by several at once (their rows are still in the old room; this one has moved).
         if ($moving) {
             $ids = collect([$service])->merge($mates)
                 ->flatMap(fn (AppointmentServiceItem $line) => $line->addons()->pluck('id')->push($line->id))
-                ->reject(fn ($id) => (int) $id === (int) $service->id)
                 ->all();
             TherapistAssignment::whereIn('appointment_service_id', $ids)
                 ->whereIn('assignment_status', [AssignmentStatus::Assigned->value, AssignmentStatus::InProgress->value])

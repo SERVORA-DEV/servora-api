@@ -277,6 +277,37 @@ class ServicePauseTest extends TestCase
         $this->assertSame(10, $line->fresh()->paused_minutes);
     }
 
+    public function test_a_paused_service_done_by_two_staff_moves_room_with_both(): void
+    {
+        $back = \App\Models\ServicePart::create(['service_id' => $this->massage->service_id, 'name' => 'Back', 'share_percent' => 50, 'sort' => 1]);
+        $legs = \App\Models\ServicePart::create(['service_id' => $this->massage->service_id, 'name' => 'Legs', 'share_percent' => 50, 'sort' => 2]);
+
+        $this->at('08:30');
+        $created = $this->ok($this->appointments->createAppointment($this->owner, [
+            'spa_branch_uuid' => $this->branch->uuid,
+            'client_uuid' => $this->client->uuid,
+            'appointment_date' => self::DATE,
+            'appointment_time' => '10:00',
+            'appointment_type' => 'Reservation',
+        ]), 'createAppointment');
+        $appointment = Appointment::where('uuid', $created->resource->uuid)->firstOrFail();
+        $appointment->update(['status' => AppointmentStatus::CheckedIn->value, 'check_in_at' => now()]);
+        $this->ok($this->appointments->addService($this->owner, $appointment->uuid, ['service_variant_uuid' => $this->massage->uuid]), 'addService');
+        $line = AppointmentServiceItem::where('appointment_id', $appointment->id)->latest('id')->firstOrFail();
+        $this->ok($this->appointments->assignTherapist($this->owner, $line->uuid, ['staff_uuid' => $this->alice->uuid, 'facility_uuid' => $this->roomA->uuid, 'part_uuid' => $back->uuid]), 'assign Alice');
+        $this->ok($this->appointments->assignTherapist($this->owner, $line->uuid, ['staff_uuid' => $this->bruno->uuid, 'facility_uuid' => $this->roomA->uuid, 'part_uuid' => $legs->uuid]), 'assign Bruno');
+        $this->at('10:00');
+        $this->ok($this->execution->startService($this->owner, $line->uuid), 'startService');
+
+        $this->at('10:20');
+        $this->ok($this->execution->pauseService($this->owner, $line->uuid), 'pause');
+        $this->ok($this->assignments->assignRoom($this->owner, $this->row($line, $this->alice)->uuid, ['facility_uuid' => $this->roomB->uuid]), 'assignRoom');
+
+        $this->assertSame($this->roomB->id, $this->row($line, $this->alice)->facility_id);
+        $this->assertSame($this->roomB->id, $this->row($line, $this->bruno)->facility_id, 'the other staff on it move too');
+        $this->assertTrue(app(AppointmentAvailabilityService::class)->isFacilityCurrentlyOccupied($this->roomA->id)['ok'], 'the old room is free again');
+    }
+
     public function test_someone_held_for_a_reservation_soon_cannot_take_over(): void
     {
         $line = $this->running();
