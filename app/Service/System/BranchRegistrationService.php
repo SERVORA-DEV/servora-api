@@ -8,7 +8,9 @@ use App\Repository\System\BranchRegistrationRepository;
 use App\Repository\AuditLogRepository;
 use App\Http\Resources\SpaBranchResource;
 use App\Service\Notifications\NotificationService;
+use App\Support\Platform\Suspension;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class BranchRegistrationService
 {
@@ -30,78 +32,70 @@ class BranchRegistrationService
         return new SpaBranchResource($model);
     }
 
-    // Guards against approving/rejecting a branch twice (or one that was
-    // never submitted) — only a branch currently awaiting review can be
-    // decided on.
     public function approve(User $admin, string $uuid, ?Request $request = null)
     {
-        $branch = $this->branchRegistrationRepository->findByUuid($uuid);
+        return DB::transaction(function () use ($admin, $uuid, $request) {
+            $branch = $this->branchRegistrationRepository->findByUuid($uuid, lock: true);
+            if ($branch->verification_status !== VerificationStatus::Pending->value) {
+                return response()->json(['message' => 'Only a pending registration can be approved.'], 422);
+            }
 
-        if ($branch->verification_status !== VerificationStatus::Pending->value) {
-            return response()->json([
-                'message' => 'Only a pending registration can be approved.',
-            ], 422);
-        }
+            $fields = ['verification_status', 'verified_by', 'verified_at', 'rejection_reason', 'suspension_reason'];
+            $oldValues = $branch->only($fields);
+            $wasSuspended = $branch->suspension_reason !== null;
+            $branch->update([
+                'verification_status' => VerificationStatus::Verified->value,
+                'verified_by' => $admin->id,
+                'verified_at' => now(),
+                'rejection_reason' => null,
+                'suspension_reason' => null,
+            ]);
 
-        $oldValues = $branch->only(['verification_status', 'verified_by', 'verified_at', 'rejection_reason']);
+            $this->auditLogRepository->record($admin->id, 'spa_branches', $branch->id, 'Approve', $oldValues, $branch->only($fields), $request);
 
-        $branch = $this->branchRegistrationRepository->update($uuid, [
-            'verification_status' => VerificationStatus::Verified->value,
-            'verified_by' => $admin->id,
-            'verified_at' => now(),
-            'rejection_reason' => null,
-        ]);
+            if ($wasSuspended) {
+                DB::afterCommit(function () use ($branch) {
+                    try {
+                        if ($owner = $branch->business?->owner) {
+                            $this->notificationService->branchReactivated($branch, $owner);
+                        }
+                        Suspension::tellClientsBack([$branch->id]);
+                    } catch (\Throwable $error) {
+                        report($error);
+                    }
+                });
+            } elseif ($owner = $branch->business?->owner) {
+                $this->notificationService->branchRegistrationApproved($branch, $owner);
+            }
 
-        $this->auditLogRepository->record(
-            $admin->id,
-            'spa_branches',
-            $branch->id,
-            'Approve',
-            $oldValues,
-            $branch->only(['verification_status', 'verified_by', 'verified_at', 'rejection_reason']),
-            $request
-        );
-
-        if ($branch->business?->owner) {
-            $this->notificationService->branchRegistrationApproved($branch, $branch->business->owner);
-        }
-
-        return new SpaBranchResource($branch);
+            return new SpaBranchResource($branch->load('verifier'));
+        });
     }
 
     public function reject(User $admin, string $uuid, string $reason, ?Request $request = null)
     {
-        $branch = $this->branchRegistrationRepository->findByUuid($uuid);
+        return DB::transaction(function () use ($admin, $uuid, $reason, $request) {
+            $branch = $this->branchRegistrationRepository->findByUuid($uuid, lock: true);
+            if ($branch->verification_status !== VerificationStatus::Pending->value) {
+                return response()->json(['message' => 'Only a pending registration can be rejected.'], 422);
+            }
 
-        if ($branch->verification_status !== VerificationStatus::Pending->value) {
-            return response()->json([
-                'message' => 'Only a pending registration can be rejected.',
-            ], 422);
-        }
+            $fields = ['verification_status', 'verified_by', 'verified_at', 'rejection_reason'];
+            $oldValues = $branch->only($fields);
+            $branch->update([
+                'verification_status' => VerificationStatus::Rejected->value,
+                'verified_by' => $admin->id,
+                'verified_at' => now(),
+                'rejection_reason' => $reason,
+            ]);
 
-        $oldValues = $branch->only(['verification_status', 'verified_by', 'verified_at', 'rejection_reason']);
+            $this->auditLogRepository->record($admin->id, 'spa_branches', $branch->id, 'Reject', $oldValues, $branch->only($fields), $request);
 
-        $branch = $this->branchRegistrationRepository->update($uuid, [
-            'verification_status' => VerificationStatus::Rejected->value,
-            'verified_by' => $admin->id,
-            'verified_at' => now(),
-            'rejection_reason' => $reason,
-        ]);
+            if ($owner = $branch->business?->owner) {
+                $this->notificationService->branchRegistrationRejected($branch, $owner, $reason);
+            }
 
-        $this->auditLogRepository->record(
-            $admin->id,
-            'spa_branches',
-            $branch->id,
-            'Reject',
-            $oldValues,
-            $branch->only(['verification_status', 'verified_by', 'verified_at', 'rejection_reason']),
-            $request
-        );
-
-        if ($branch->business?->owner) {
-            $this->notificationService->branchRegistrationRejected($branch, $branch->business->owner, $reason);
-        }
-
-        return new SpaBranchResource($branch);
+            return new SpaBranchResource($branch->load('verifier'));
+        });
     }
 }

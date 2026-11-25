@@ -22,7 +22,6 @@ return [
         'spa_business_update',
         'spa_business_approve',
         'spa_business_reject',
-        'spa_business_suspend',
 
         'branch_view',
         'branch_approve',

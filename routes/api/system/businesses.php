@@ -9,17 +9,16 @@ use App\Http\Controllers\System\OwnerIdentityChangeController;
 use App\Http\Controllers\System\OwnerVerificationController;
 use Illuminate\Support\Facades\Route;
 
-// The spas on the platform: looking them up, suspending them, and reviewing what owners send in.
+// Look up spa businesses and branches, and review what owners send in.
 // Each route needs the admin's own permission flag (EnsurePermission, AdminPermissions).
 
-// Branches and businesses, and suspending them (with what it would affect, first).
+// Only an individual branch can be suspended.
 Route::controller(BranchController::class)->prefix('branches')->group(function () {
     Route::get('/', 'index')->middleware('permission:branch_view');
     Route::get('{uuid}', 'show')->middleware('permission:branch_view');
     Route::middleware('permission:branch_suspend')->group(function () {
         Route::get('{uuid}/suspension-impact', 'suspensionImpact');
         Route::post('{uuid}/suspend', 'suspend');
-        Route::post('{uuid}/reactivate', 'reactivate');
     });
 });
 Route::controller(BusinessController::class)->prefix('businesses')->group(function () {
@@ -27,11 +26,6 @@ Route::controller(BusinessController::class)->prefix('businesses')->group(functi
         Route::get('/', 'index');
         Route::get('{uuid}', 'show');
         Route::get('{uuid}/programs', 'programs');
-    });
-    Route::middleware('permission:spa_business_suspend')->group(function () {
-        Route::get('{uuid}/suspension-impact', 'suspensionImpact');
-        Route::post('{uuid}/suspend', 'suspend');
-        Route::post('{uuid}/reactivate', 'reactivate');
     });
 });
 

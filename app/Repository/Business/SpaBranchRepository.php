@@ -239,10 +239,11 @@ class SpaBranchRepository
 
     // Scoped lookup used by show/update/destroy — 404s instead of returning
     // another business's branch just because its uuid was guessed/known.
-    public function findByUuidForBusiness(string $uuid, int $spaBusinessId)
+    public function findByUuidForBusiness(string $uuid, int $spaBusinessId, bool $lock = false): SpaBranch
     {
         return SpaBranch::where('uuid', $uuid)
             ->where('spa_business_id', $spaBusinessId)
+            ->when($lock, fn ($query) => $query->lockForUpdate())
             ->firstOrFail();
     }
 

@@ -333,40 +333,12 @@ class NotificationService
         );
     }
 
-    public function businessSuspended(SpaBusiness $business, User $owner, string $reason): void
-    {
-        $this->notificationRepository->create(
-            $owner->id,
-            'Business Suspended',
-            "\"{$business->business_name}\" has been suspended: {$reason}",
-            'System'
-        );
-
-        foreach ($business->branches as $branch) {
-            $this->staffNotifier->branch($branch, 'Business Suspended', "\"{$business->business_name}\" has been suspended by Servora. Contact your spa owner for details.", includeOwner: false, critical: true);
-        }
-    }
-
-    public function businessReactivated(SpaBusiness $business, User $owner): void
-    {
-        $this->notificationRepository->create(
-            $owner->id,
-            'Business Reactivated',
-            "\"{$business->business_name}\" has been reactivated and is no longer suspended.",
-            'System'
-        );
-
-        foreach ($business->branches as $branch) {
-            $this->staffNotifier->branch($branch, 'Business Reactivated', "\"{$business->business_name}\" is active again.", includeOwner: false, critical: true);
-        }
-    }
-
     public function branchSuspended(SpaBranch $branch, User $owner, string $reason): void
     {
         $this->notificationRepository->create(
             $owner->id,
             'Branch Suspended',
-            "\"{$branch->branch_name}\" has been suspended: {$reason}",
+            "\"{$branch->branch_name}\" has been suspended: {$reason}. Resubmit the branch permit for review to restore access.",
             'System',
             $branch->uuid,
         );

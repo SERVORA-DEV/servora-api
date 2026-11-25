@@ -17,17 +17,11 @@ class BranchRegistrationRepository
             ->paginate($perPage);
     }
 
-    public function findByUuid(string $uuid): SpaBranch
+    public function findByUuid(string $uuid, bool $lock = false): SpaBranch
     {
         return SpaBranch::with('business.owner.ownerIdentityVerification', 'schedules', 'verifier')
             ->where('uuid', $uuid)
+            ->when($lock, fn ($query) => $query->lockForUpdate())
             ->firstOrFail();
-    }
-
-    public function update(string $uuid, array $payload): SpaBranch
-    {
-        $model = $this->findByUuid($uuid);
-        $model->update($payload);
-        return $model;
     }
 }

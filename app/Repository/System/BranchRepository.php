@@ -83,19 +83,13 @@ class BranchRepository
     }
 
     // Same eager-loads as paginateAll(), scoped to one row — used to
-    // re-fetch a branch in the LIST shape after suspend/reactivate, so
+    // re-fetch a branch in the LIST shape after suspension, so
     // SpaBranchResource's business/manager whenLoaded blocks resolve.
-    public function findForList(string $uuid): SpaBranch
+    public function findForList(string $uuid, bool $lock = false): SpaBranch
     {
         return SpaBranch::with(['business.owner', 'manager'])
             ->where('uuid', $uuid)
+            ->when($lock, fn ($query) => $query->lockForUpdate())
             ->firstOrFail();
-    }
-
-    public function update(SpaBranch $branch, array $payload): SpaBranch
-    {
-        $branch->update($payload);
-
-        return $branch->fresh();
     }
 }

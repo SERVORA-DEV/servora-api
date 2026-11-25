@@ -11,8 +11,8 @@ use App\Models\SpaBranch;
 use App\Service\Business\ClientNotifier;
 use Illuminate\Http\JsonResponse;
 
-// What it means for a branch to be suspended by Servora — its own suspension, or
-// its whole business's. A suspension WINDS DOWN the branch: nothing new starts
+// A branch winds down during suspension and while its resubmission is reviewed:
+// nothing new starts
 // (no new booking, no check-in), but a visit already open can still be finished
 // and paid, so nobody is left mid-service or with a bill that cannot be paid. The
 // clients booked for later are told it is on hold.
@@ -22,7 +22,9 @@ class Suspension
     {
         $branch->loadMissing('business');
 
-        return $branch->verification_status === VerificationStatus::Suspended->value || $branch->business?->verification_status === VerificationStatus::Suspended->value;
+        return $branch->verification_status === VerificationStatus::Suspended->value
+            || $branch->suspension_reason !== null
+            || $branch->business?->verification_status === VerificationStatus::Suspended->value;
     }
 
     /** The refusal for something new at a suspended branch, or null when it is not suspended. */

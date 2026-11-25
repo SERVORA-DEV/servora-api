@@ -700,169 +700,128 @@ class SpaBranchService
         return new SpaBranchResource($branch);
     }
 
+
     public function saveLocation(User $user, string $uuid, array $payload, ?Request $request = null)
     {
-        $business = $this->spaBusinessRepository->findForUser($user);
+        return $this->updateRegistration($user, $uuid, function (SpaBranch $branch) use ($user, $payload, $request) {
+            $fields = ['latitude', 'longitude', 'formatted_address'];
+            $oldValues = $branch->only($fields);
+            $branch->update([
+                'latitude' => $payload['latitude'],
+                'longitude' => $payload['longitude'],
+                'formatted_address' => $payload['formatted_address'],
+            ]);
 
-        if (! $business) {
-            return response()->json([
-                'message' => 'No spa business found for this account.',
-            ], 422);
-        }
+            $this->auditLogRepository->record($user->id, 'spa_branches', $branch->id, 'Update', $oldValues, $branch->only($fields), $request);
 
-        $branch = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
-
-        if (! in_array($branch->verification_status, [VerificationStatus::Unregistered->value, VerificationStatus::Rejected->value], true)) {
-            return response()->json([
-                'message' => 'This branch already has a registration request in review or approved.',
-            ], 422);
-        }
-
-        $oldValues = $branch->only(['latitude', 'longitude', 'formatted_address']);
-
-        $branch = $this->spaBranchRepository->update($uuid, [
-            'latitude' => $payload['latitude'],
-            'longitude' => $payload['longitude'],
-            'formatted_address' => $payload['formatted_address'],
-        ]);
-
-        $this->auditLogRepository->record(
-            $user->id,
-            'spa_branches',
-            $branch->id,
-            'Update',
-            $oldValues,
-            $branch->only(['latitude', 'longitude', 'formatted_address']),
-            $request
-        );
-
-        return new SpaBranchResource($branch);
+            return new SpaBranchResource($branch);
+        });
     }
 
-    /**
-     * Permit step of the branch wizard — the branch's own Business/Mayor's
-     * Permit, kept separate from the business-level DTI/SEC document (that
-     * already verified the business itself; this proves the specific
-     * location). Uses DocumentUploadService (private/authenticated), same
-     * as the business registration document. Same Unregistered/Rejected
-     * guard as saveLocation.
-     */
     public function savePermit(User $user, string $uuid, array $payload, ?UploadedFile $permitFile, ?Request $request = null)
     {
-        $business = $this->spaBusinessRepository->findForUser($user);
+        $newPath = null;
+        try {
+            return $this->updateRegistration($user, $uuid, function (SpaBranch $branch) use ($user, $payload, $permitFile, $request, &$newPath) {
+                $oldPath = $branch->permit_document_path;
+                if (! $permitFile && ! $oldPath) {
+                    return response()->json(['message' => 'Upload the permit document.'], 422);
+                }
 
-        if (! $business) {
-            return response()->json([
-                'message' => 'No spa business found for this account.',
-            ], 422);
+                $fields = ['permit_number', 'permit_confirmed'];
+                $oldValues = $branch->only($fields);
+                if ($permitFile) {
+                    $newPath = $this->documentUploadService->store($permitFile, "verification/branch/{$branch->uuid}/permit");
+                }
+
+                $branch->update([
+                    'permit_document_path' => $newPath ?? $oldPath,
+                    'permit_number' => $payload['permit_number'],
+                    'permit_business_name' => $payload['permit_business_name'],
+                    'permit_branch_location' => $payload['permit_branch_location'],
+                    'permit_issue_date' => $payload['permit_issue_date'],
+                    'permit_confirmed' => true,
+                ]);
+                $this->auditLogRepository->record($user->id, 'spa_branches', $branch->id, 'Upload', $oldValues, $branch->only($fields), $request);
+
+                if ($newPath && $oldPath) {
+                    DB::afterCommit(fn () => $this->discardPermit($oldPath));
+                }
+
+                return new SpaBranchResource($branch);
+            });
+        } catch (\Throwable $error) {
+            if ($newPath) {
+                $this->discardPermit($newPath);
+            }
+            throw $error;
         }
-
-        $branch = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
-
-        if (! in_array($branch->verification_status, [VerificationStatus::Unregistered->value, VerificationStatus::Rejected->value], true)) {
-            return response()->json([
-                'message' => 'This branch already has a registration request in review or approved.',
-            ], 422);
-        }
-
-        $oldValues = $branch->only(['permit_number', 'permit_confirmed']);
-
-        // No new file: the details are corrected and the permit on file is kept.
-        if (! $permitFile && ! $branch->permit_document_path) {
-            return response()->json(['message' => 'Upload the permit document.'], 422);
-        }
-        $path = $permitFile
-            ? $this->documentUploadService->replace($branch->permit_document_path, $permitFile, "verification/branch/{$branch->uuid}/permit")
-            : $branch->permit_document_path;
-
-        $branch = $this->spaBranchRepository->update($uuid, [
-            'permit_document_path' => $path,
-            'permit_number' => $payload['permit_number'],
-            'permit_business_name' => $payload['permit_business_name'],
-            'permit_branch_location' => $payload['permit_branch_location'],
-            'permit_issue_date' => $payload['permit_issue_date'],
-            'permit_confirmed' => true,
-        ]);
-
-        $this->auditLogRepository->record(
-            $user->id,
-            'spa_branches',
-            $branch->id,
-            'Upload',
-            $oldValues,
-            $branch->only(['permit_number', 'permit_confirmed']),
-            $request
-        );
-
-        return new SpaBranchResource($branch);
     }
 
-    /**
-     * The combined "Review -> Submit for Verification" action. Only allowed
-     * from Unregistered (first submission) or Rejected (owner fixed the
-     * flagged step and is trying again) — a branch that's already
-     * Pending/Verified/Suspended can't be resubmitted out from under the
-     * admin's review. Requires Info + Location + Permit to all be complete,
-     * mirroring OwnerVerificationService::submit()'s completeness checks.
-     */
+    private function discardPermit(string $path): void
+    {
+        try {
+            $this->documentUploadService->delete($path);
+        } catch (\Throwable $error) {
+            report($error);
+        }
+    }
+
     public function submit(User $user, string $uuid, ?Request $request = null)
     {
+        return $this->updateRegistration($user, $uuid, function (SpaBranch $branch) use ($user, $request) {
+            if (! $branch->branch_name) {
+                return response()->json(['message' => 'Please complete the branch information before submitting.'], 422);
+            }
+
+            if ($branch->latitude === null || $branch->longitude === null) {
+                return response()->json(['message' => 'Please select this branch\'s location on the map before submitting.'], 422);
+            }
+
+            if (! $branch->permit_document_path || ! $branch->permit_confirmed) {
+                return response()->json(['message' => 'Please upload this branch\'s business permit before submitting.'], 422);
+            }
+
+            $oldValues = $branch->only(['verification_status', 'suspension_reason']);
+            $suspensionReason = $branch->suspension_reason;
+            if ($branch->verification_status === VerificationStatus::Suspended->value && blank($suspensionReason)) {
+                $suspensionReason = 'Suspended by Servora.';
+            }
+
+            // A suspended branch is still on hold while Pending or Rejected.
+            $branch->update([
+                'verification_status' => VerificationStatus::Pending->value,
+                'suspension_reason' => $suspensionReason,
+                'rejection_reason' => null,
+                'verified_by' => null,
+                'verified_at' => null,
+            ]);
+            $this->auditLogRepository->record($user->id, 'spa_branches', $branch->id, 'Submit', $oldValues, $branch->only(['verification_status', 'suspension_reason']), $request);
+            $this->notificationService->branchRegistrationSubmitted($branch, $this->adminUsersRepository->allAdministrators());
+
+            return new SpaBranchResource($branch);
+        });
+    }
+
+    private function updateRegistration(User $user, string $uuid, \Closure $change)
+    {
         $business = $this->spaBusinessRepository->findForUser($user);
-
         if (! $business) {
-            return response()->json([
-                'message' => 'No spa business found for this account.',
-            ], 422);
+            return response()->json(['message' => 'No spa business found for this account.'], 422);
         }
 
-        $branch = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id);
+        return DB::transaction(function () use ($uuid, $business, $change) {
+            $branch = $this->spaBranchRepository->findByUuidForBusiness($uuid, $business->id, lock: true);
+            if (! in_array($branch->verification_status, [
+                VerificationStatus::Unregistered->value,
+                VerificationStatus::Rejected->value,
+                VerificationStatus::Suspended->value,
+            ], true)) {
+                return response()->json(['message' => 'This branch already has a registration request in review or has been approved.'], 422);
+            }
 
-        if (! in_array($branch->verification_status, [VerificationStatus::Unregistered->value, VerificationStatus::Rejected->value], true)) {
-            return response()->json([
-                'message' => 'This branch already has a registration request in review or approved.',
-            ], 422);
-        }
-
-        if (! $branch->branch_name) {
-            return response()->json([
-                'message' => 'Please complete the branch information before submitting.',
-            ], 422);
-        }
-
-        if ($branch->latitude === null || $branch->longitude === null) {
-            return response()->json([
-                'message' => 'Please select this branch\'s location on the map before submitting.',
-            ], 422);
-        }
-
-        if (! $branch->permit_document_path || ! $branch->permit_confirmed) {
-            return response()->json([
-                'message' => 'Please upload this branch\'s business permit before submitting.',
-            ], 422);
-        }
-
-        $oldValues = $branch->only(['verification_status']);
-
-        $branch = $this->spaBranchRepository->update($uuid, [
-            'verification_status' => VerificationStatus::Pending->value,
-            'rejection_reason' => null,
-            'verified_by' => null,
-            'verified_at' => null,
-        ]);
-
-        $this->auditLogRepository->record(
-            $user->id,
-            'spa_branches',
-            $branch->id,
-            'Submit',
-            $oldValues,
-            $branch->only(['verification_status']),
-            $request
-        );
-
-        $this->notificationService->branchRegistrationSubmitted($branch, $this->adminUsersRepository->allAdministrators());
-
-        return new SpaBranchResource($branch);
+            return $change($branch);
+        });
     }
 
     // Backs GET /spas/{uuid}/reviews — public, same Verified+Active+listed

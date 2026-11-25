@@ -4,9 +4,7 @@ namespace App\Http\Requests\System;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-// Shared by BusinessController::suspend and BranchController::suspend — the
-// shape is identical to BranchRegistrationRejectRequest, so one class
-// covers both instead of duplicating it.
+// The reason the administrator must provide when suspending a branch.
 class SuspendReasonRequest extends FormRequest
 {
     public function authorize(): bool

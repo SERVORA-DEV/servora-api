@@ -8,7 +8,9 @@ use App\Models\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\System\BranchRepository;
 use App\Service\Notifications\NotificationService;
+use App\Support\Platform\Suspension;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class BranchService
 {
@@ -49,87 +51,45 @@ class BranchService
         return new SpaBranchResource($this->branchRepository->findByUuid($uuid));
     }
 
-    // Only a currently-Verified branch can be suspended — same guard shape
-    // as BusinessService::suspend.
     // What suspending it would reach, shown before the administrator confirms.
     public function suspensionImpact(string $uuid): array
     {
         $branch = $this->branchRepository->findForList($uuid);
 
-        return ['data' => \App\Support\Platform\Suspension::impact([$branch->id])];
+        return ['data' => Suspension::impact([$branch->id])];
     }
 
     public function suspend(User $admin, string $uuid, string $reason, ?Request $request = null)
     {
-        $branch = $this->branchRepository->findForList($uuid);
+        return DB::transaction(function () use ($admin, $uuid, $reason, $request) {
+            $branch = $this->branchRepository->findForList($uuid, lock: true);
+            if ($branch->verification_status !== VerificationStatus::Verified->value) {
+                return response()->json(['message' => 'Only a verified branch can be suspended.'], 422);
+            }
 
-        if ($branch->verification_status !== VerificationStatus::Verified->value) {
-            return response()->json(['message' => 'Only a verified branch can be suspended.'], 422);
-        }
+            $fields = ['verification_status', 'verified_by', 'verified_at', 'suspension_reason'];
+            $oldValues = $branch->only($fields);
+            $branch->update([
+                'verification_status' => VerificationStatus::Suspended->value,
+                'verified_by' => $admin->id,
+                'verified_at' => now(),
+                'suspension_reason' => $reason,
+            ]);
 
-        $oldValues = $branch->only(['verification_status', 'verified_by', 'verified_at', 'suspension_reason']);
+            $this->auditLogRepository->record($admin->id, 'spa_branches', $branch->id, 'Suspend', $oldValues, $branch->only($fields), $request);
 
-        $branch = $this->branchRepository->update($branch, [
-            'verification_status' => VerificationStatus::Suspended->value,
-            'verified_by' => $admin->id,
-            'verified_at' => now(),
-            'suspension_reason' => $reason,
-        ]);
+            DB::afterCommit(function () use ($branch, $reason) {
+                try {
+                    if ($owner = $branch->business?->owner) {
+                        $this->notificationService->branchSuspended($branch, $owner, $reason);
+                    }
+                    Suspension::tellClients([$branch->id]);
+                } catch (\Throwable $error) {
+                    report($error);
+                }
+            });
 
-        $this->auditLogRepository->record(
-            $admin->id,
-            'spa_branches',
-            $branch->id,
-            'Suspend',
-            $oldValues,
-            $branch->only(['verification_status', 'verified_by', 'verified_at', 'suspension_reason']),
-            $request
-        );
-
-        $owner = $branch->business?->owner;
-        if ($owner) {
-            $this->notificationService->branchSuspended($branch, $owner, $reason);
-        }
-        // The clients booked for later are told it is on hold.
-        \App\Support\Platform\Suspension::tellClients([$branch->id]);
-
-        return new SpaBranchResource($this->branchRepository->findForList($uuid));
-    }
-
-    public function reactivate(User $admin, string $uuid, ?Request $request = null)
-    {
-        $branch = $this->branchRepository->findForList($uuid);
-
-        if ($branch->verification_status !== VerificationStatus::Suspended->value) {
-            return response()->json(['message' => 'Only a suspended branch can be reactivated.'], 422);
-        }
-
-        $oldValues = $branch->only(['verification_status', 'verified_by', 'verified_at', 'suspension_reason']);
-
-        $branch = $this->branchRepository->update($branch, [
-            'verification_status' => VerificationStatus::Verified->value,
-            'verified_by' => $admin->id,
-            'verified_at' => now(),
-            'suspension_reason' => null,
-        ]);
-
-        $this->auditLogRepository->record(
-            $admin->id,
-            'spa_branches',
-            $branch->id,
-            'Restore',
-            $oldValues,
-            $branch->only(['verification_status', 'verified_by', 'verified_at', 'suspension_reason']),
-            $request
-        );
-
-        $owner = $branch->business?->owner;
-        if ($owner) {
-            $this->notificationService->branchReactivated($branch, $owner);
-        }
-        // The clients who were told their booking was on hold are told it is on.
-        \App\Support\Platform\Suspension::tellClientsBack([$branch->id]);
-
-        return new SpaBranchResource($this->branchRepository->findForList($uuid));
+            return new SpaBranchResource($branch);
+        });
     }
 }
