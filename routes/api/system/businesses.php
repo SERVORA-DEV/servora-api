@@ -75,6 +75,7 @@ Route::controller(BusinessRegistrationChangeController::class)->prefix('registra
 // Owners' reviews of SERVORA: published on the website's Reviews page, or hidden.
 Route::controller(ServoraReviewController::class)->prefix('servora-reviews')->group(function () {
     Route::get('/', 'adminIndex')->middleware('permission:spa_business_view');
+    Route::get('{uuid}', 'adminShow')->whereUuid('uuid')->middleware('permission:spa_business_view');
     Route::post('{uuid}/publish', 'publish')->middleware('permission:spa_business_approve');
     Route::post('{uuid}/hide', 'hide')->middleware('permission:spa_business_approve');
 });

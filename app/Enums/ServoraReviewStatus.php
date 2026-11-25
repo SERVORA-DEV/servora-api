@@ -7,7 +7,7 @@ namespace App\Enums;
  */
 enum ServoraReviewStatus: string
 {
-    // Waiting for an administrator to publish or hide it.
+    // Legacy value. These reviews are public alongside Published reviews.
     case Pending = 'Pending';
     case Published = 'Published';
     case Hidden = 'Hidden';

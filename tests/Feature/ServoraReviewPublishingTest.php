@@ -89,32 +89,62 @@ class ServoraReviewPublishingTest extends TestCase
         $uuid = ServoraReview::sole()->uuid;
         $this->assertSame(1, $this->publicPage()['summary']['count']);
 
-        config(['admin_access.require_two_factor' => false, 'admin_access.allowed_ips' => []]);
-        $admin = User::factory()->create(['role' => 'system_administrator', 'account_status' => 'Active', 'email_verified_at' => now()]);
-        \App\Models\UserPermission::create(['user_id' => $admin->id, ...array_fill_keys(\App\Support\Access\AdminPermissions::keys(), true)]);
-        Sanctum::actingAs($admin->fresh('permission'));
+        $this->signInAsAdmin();
 
-        $this->postJson("/api/system/servora-reviews/{$uuid}/hide")->assertOk();
+        $this->getJson("/api/system/servora-reviews/{$uuid}")->assertOk()
+            ->assertJsonPath('data.title', 'Runs our front desk')
+            ->assertJsonPath('data.rating', 5);
+        $this->postJson("/api/system/servora-reviews/{$uuid}/hide")->assertOk()
+            ->assertJsonPath('data.status', 'Hidden');
         $this->assertSame(0, $this->getJson('/api/servora-reviews')->json('summary.count'));
 
-        $this->postJson("/api/system/servora-reviews/{$uuid}/publish")->assertOk();
+        $this->postJson("/api/system/servora-reviews/{$uuid}/publish")->assertOk()
+            ->assertJsonPath('data.status', 'Published');
         $this->assertSame(1, $this->getJson('/api/servora-reviews')->json('summary.count'));
     }
 
     public function test_a_review_left_waiting_from_before_shows_too(): void
     {
-        ServoraReview::create([
+        $review = ServoraReview::create([
             'user_id' => $this->owner->id,
             'spa_business_id' => SpaBusiness::first()->id,
             'rating' => 5,
             'body' => 'Sent when every review still waited for a check first.',
             'show_business' => true,
             'status' => 'Pending',
+            'pending_title' => 'Legacy edit',
+            'pending_body' => 'This older edit was never applied to the public review.',
+            'pending_rating' => 3,
+            'pending_at' => now(),
         ]);
 
         $page = $this->publicPage();
 
         $this->assertSame(1, $page['summary']['count']);
         $this->assertNotNull($page['data'][0]['published_at']);
+
+        $this->signInAsAdmin();
+        $path = "/api/system/servora-reviews/{$review->uuid}";
+        $this->getJson('/api/system/servora-reviews?status=Published')->assertOk()
+            ->assertJsonPath('data.0.uuid', $review->uuid)
+            ->assertJsonPath('data.0.status', 'Published');
+        $this->getJson($path)->assertOk()->assertJsonPath('data.status', 'Published');
+        $this->postJson($path.'/hide')->assertOk()->assertJsonPath('data.status', 'Hidden');
+        $this->assertSame(0, $this->getJson('/api/servora-reviews')->json('summary.count'));
+        $this->getJson('/api/system/servora-reviews?status=Hidden')->assertOk()
+            ->assertJsonPath('data.0.uuid', $review->uuid);
+
+        $this->postJson($path.'/publish')->assertOk()
+            ->assertJsonPath('data.body', $review->body)
+            ->assertJsonPath('data.rating', 5);
+        $this->assertSame($review->body, $this->getJson('/api/servora-reviews')->json('data.0.body'));
+    }
+
+    private function signInAsAdmin(): void
+    {
+        config(['admin_access.require_two_factor' => false, 'admin_access.allowed_ips' => []]);
+        $admin = User::factory()->create(['role' => 'system_administrator', 'account_status' => 'Active', 'email_verified_at' => now()]);
+        \App\Models\UserPermission::create(['user_id' => $admin->id, ...array_fill_keys(\App\Support\Access\AdminPermissions::keys(), true)]);
+        Sanctum::actingAs($admin->fresh('permission'));
     }
 }

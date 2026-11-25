@@ -5,8 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 
-// An owner's review of SERVORA (ServoraReviewService). Shown publicly only
-// once a system administrator publishes it.
+// An owner's review of SERVORA, public at submission unless hidden by an administrator.
 class ServoraReview extends Model
 {
     use HasUuids;

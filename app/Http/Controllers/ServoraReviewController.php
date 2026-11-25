@@ -8,7 +8,7 @@ use App\Service\ServoraReviewService;
 use Illuminate\Http\Request;
 
 // Owners' reviews of SERVORA: the owner's own one, the public list, and the
-// system administrator's publish / hide (ServoraReviewService).
+// system administrator's controls for public visibility.
 class ServoraReviewController extends Controller
 {
     public function __construct(private ServoraReviewService $reviews) {}
@@ -32,9 +32,14 @@ class ServoraReviewController extends Controller
 
     public function adminIndex(Request $request)
     {
-        $status = (string) $request->query('status', ServoraReviewStatus::Pending->value);
+        $status = $request->query('status', 'All');
 
-        return $this->reviews->adminList(in_array($status, [ServoraReviewStatus::Pending->value, ServoraReviewStatus::Published->value, ServoraReviewStatus::Hidden->value, 'All'], true) ? $status : ServoraReviewStatus::Pending->value);
+        return $this->reviews->adminList(in_array($status, [ServoraReviewStatus::Published->value, ServoraReviewStatus::Hidden->value], true) ? $status : 'All');
+    }
+
+    public function adminShow(string $uuid)
+    {
+        return $this->reviews->adminShow($uuid);
     }
 
     public function publish(Request $request, string $uuid)
