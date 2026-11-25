@@ -470,6 +470,10 @@ class SpaBranchService
         // can go to Pending.
         $payload['verification_status'] = VerificationStatus::Unregistered->value;
         $payload['operating_status'] = OperatingStatus::Active->value;
+        // Not shown to clients until the owner switches it on (Branch Settings →
+        // Marketplace), once it is approved and ready: approval alone never puts a
+        // branch on the client app. Branches made before this keep their own setting.
+        $payload['listing_visible'] = false;
 
         $model = $this->spaBranchRepository->create($payload);
 

@@ -227,10 +227,20 @@ class NotificationService
         $this->notificationRepository->create(
             $owner->id,
             'Branch Registration Approved',
-            "\"{$branch->branch_name}\" has been approved and is now bookable.",
+            // A branch is shown to clients only once the owner switches it on
+            // (Branch Settings → Marketplace); approval alone doesn't list it.
+            $branch->listing_visible
+                ? "\"{$branch->branch_name}\" has been approved and is now bookable."
+                : "\"{$branch->branch_name}\" has been approved. Clients can't see it yet: finish setting it up, then go live in Settings → Marketplace.",
             'System',
             $branch->uuid,
         );
+    }
+
+    /** A reason that says something (not blank, and not only "." or "-"). */
+    private static function hasWords(?string $reason): bool
+    {
+        return (bool) preg_match('/[\p{L}\p{N}]/u', (string) $reason);
     }
 
     public function branchRegistrationRejected(SpaBranch $branch, User $owner, string $reason): void
@@ -238,7 +248,9 @@ class NotificationService
         $this->notificationRepository->create(
             $owner->id,
             'Branch Registration Rejected',
-            "\"{$branch->branch_name}\" was rejected: {$reason}",
+            self::hasWords($reason)
+                ? "\"{$branch->branch_name}\" was rejected: {$reason}"
+                : "\"{$branch->branch_name}\" was rejected. Check the branch and send it again.",
             'System',
             $branch->uuid,
         );
@@ -338,7 +350,9 @@ class NotificationService
         $this->notificationRepository->create(
             $owner->id,
             'Branch Suspended',
-            "\"{$branch->branch_name}\" has been suspended: {$reason}. Resubmit the branch permit for review to restore access.",
+            self::hasWords($reason)
+                ? "\"{$branch->branch_name}\" has been suspended: {$reason}. Resubmit the branch permit for review to restore access."
+                : "\"{$branch->branch_name}\" has been suspended. Resubmit the branch permit for review to restore access.",
             'System',
             $branch->uuid,
         );

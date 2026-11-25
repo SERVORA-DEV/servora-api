@@ -10,6 +10,9 @@ use App\Models\SpaBranch;
 // the same branch twice. Names and areas are compared without regard to case or surrounding spaces.
 final class BranchIdentity
 {
+    /** The longest branch description clients are shown (Branch Settings → Branch details counts to it). */
+    public const DESCRIPTION_MAX = 400;
+
     /** Whether the business already has a (not deleted) branch with this name in this area. */
     public static function taken(?int $businessId, ?string $name, ?string $area, ?string $exceptUuid = null): bool
     {

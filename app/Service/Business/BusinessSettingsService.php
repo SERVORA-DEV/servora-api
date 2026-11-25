@@ -72,6 +72,13 @@ class BusinessSettingsService
             return $this->noBusiness();
         }
 
+        // The legal name is the registered one once the registration is on file and
+        // past review: it is changed only through Legal & Verification (Request a
+        // change), never here, so the two can't drift apart.
+        if (self::legalNameLocked($business)) {
+            unset($fields['legal_name']);
+        }
+
         $old = $business->only([...array_keys($fields), 'business_logo']);
         $payload = $fields;
 
@@ -95,6 +102,17 @@ class BusinessSettingsService
         $this->audit($user, $business, $old, $business->only(array_keys($payload)), $request);
 
         return $this->respond($business);
+    }
+
+    /**
+     * Whether the business's legal name follows its registration (DTI/SEC) and
+     * can't be typed on Business Identity: a registered name is on file and the
+     * registration is no longer editable (sent for review, verified or suspended).
+     */
+    public static function legalNameLocked(\App\Models\SpaBusiness $business): bool
+    {
+        return filled($business->registered_business_name)
+            && ! in_array($business->verification_status, self::LEGAL_EDITABLE_STATUSES, true);
     }
 
     public function updateLegal(User $user, array $fields, ?Request $request = null)

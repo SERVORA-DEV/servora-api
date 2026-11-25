@@ -39,7 +39,9 @@ class SpaBranchUpdateRequest extends FormRequest
 
             // The area this branch is in ("Mandug"). Not unique on its own: what tells branches apart
             // is the name and the area together (App\Support\Branches\BranchIdentity, checked in after()).
-            'code' => ['nullable', 'string', 'max:50'],
+            // Sent: it can't be emptied (a branch saved before it was required keeps
+            // working until its area is next edited).
+            'code' => ['sometimes', 'required', 'string', 'min:2', 'max:50'],
 
             'email' => ['nullable', 'email', new ValidEmail(), 'max:255', new NoEmoji()],
             'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji(), new PhMobile()],
@@ -51,7 +53,18 @@ class SpaBranchUpdateRequest extends FormRequest
             'instagram_handle' => ['nullable', 'string', 'max:100', new SocialLink(SocialLinks::INSTAGRAM)],
             'website_url' => ['nullable', 'string', 'max:255', new SocialLink(SocialLinks::WEBSITE)],
 
-            'description' => 'nullable|string',
+            // The limit applies to a description that is changed: one saved before the
+            // limit (longer) doesn't stop the branch's other details from saving.
+            'description' => ['nullable', 'string', function (string $attribute, mixed $value, \Closure $fail) {
+                $max = \App\Support\Branches\BranchIdentity::DESCRIPTION_MAX;
+                if (! is_string($value) || mb_strlen($value) <= $max) {
+                    return;
+                }
+                $current = \App\Models\SpaBranch::where('uuid', (string) $this->route('branch'))->value('description');
+                if ($value !== $current) {
+                    $fail("Keep the description to {$max} characters or fewer.");
+                }
+            }],
 
             'cover_photo' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:'.(int) config('uploads.max_size_kb', 5120),
 
@@ -62,6 +75,14 @@ class SpaBranchUpdateRequest extends FormRequest
     /**
      * @return array<string, string>
      */
+    public function messages(): array
+    {
+        return [
+            'code.required' => 'Enter the branch area, for example DAVAO.',
+            'code.min' => 'The branch area needs at least 2 characters.',
+        ];
+    }
+
     /** The same name in the same area as another branch of the business (only when the name or area is sent). */
     public function after(): array
     {

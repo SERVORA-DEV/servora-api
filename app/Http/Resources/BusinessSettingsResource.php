@@ -21,7 +21,12 @@ class BusinessSettingsResource extends JsonResource
 
             'identity' => [
                 'business_name' => $this->business_name,
-                'legal_name' => $this->legal_name,
+                // One name: once the registration is on file and reviewed, the legal
+                // name is the registered one (changed through Request a change only).
+                'legal_name' => ($locked = \App\Service\Business\BusinessSettingsService::legalNameLocked($this->resource))
+                    ? $this->registered_business_name
+                    : $this->legal_name,
+                'legal_name_locked' => $locked,
                 'spa_type' => $this->spa_type,
                 'tagline' => $this->tagline,
                 'business_description' => $this->business_description,

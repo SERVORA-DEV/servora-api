@@ -33,8 +33,8 @@ class SpaBranchCloneRequest extends FormRequest
         return [
             'branch' => 'required|array:branch_name,code,description',
             'branch.branch_name' => ['required', 'string', 'max:150', new NoEmoji()],
-            'branch.code' => ['nullable', 'string', 'max:50'],
-            'branch.description' => 'nullable|string',
+            'branch.code' => ['required', 'string', 'min:2', 'max:50'],
+            'branch.description' => 'nullable|string|max:'.\App\Support\Branches\BranchIdentity::DESCRIPTION_MAX,
             'copy' => 'required|array:facilities,offerings,hours,booking_rules,programs',
             'copy.facilities' => 'required|boolean',
             'copy.offerings' => 'required|boolean',
@@ -43,6 +43,15 @@ class SpaBranchCloneRequest extends FormRequest
             'copy.programs' => 'required|boolean',
             'facility_names' => 'sometimes|array',
             'facility_names.*' => 'required|string|max:150',
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'branch.code.required' => 'Enter the branch area, for example DAVAO.',
+            'branch.code.min' => 'The branch area needs at least 2 characters.',
+            'branch.description.max' => 'Keep the description to '.\App\Support\Branches\BranchIdentity::DESCRIPTION_MAX.' characters or fewer.',
         ];
     }
 

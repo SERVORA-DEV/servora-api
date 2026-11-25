@@ -49,6 +49,23 @@ class BranchSettingsService
         $payload = [];
         if (array_key_exists('listing_visible', $fields)) {
             $payload['listing_visible'] = (bool) $fields['listing_visible'];
+
+            // Going live is the owner's own step, and only once clients won't
+            // dead-end: everything MarketplaceReadiness asks for is done first.
+            // (Switching it off, or saving it as it already is, is never stopped.)
+            if ($payload['listing_visible'] && ! $branch->listing_visible) {
+                $missing = collect(MarketplaceReadiness::check($branch)['items'])
+                    ->filter(fn ($item) => $item['key'] !== 'listed' && ! $item['done'])
+                    ->pluck('label')
+                    ->values();
+                if ($missing->isNotEmpty()) {
+                    return response()->json([
+                        'message' => 'Finish these before going live: '.$missing->implode(', ').'.',
+                        'code' => 'NOT_READY',
+                        'missing' => $missing->all(),
+                    ], 422);
+                }
+            }
         }
         if (array_key_exists('promo_text', $fields)) {
             $payload['promo_text'] = $fields['promo_text'] !== null ? trim($fields['promo_text']) ?: null : null;

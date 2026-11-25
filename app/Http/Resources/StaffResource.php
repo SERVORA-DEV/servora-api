@@ -54,6 +54,12 @@ class StaffResource extends JsonResource
             'notes' => $this->notes,
             'spa_branch_uuid' => $this->branch?->uuid,
             'branch_name' => $this->branch?->branch_name,
+            // At least one working day in their week: without one they can't be booked
+            // or timed in (MarketplaceReadiness counts only staff with a shift), so the
+            // Employees list flags it.
+            'has_schedule' => $this->resource->relationLoaded('schedules')
+                ? $this->resource->schedules->contains(fn ($day) => ! $day->is_day_off && $day->start_time && $day->end_time)
+                : $this->resource->schedules()->where('is_day_off', false)->whereNotNull('start_time')->whereNotNull('end_time')->exists(),
 
             // Whether this staff member has been granted a login yet (see
             // AccountService::createAccount) — lets the Employees page

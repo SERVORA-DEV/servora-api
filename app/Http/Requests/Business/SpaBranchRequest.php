@@ -37,12 +37,13 @@ class SpaBranchRequest extends FormRequest
 
             // The area this branch is in ("Mandug"). Not unique on its own: what tells branches apart
             // is the name and the area together (App\Support\Branches\BranchIdentity, checked in after()).
-            'code' => ['nullable', 'string', 'max:50'],
+            // Required: the area is how branches of one business are told apart on every screen.
+            'code' => ['required', 'string', 'min:2', 'max:50'],
 
             'email' => ['nullable', 'email', new ValidEmail(), 'max:255', new NoEmoji()],
             'phone_number' => ['nullable', 'string', 'max:20', new NoEmoji(), new PhMobile()],
 
-            'description' => 'nullable|string',
+            'description' => 'nullable|string|max:'.\App\Support\Branches\BranchIdentity::DESCRIPTION_MAX,
 
             // Display/identification only — never treated as verification
             // evidence (see PermitStep/SpaBranchPermitRequest for that).
@@ -53,6 +54,15 @@ class SpaBranchRequest extends FormRequest
     /**
      * @return array<string, string>
      */
+    public function messages(): array
+    {
+        return [
+            'code.required' => 'Enter the branch area, for example DAVAO.',
+            'code.min' => 'The branch area needs at least 2 characters.',
+            'description.max' => 'Keep the description to '.\App\Support\Branches\BranchIdentity::DESCRIPTION_MAX.' characters or fewer.',
+        ];
+    }
+
     /** The same name in the same area as one the business already has. */
     public function after(): array
     {
