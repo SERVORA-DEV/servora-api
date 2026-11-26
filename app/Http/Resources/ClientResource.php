@@ -41,7 +41,12 @@ class ClientResource extends JsonResource
                     'middle_name' => $this->user->middle_name,
                     'suffix' => $this->user->suffix,
                     'gender' => $this->user->gender,
-                    'birth_date' => optional($this->user->birth_date)->format('Y-m-d'),
+                    // users.birth_date has no date cast, so it arrives as text
+                    // ("2004-03-15"): optional(...)->format() on text quietly gave
+                    // null, and every app user's birthday went missing here.
+                    'birth_date' => filled($this->user->birth_date)
+                        ? \Illuminate\Support\Carbon::parse($this->user->birth_date)->format('Y-m-d')
+                        : null,
                     // The client's own picture (users.profile_photo), unless this
                     // spa's staff took it down (Client::dismissed_photo).
                     'avatar' => \App\Support\ProfilePhoto::forSpa($this->user->profile_photo, \App\Models\Client::hasPhotoDismissal() ? $this->dismissed_photo : null),

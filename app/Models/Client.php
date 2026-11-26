@@ -116,10 +116,13 @@ class Client extends Model
     /** Their age this year: from the birth year recorded, or else their account's birth date. */
     public function ageValue(): ?int
     {
-        $year = self::hasProfile() ? $this->birth_year : null;
-        if ($year === null && $this->user_id && filled($this->user?->birth_date)) {
-            $year = \Illuminate\Support\Carbon::parse($this->user->birth_date)->year;
+        // The birthday on their own Servora account is exact, so it comes first;
+        // the age the spa's staff noted (kept as a birth year) is an estimate,
+        // used only when there is no birthday.
+        if ($this->user_id && filled($this->user?->birth_date)) {
+            return \Illuminate\Support\Carbon::parse($this->user->birth_date)->age;
         }
+        $year = self::hasProfile() ? $this->birth_year : null;
 
         return ClientProfile::age($year !== null ? (int) $year : null, (int) now()->year);
     }
