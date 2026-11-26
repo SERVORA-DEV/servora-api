@@ -77,6 +77,36 @@ class StaffRequest extends FormRequest
         }
     }
 
+    /**
+     * Nobody is added to, or moved to, a branch whose registration was started
+     * but not finished (no permit on file yet): it is often a try, and may be
+     * deleted. Someone already there stays where they are.
+     */
+    public function after(): array
+    {
+        return [
+            function (\Illuminate\Validation\Validator $validator) {
+                $uuid = $this->input('spa_branch_uuid');
+                if (! $uuid || $validator->errors()->has('spa_branch_uuid')) {
+                    return;
+                }
+                $branch = \App\Models\SpaBranch::where('uuid', $uuid)->first(['id', 'verification_status', 'permit_document_path']);
+                if (! $branch
+                    || $branch->verification_status !== \App\Enums\VerificationStatus::Unregistered->value
+                    || filled($branch->permit_document_path)) {
+                    return;
+                }
+                if (! $this->isMethod('post') && $this->route('staff')) {
+                    $current = \App\Models\Staff::where('uuid', $this->route('staff'))->value('spa_branch_id');
+                    if ((int) $current === (int) $branch->id) {
+                        return;
+                    }
+                }
+                $validator->errors()->add('spa_branch_uuid', "This branch's registration isn't finished yet. Finish it first, then add people to it.");
+            },
+        ];
+    }
+
     public function messages(): array
     {
         return [

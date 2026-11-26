@@ -645,6 +645,17 @@ class SpaBranchService
             ], 422);
         }
 
+        // A branch that has ever served anyone keeps its history (visits, sales,
+        // reports): it can only be deactivated. Deleting is for a registration that
+        // never got that far (a try, or one sent back), which has none.
+        $history = Appointment::withTrashed()->where('spa_branch_id', $branch->id)->exists()
+            || Billing::withTrashed()->where('spa_branch_id', $branch->id)->exists();
+        if ($history) {
+            return response()->json([
+                'message' => "{$branch->branch_name} has booking history, so it can't be deleted. Deactivate it instead.",
+            ], 422);
+        }
+
         $this->spaBranchRepository->delete($uuid);
 
         return true;

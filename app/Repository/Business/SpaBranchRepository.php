@@ -215,6 +215,13 @@ class SpaBranchRepository
                 'staff' => fn ($query) => $query->where('status', '!=', StaffStatus::Terminated->value),
                 'facilities',
             ])
+            // Whether it has ever had a booking (cancelled and removed ones too): a
+            // branch with a history can't be deleted, only deactivated (deleteSpaBranch).
+            ->addSelect(['has_bookings' => \App\Models\Appointment::withTrashed()
+                ->selectRaw('1')
+                ->whereColumn('spa_branch_id', 'spa_branches.id')
+                ->limit(1),
+            ])
             ->addSelect(['manager_name' => \App\Models\Staff::query()
                 ->selectRaw("concat(first_name, ' ', last_name)")
                 ->whereColumn('spa_branch_id', 'spa_branches.id')

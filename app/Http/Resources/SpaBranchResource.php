@@ -111,6 +111,11 @@ class SpaBranchResource extends JsonResource
             // The branch list's card numbers — only present when the query
             // counted them (SpaBranchRepository::paginateForBranches).
             'staff_count' => $this->whenCounted('staff'),
+            // Ever had a booking (the owner's branch list only): such a branch can't be deleted.
+            'has_bookings' => $this->when(
+                array_key_exists('has_bookings', $this->resource->getAttributes()),
+                fn () => (bool) $this->resource->getAttribute('has_bookings'),
+            ),
             'rooms_count' => $this->whenCounted('facilities'),
             'manager_name' => $this->when(
                 array_key_exists('manager_name', $this->resource->getAttributes()),
