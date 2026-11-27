@@ -68,7 +68,7 @@ class ClientRepository
      * Used by the desk's "search existing client" step and by the Clients page, which also asks
      * for (`$filters`):
      *   segment     new (joined this month), regular (3+ visits), upcoming (booked ahead),
-     *               lapsed (last visit 60+ days ago, nothing booked), members, app
+     *               lapsed (last visit 60+ days ago, nothing booked), members, app, spa
      *   branch_id   the branch the client is listed at (where they last came, else were added)
      *   sort        recent, visits, spent, newest, points, name (the desk: by first name)
      */
@@ -102,6 +102,7 @@ class ClientRepository
                     ->whereDoesntHave('appointments', $booked),
                 'members' => $q->whereHas('activeMembership'),
                 'app' => $q->whereNotNull('clients.user_id'),
+                'spa' => $q->whereNull('clients.user_id'),
                 default => $q,
             })
             ->when($filters['branch_id'] ?? null, fn ($q, $id) => $q->whereRaw('coalesce(' . $this->listBranchSql($branchIds) . ', clients.spa_branch_id) = ?', [(int) $id]))

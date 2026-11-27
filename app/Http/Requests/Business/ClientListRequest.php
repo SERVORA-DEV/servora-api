@@ -16,7 +16,7 @@ class ClientListRequest extends FormRequest
     {
         return [
             'q' => ['nullable', 'string', 'max:120'],
-            'segment' => ['nullable', 'in:all,new,regular,upcoming,lapsed,members,app'],
+            'segment' => ['nullable', 'in:all,new,regular,upcoming,lapsed,members,app,spa'],
             'branch_uuid' => ['nullable', 'uuid'],
             'sort' => ['nullable', 'in:recent,visits,spent,newest,points,name'],
         ];
