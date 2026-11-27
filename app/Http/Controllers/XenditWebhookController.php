@@ -91,7 +91,9 @@ class XenditWebhookController extends Controller
             // A saved-method charge (checkout "Saved" or auto-renewal):
             // re-read the payment request so the amount and status come from
             // Xendit, not the webhook body.
-            'payment.capture', 'payment.succeeded', 'payment.failure', 'payment.failed' => $checkout->refresh($session),
+            'payment.capture', 'payment.succeeded', 'payment.failure', 'payment.failed' => $checkout->refresh(
+                $session, is_string($data['payment_request_id'] ?? null) ? $data['payment_request_id'] : null,
+            ),
             default => Log::info('xendit.webhook.ignored_event', ['event' => $event]),
         };
     }

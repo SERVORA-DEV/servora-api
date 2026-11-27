@@ -67,7 +67,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('accounts:send-web-inactivity-reminders')->dailyAt('09:00')->withoutOverlapping();
         $schedule->command('subscriptions:notify-almost-due')->daily()->withoutOverlapping();
         $schedule->command('subscriptions:notify-almost-due --retry-email')->hourlyAt(15)->withoutOverlapping();
-        $schedule->command('subscriptions:auto-renew')->hourly()->withoutOverlapping();
+        $schedule->command('subscriptions:auto-renew')->everyFiveMinutes()->withoutOverlapping();
         $schedule->command('appointments:send-reminders')->everyFiveMinutes();
         $schedule->command('staff:send-front-desk-alerts')->everyFiveMinutes();
         // A service in progress that has run its time (ServiceEndNotifier).

@@ -12,14 +12,14 @@ use App\Service\Subscription\SubscriptionRenewalService;
 use App\Service\Subscription\XenditService;
 use Illuminate\Console\Command;
 
-// Scheduled hourly (bootstrap/app.php) — charges the saved payment method of
+// Scheduled every five minutes (bootstrap/app.php) — charges the saved payment method of
 // every subscription with auto-renew on that's due, and settles charges
 // still processing from an earlier run. See SubscriptionRenewalService.
 // In dev, run it directly: `php artisan subscriptions:auto-renew`.
 //
 // To SEE an automatic payment without waiting for the due date (demo, Xendit
 // test key only): `php artisan subscriptions:auto-renew --demo=owner@email`.
-// It renews that owner's plan now, exactly as the hourly run would on the due
+// It renews that owner's plan now, exactly as the scheduled run would on the due
 // day: the saved (test) payment method is charged through Xendit's test mode
 // and the next term starts.
 class AutoRenewSubscriptions extends Command
@@ -66,7 +66,7 @@ class AutoRenewSubscriptions extends Command
         }
 
         $this->line("Demo: renewing {$business->business_name}'s {$subscription->plan?->name} plan now with {$subscription->paymentMethod->label} (Xendit test mode, no real money).");
-        $session = $renewals->attempt($subscription);
+        $session = $renewals->attempt($subscription, demo: true);
         if (! $session) {
             $this->error('The renewal could not be started. The owner has been told why in their notifications.');
 

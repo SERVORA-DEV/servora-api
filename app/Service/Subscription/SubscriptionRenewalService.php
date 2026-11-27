@@ -17,16 +17,17 @@ use App\Repository\SpaBusinessRepository;
 use App\Repository\SubscriptionRepository;
 use App\Service\Notifications\NotificationService;
 use App\Support\Platform\PlanTerms;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 // Auto-renewal: when a subscription with auto-renew on is due, charge the
 // owner's saved card / Maya for the next term (CheckoutService does
-// the charge and the bookkeeping). Runs from the hourly
+// the charge and the bookkeeping). Runs from the scheduled
 // subscriptions:auto-renew command.
 //
-//  - Due = at or past expires_at, but still inside
-//    the grace period (so a failed charge is retried daily until access
-//    would end anyway).
+//  - The first charge happens at or after expiry. Failed charges can retry
+//    during the configured grace period.
 //  - The next term is on the plan the owner chose to move to (a scheduled
 //    downgrade), else the admin's updated version they didn't decline, else
 //    the same plan — the same order a manual renewal follows.
@@ -41,11 +42,14 @@ class SubscriptionRenewalService
         private PlanSwitchService $planSwitch,
         private NotificationService $notifications,
         private PlanFitService $fit,
+        private SubscriptionRenewalEmail $renewalEmail,
     ) {}
 
     /** @return array{attempted: int, renewed: int, failed: int} */
     public function run(): array
     {
+        $this->renewalEmail->retryPending();
+
         // Charges still processing from an earlier run.
         CheckoutSession::where('purpose', 'auto_renew')->where('status', CheckoutStatus::Pending->value)
             ->where('created_at', '<', now()->subMinutes(2))
@@ -54,7 +58,7 @@ class SubscriptionRenewalService
         $graceDays = SystemSetting::current()->subscription_grace_period_days;
         $stats = ['attempted' => 0, 'renewed' => 0, 'failed' => 0];
 
-        foreach ($this->due($graceDays) as $subscription) {
+        foreach ($this->eligible($graceDays)->select(['id', 'spa_business_id'])->lazyById(100) as $subscription) {
             $stats['attempted']++;
             $session = $this->attempt($subscription);
             $status = $session?->fresh()->status;
@@ -66,35 +70,57 @@ class SubscriptionRenewalService
     }
 
     // Each business's latest subscription only, with auto-renew on and due.
-    private function due(int $graceDays)
+    private function eligible(int $graceDays, bool $demo = false): Builder
     {
-        return Subscription::with(['plan', 'scheduledPlan', 'pendingPlan', 'paymentMethod', 'business.owner'])
-            ->where('status', SubscriptionStatus::Active->value)
+        $now = now();
+
+        return Subscription::where('status', SubscriptionStatus::Active->value)
             ->where('auto_renew', true)
+            ->where('is_trial', false)
             // Not a business Servora has suspended: it is not charged for what it cannot use.
             ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('spa_businesses')
                 ->whereColumn('spa_businesses.id', 'subscriptions.spa_business_id')
                 ->where('spa_businesses.verification_status', VerificationStatus::Suspended->value))
-            ->whereNotNull('expires_at')
-            ->where('expires_at', '<=', now())
-            ->where('expires_at', '>', now()->subDays($graceDays))
             ->where(fn ($q) => $q->whereNull('plan_change_status')->orWhere('plan_change_status', '!=', PlanChangeStatus::Declined->value))
-            ->where(fn ($q) => $q->whereNull('last_renewal_attempt_at')->orWhere('last_renewal_attempt_at', '<', now()->subHours(20)))
+            ->when(! $demo, fn ($q) => $q
+                ->where('expires_at', '<=', $now)
+                // Zero grace still gives the scheduler a chance to make the initial charge.
+                ->where('expires_at', '>', $now->copy()->subDays(max(1, $graceDays)))
+                ->where(fn ($attempt) => $attempt->whereNull('last_renewal_attempt_at')
+                    ->when($graceDays > 0, fn ($retry) => $retry->orWhere('last_renewal_attempt_at', '<', $now->copy()->subHours(20)))))
             ->whereRaw('subscriptions.id = (select max(s2.id) from subscriptions s2 where s2.spa_business_id = subscriptions.spa_business_id and s2.deleted_at is null)')
             ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('checkout_sessions')
                 ->whereColumn('checkout_sessions.subscription_id', 'subscriptions.id')
                 ->where('checkout_sessions.purpose', 'auto_renew')
-                ->where('checkout_sessions.status', CheckoutStatus::Pending->value))
-            ->get();
+                ->where('checkout_sessions.status', CheckoutStatus::Pending->value));
     }
 
-    public function attempt(Subscription $subscription): ?CheckoutSession
+    public function attempt(Subscription $subscription, bool $demo = false): ?CheckoutSession
     {
-        // Never charge a business Servora has suspended, whichever way this is reached.
-        if (SpaBusiness::whereKey($subscription->spa_business_id)->where('verification_status', VerificationStatus::Suspended->value)->exists()) {
-            return null;
+        $session = DB::transaction(function () use ($subscription, $demo) {
+            // Use the same business lock as checkout completion. Recheck the
+            // term after acquiring it so concurrent runs cannot both charge it.
+            $business = SpaBusiness::whereKey($subscription->spa_business_id)->lockForUpdate()->first();
+            if (! $business) {
+                return null;
+            }
+
+            $current = $this->eligible(SystemSetting::current()->subscription_grace_period_days, $demo)
+                ->with(['plan', 'scheduledPlan', 'pendingPlan', 'paymentMethod', 'business.owner'])
+                ->whereKey($subscription->id)->lockForUpdate()->first();
+
+            return $current ? $this->prepareAttempt($current) : null;
+        });
+
+        if ($session) {
+            $this->checkout->chargeSession($session, $session->paymentMethod, "{$session->plan->name} Plan Renewal ({$session->billing_cycle})");
         }
 
+        return $session;
+    }
+
+    private function prepareAttempt(Subscription $subscription): ?CheckoutSession
+    {
         $subscription->update(['last_renewal_attempt_at' => now()]);
 
         [$plan, $cycle] = $this->renewalPlanFor($subscription);
@@ -119,7 +145,7 @@ class SubscriptionRenewalService
         $problem = match (true) {
             ! $plan => 'Your plan is no longer offered. Choose a new plan to keep your access.',
             PlanSwitchService::price($plan, $cycle) === null => "The {$plan->name} plan isn't offered with {$cycle} billing anymore. Choose a plan to renew.",
-            ! $method || $method->trashed() || $method->status !== 'active' => 'There is no saved payment method to charge. Add one to keep auto-renew working.',
+            ! $method || $method->spa_business_id !== $subscription->spa_business_id || $method->status !== 'active' || $method->paysEachTime() => 'There is no saved payment method to charge. Add one to keep auto-renew working.',
             $method->isExpired() => "Your saved {$method->label} has expired. Add a new payment method.",
             default => null,
         };
@@ -144,7 +170,7 @@ class SubscriptionRenewalService
         $baseAmount = PlanSwitchService::price($plan, $cycle);
         $extrasAmount = PlanTerms::extraPrice($plan, $cycle, $extras);
         $amount = $baseAmount + $extrasAmount;
-        $session = CheckoutSession::create([
+        return CheckoutSession::create([
             'spa_business_id' => $subscription->spa_business_id,
             'purpose' => 'auto_renew',
             'subscription_id' => $subscription->id,
@@ -156,11 +182,7 @@ class SubscriptionRenewalService
             'reference_id' => 'SRV-RENEW-'.Str::uuid(),
             // Applied when the new term starts (CheckoutService::startTerm).
             'meta' => ['keep' => $keep, 'extras' => $extras, 'base_amount' => $baseAmount, 'extras_amount' => $extrasAmount],
-        ]);
-
-        $this->checkout->chargeSession($session, $method, "{$plan->name} Plan Renewal ({$cycle})");
-
-        return $session;
+        ])->setRelation('paymentMethod', $method)->setRelation('plan', $plan);
     }
 
     // The plan and cycle the next term is on.
@@ -236,9 +258,9 @@ class SubscriptionRenewalService
 
         $method = BusinessPaymentMethod::where('spa_business_id', $business->id)->where('status', 'active')
             ->whereNotNull('xendit_payment_token_id')
-            ->orderByDesc('is_default')->latest()->get()->first(fn ($m) => ! $m->isExpired());
+            ->orderByDesc('is_default')->latest()->get()->first(fn ($m) => ! $m->paysEachTime() && ! $m->isExpired());
         if (! $method) {
-            return response()->json(['message' => 'Add a card, GCash or Maya account first — auto-renew charges it each billing.', 'needs_payment_method' => true], 422);
+            return response()->json(['message' => 'Add a card or Maya account first so we can renew your plan automatically.', 'needs_payment_method' => true], 422);
         }
 
         $subscription->update(['auto_renew' => true, 'payment_method_id' => $method->id, 'renewal_failure_reason' => null]);

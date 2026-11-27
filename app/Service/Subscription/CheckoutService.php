@@ -25,6 +25,7 @@ use App\Repository\SubscriptionRepository;
 use App\Repository\System\AdminUsersRepository;
 use App\Service\Notifications\NotificationService;
 use App\Support\Platform\PlanTerms;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -62,6 +63,7 @@ class CheckoutService
         private AdminUsersRepository $admins,
         private PlanFitService $fit,
         private SubscriptionAddonService $addons,
+        private SubscriptionRenewalEmail $renewalEmail,
     ) {}
 
     public static function vatOf(float $amount): float
@@ -341,9 +343,20 @@ class CheckoutService
     {
         try {
             $pr = $this->xendit->chargeToken($session->reference_id, $method->xendit_payment_token_id, (float) $session->amount, $description, $method->type === 'CARD');
+        } catch (ConnectionException $error) {
+            if ($session->purpose !== 'auto_renew') {
+                throw $error;
+            }
+            // The provider may already have received the charge. Leave the
+            // attempt pending so a verified callback can settle it once.
+            Log::warning('checkout.charge_confirmation_pending', ['session' => $session->uuid]);
+
+            return;
         } catch (XenditRequestException $e) {
             Log::warning('checkout.charge_failed', ['session' => $session->uuid, 'error' => $e->getMessage()]);
-            $this->markFailed($session, $this->failureMessage($e->errorCode));
+            if ($session->purpose !== 'auto_renew' || $e->status < 500 || $e->errorCode === 'DEMO_ONLY') {
+                $this->markFailed($session, $this->failureMessage($e->errorCode));
+            }
 
             return;
         }
@@ -365,7 +378,7 @@ class CheckoutService
         return $this->present($session->fresh(['plan', 'paymentMethod', 'subscription']));
     }
 
-    public function refresh(CheckoutSession $session): void
+    public function refresh(CheckoutSession $session, ?string $callbackRequestId = null): void
     {
         if ($session->isFinal()) {
             return;
@@ -384,8 +397,15 @@ class CheckoutService
                 }
             } elseif ($session->xendit_payment_request_id) {
                 $this->settleFromPaymentRequest($session, $this->xendit->getPaymentRequest($session->xendit_payment_request_id));
+            } elseif ($session->purpose === 'auto_renew' && $callbackRequestId && preg_match('/^pr-[a-z0-9-]+\z/i', $callbackRequestId)) {
+                // A callback may arrive before the charge response was saved.
+                $pr = $this->xendit->getPaymentRequest($callbackRequestId);
+                if (($pr['reference_id'] ?? null) === $session->reference_id) {
+                    $session->update(['xendit_payment_request_id' => $callbackRequestId]);
+                    $this->settleFromPaymentRequest($session, $pr);
+                }
             }
-        } catch (XenditRequestException $e) {
+        } catch (XenditRequestException|ConnectionException $e) {
             Log::warning('checkout.refresh_failed', ['session' => $session->uuid, 'error' => $e->getMessage()]);
         }
     }
@@ -431,10 +451,11 @@ class CheckoutService
 
     public function markFailed(CheckoutSession $session, string $reason): void
     {
-        if ($session->isFinal()) {
+        $changed = CheckoutSession::whereKey($session->id)->where('status', CheckoutStatus::Pending->value)
+            ->update(['status' => CheckoutStatus::Failed->value, 'failure_reason' => $reason]);
+        if (! $changed) {
             return;
         }
-        $session->update(['status' => CheckoutStatus::Failed->value, 'failure_reason' => $reason]);
 
         if ($session->purpose === 'auto_renew') {
             app(SubscriptionRenewalService::class)->recordFailure($session, $reason);
@@ -476,6 +497,13 @@ class CheckoutService
                 $this->recordInvoice($session, $subscription, $method, $channel, $x['payment_request_id'] ?? $session->xendit_payment_request_id);
             }
 
+            if ($session->purpose === 'auto_renew' && $subscription) {
+                $session->forceFill([
+                    'pending_renewal_email' => $this->notifications->subscriptionAutoRenewed($subscription, (float) $session->amount, $method?->label),
+                ]);
+                DB::afterCommit(fn () => $this->renewalEmail->sendPending($session->id));
+            }
+
             $session->update([
                 'status' => CheckoutStatus::Completed->value,
                 'completed_at' => now(),
@@ -496,7 +524,9 @@ class CheckoutService
     // current term ends starts when it ends, so no paid days are lost.
     private function startTerm(CheckoutSession $session, SpaBusiness $business, ?BusinessPaymentMethod $method): Subscription
     {
-        $previous = $this->subscriptions->findLatestForBusiness($business->id);
+        $previous = $session->purpose === 'auto_renew'
+            ? $session->subscription
+            : $this->subscriptions->findLatestForBusiness($business->id);
         $start = now();
         if ($session->purpose === 'auto_renew' && $previous?->expires_at?->isFuture()) {
             $start = $previous->expires_at->copy();
@@ -658,9 +688,6 @@ class CheckoutService
             );
 
             return;
-        }
-        if ($session->purpose === 'auto_renew' && $subscription) {
-            $this->notifications->subscriptionAutoRenewed($subscription, (float) $session->amount);
         }
         $this->notifications->paymentReceived($business, (float) $session->amount, $admins);
     }

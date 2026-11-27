@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Mail\AccountNoticeMail;
 use App\Mail\ContactEmailVerificationMail;
 use App\Mail\IdentityChangeEmailOtpMail;
 use App\Mail\PasswordResetOtpMail;
@@ -25,7 +26,11 @@ class MailFormatTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        config(['app.frontend_url' => 'https://app.servora.test', 'legal.operator.email' => '[Contact email]']);
+        config([
+            'app.frontend_url' => 'https://app.servora.test',
+            'app.canonical_frontend_url' => 'https://app.servora.test',
+            'legal.operator.email' => '[Contact email]',
+        ]);
     }
 
     /** @return array<string, array{0: Mailable, 1: string, 2: string, 3: bool}> mail, subject, the code or link it carries, whether it is a code email */
@@ -41,6 +46,7 @@ class MailFormatTest extends TestCase
             'new owner email' => [new IdentityChangeEmailOtpMail(self::CODE, 10), 'Confirm your new SERVORA email', self::CODE, true],
             'contact email' => [new ContactEmailVerificationMail('Lotus Spa', 'your business', 'hello@lotus.test', self::LINK, 2), 'Confirm the contact email for Lotus Spa', self::LINK, false],
             'plan reminder' => [new SubscriptionReminderMail('Your plan renews in 3 days', 'Your Basic plan renews on December 1.', 'Open my subscription'), 'Your plan renews in 3 days', 'https://app.servora.test/business/subscription', false],
+            'plan renewed' => [new AccountNoticeMail('Subscription Renewed', 'Your Enterprise plan renewed automatically.', 'View my subscription', '/business/subscription'), 'Subscription Renewed', 'https://app.servora.test/business/subscription', false],
         ];
     }
 

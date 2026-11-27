@@ -553,22 +553,22 @@ class NotificationService
         }
     }
 
-    // Fired from CheckoutService once an automatic renewal charge succeeds.
-    public function subscriptionAutoRenewed(Subscription $subscription, float $amount): void
+    // Saves the web notice and returns the same message for the owner's email.
+    /** @return array{heading: string, body: string} */
+    public function subscriptionAutoRenewed(Subscription $subscription, float $amount, ?string $method): array
     {
-        $subscription->loadMissing(['plan', 'business.owner', 'paymentMethod']);
-        if (! $subscription->business?->owner) {
-            return;
+        $subscription->loadMissing(['plan', 'business.owner']);
+        $plan = $subscription->plan?->name ?? 'Servora';
+        $ends = $subscription->expires_at->format('F j, Y');
+        $charge = '₱'.number_format($amount, 2).' was charged'.($method ? " to {$method}" : '');
+        $heading = 'Subscription Renewed';
+        $body = "Your {$plan} plan renewed automatically. {$charge}. Your new term ends on {$ends}.";
+
+        if ($owner = $subscription->business?->owner) {
+            $this->notificationRepository->create($owner->id, $heading, $body, 'Subscription');
         }
 
-        $method = $subscription->paymentMethod?->label;
-        $this->notificationRepository->create(
-            $subscription->business->owner->id,
-            'Subscription Renewed',
-            "Your {$subscription->plan?->name} plan renewed until {$subscription->expires_at?->format('F j, Y')}. "
-                . '₱' . number_format($amount, 2) . ' was charged' . ($method ? " to {$method}" : '') . '.',
-            'Subscription'
-        );
+        return ['heading' => $heading, 'body' => $body];
     }
 
     // Fired from SubscriptionRenewalService when an automatic renewal can't

@@ -22,6 +22,8 @@ class CheckoutSession extends Model
         'xendit_session_id', 'xendit_payment_request_id', 'status', 'failure_reason', 'completed_at', 'meta',
     ];
 
+    protected $hidden = ['pending_renewal_email'];
+
     protected function casts(): array
     {
         return [
@@ -31,6 +33,7 @@ class CheckoutSession extends Model
             'enable_auto_renew' => 'boolean',
             'completed_at' => 'datetime',
             'meta' => 'array',
+            'pending_renewal_email' => 'array',
         ];
     }
 
