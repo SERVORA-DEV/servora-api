@@ -3,6 +3,7 @@
 namespace App\Service\Business;
 
 use App\Enums\VerificationStatus;
+use App\Exceptions\ActionRefused;
 use App\Http\Resources\OwnerVerificationResource;
 use App\Models\OwnerIdentityVerification;
 use App\Models\User;
@@ -13,9 +14,11 @@ use App\Repository\System\AdminUsersRepository;
 use App\Repository\UserRepository;
 use App\Service\Notifications\NotificationService;
 use App\Service\Uploads\DocumentUploadService;
+use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Throwable;
 
 class OwnerVerificationService
 {
@@ -113,171 +116,126 @@ class OwnerVerificationService
         return $this->getStatus($user);
     }
 
-    /**
-     * Handles both the first-time draft save (status stays Unregistered
-     * until submit()) and the "replace the rejected ID" half of resubmission
-     * (spec §12) — the record only actually flips back to Pending once
-     * BOTH the ID and the face scan have been resupplied (see
-     * resolveIdentityIfComplete), so the owner always has to walk through
-     * ID → face scan on resubmission, never just one or the other.
-     */
     public function saveIdentityDocument(User $user, array $fields, UploadedFile $frontFile, ?UploadedFile $backFile, ?Request $request = null)
     {
-        $identity = $this->ownerVerificationRepository->findOrCreateIdentity($user);
-
-        if (! in_array($identity->status, [VerificationStatus::Unregistered->value, VerificationStatus::Rejected->value], true)) {
-            return response()->json([
-                'message' => 'Identity verification is already submitted or verified.',
-            ], 422);
-        }
-
-        // The request already asks for it; this keeps any other caller honest.
         if (! $backFile && OwnerIdentityVerification::backRequired($fields['id_type'])) {
             return response()->json([
                 'message' => 'Upload the back of your ID too. Only a passport is a single photo.',
             ], 422);
         }
 
-        $oldValues = $identity->only(['id_type', 'status']);
-
-        $frontPath = $this->documentUploadService->replace(
-            $identity->id_document_front_path,
-            $frontFile,
-            "verification/identity/{$user->uuid}/id/front"
-        );
-
-        if ($backFile) {
-            $backPath = $this->documentUploadService->replace(
-                $identity->id_document_back_path,
-                $backFile,
-                "verification/identity/{$user->uuid}/id/back"
-            );
-        } else {
-            // A passport has no back: let go of one left from another ID type.
-            $this->documentUploadService->delete($identity->id_document_back_path);
-            $backPath = null;
-        }
-
-        $identity = $this->ownerVerificationRepository->updateIdentity($user, [
+        return $this->saveIdentityEvidence($user, 'id_document', fn (Closure $store) => [
             'id_type' => $fields['id_type'],
-            'id_document_front_path' => $frontPath,
-            'id_document_back_path' => $backPath,
-        ]);
-
-        $this->auditLogRepository->record(
-            $user->id,
-            'owner_identity_verifications',
-            $identity->id,
-            'Upload',
-            $oldValues,
-            $identity->only(['id_type', 'status']),
-            $request
-        );
-
-        $this->resolveIdentityIfComplete($identity, $user, $request);
-
-        return $this->getStatus($user);
+            'id_document_front_path' => $store($frontFile, 'id/front'),
+            'id_document_back_path' => $backFile ? $store($backFile, 'id/back') : null,
+        ], $request);
     }
 
-    /**
-     * @param  UploadedFile[]  $frameFiles
-     */
+    /** @param UploadedFile[] $frameFiles */
     public function saveFaceScan(User $user, array $fields, array $frameFiles, ?Request $request = null)
     {
-        $identity = $this->ownerVerificationRepository->findOrCreateIdentity($user);
-
-        if (! in_array($identity->status, [VerificationStatus::Unregistered->value, VerificationStatus::Rejected->value], true)) {
-            return response()->json([
-                'message' => 'Identity verification is already submitted or verified.',
-            ], 422);
-        }
-
-        $oldValues = $identity->only(['liveness_result', 'status']);
-        $oldFramePaths = $identity->face_scan_paths ?? [];
-
-        $newFramePaths = [];
-        foreach ($frameFiles as $frame) {
-            $newFramePaths[] = $this->documentUploadService->store($frame, "verification/identity/{$user->uuid}/face");
-        }
-
-        foreach ($oldFramePaths as $oldPath) {
-            $this->documentUploadService->delete($oldPath);
-        }
-
-        $identity = $this->ownerVerificationRepository->updateIdentity($user, [
-            'face_scan_paths' => $newFramePaths,
+        return $this->saveIdentityEvidence($user, 'face_scan', fn (Closure $store) => [
+            'face_scan_paths' => array_map(fn ($file) => $store($file, 'face'), $frameFiles),
             'liveness_sequence' => $fields['liveness_sequence'],
-            // Completing the guided client-side sequence and successfully
-            // producing frames is the only "pass" condition — no
-            // server-side vision check exists. Real confidence comes from
-            // the admin's manual review of these captures against the ID.
+            // The guided capture is complete. The administrator still checks it against the ID.
             'liveness_result' => 'Passed',
-        ]);
+        ], $request);
+    }
 
-        $this->auditLogRepository->record(
-            $user->id,
-            'owner_identity_verifications',
-            $identity->id,
-            'Upload',
-            $oldValues,
-            $identity->only(['liveness_result', 'status']),
-            $request
-        );
+    private function saveIdentityEvidence(User $user, string $field, Closure $upload, ?Request $request)
+    {
+        $identityId = $this->ownerVerificationRepository->findOrCreateIdentity($user)->id;
+        $newPaths = [];
+        $store = function (UploadedFile $file, string $folder) use ($user, &$newPaths): string {
+            $path = $this->documentUploadService->store($file, "verification/identity/{$user->uuid}/{$folder}");
+            $newPaths[] = $path;
 
-        $this->resolveIdentityIfComplete($identity, $user, $request);
+            return $path;
+        };
+
+        try {
+            DB::transaction(function () use ($user, $identityId, $field, $upload, $store, $request) {
+                $identity = OwnerIdentityVerification::whereKey($identityId)->lockForUpdate()->firstOrFail();
+                $rejected = $identity->status === VerificationStatus::Rejected->value;
+                throw_unless($rejected || $identity->status === VerificationStatus::Unregistered->value,
+                    ActionRefused::class, 'Your identity has already been sent for review or approved.');
+
+                $requested = $identity->rejected_field ?? 'both';
+                throw_if($rejected && $requested !== 'both' && $requested !== $field, ActionRefused::class,
+                    $requested === 'face_scan' ? 'Please retake your live face scan.' : 'Please upload a new photo of your government ID.');
+
+                $savingId = $field === 'id_document';
+                $auditFields = [$savingId ? 'id_type' : 'liveness_result', 'status', 'rejected_field'];
+                $oldValues = $identity->only($auditFields);
+                $oldPaths = $savingId
+                    ? [$identity->id_document_front_path, $identity->id_document_back_path]
+                    : ($identity->face_scan_paths ?? []);
+
+                $identity->fill($upload($store));
+                if ($rejected) {
+                    $this->advanceIdentityResubmission($identity, $field, $requested);
+                }
+                $identity->save();
+
+                $this->auditLogRepository->record(
+                    $user->id,
+                    'owner_identity_verifications',
+                    $identity->id,
+                    $rejected ? 'Replace' : 'Upload',
+                    $oldValues,
+                    $identity->only($auditFields),
+                    $request
+                );
+
+                $resubmitted = $rejected && $identity->status === VerificationStatus::Pending->value;
+                DB::afterCommit(function () use ($oldPaths, $resubmitted, $user) {
+                    $this->deleteIdentityFiles($oldPaths);
+
+                    if ($resubmitted) {
+                        try {
+                            if ($business = $this->spaBusinessRepository->findForUser($user)) {
+                                $this->notificationService->ownerIdentityResubmitted($business, $this->adminUsersRepository->allAdministrators());
+                            }
+                        } catch (Throwable $error) {
+                            report($error);
+                        }
+                    }
+                });
+            });
+        } catch (Throwable $error) {
+            $this->deleteIdentityFiles($newPaths);
+            throw $error;
+        }
 
         return $this->getStatus($user);
     }
 
-    /**
-     * After a resubmission-triggering save (ID or face scan) while the
-     * identity is Rejected, only flips back to Pending once BOTH the ID
-     * (front + back) and a passed face scan are present — a save that only
-     * completes one half leaves the record Rejected so the *other* half's
-     * save() still passes its Unregistered-or-Rejected guard. This is what
-     * forces the owner through ID → face scan on every resubmission rather
-     * than letting a fresh face scan pair with a stale ID (or vice versa).
-     */
-    private function resolveIdentityIfComplete(OwnerIdentityVerification $identity, User $user, ?Request $request): void
+    private function advanceIdentityResubmission(OwnerIdentityVerification $identity, string $field, string $requested): void
     {
-        if ($identity->status !== VerificationStatus::Rejected->value) {
+        // If both were requested, keep the other item outstanding even when the old file is still on record.
+        if ($requested === 'both' || ! $identity->hasIdDocuments() || ! $identity->hasPassedFaceScan()) {
+            $identity->rejected_field = $field === 'id_document' ? 'face_scan' : 'id_document';
+
             return;
         }
 
-        $complete = $identity->hasIdDocuments()
-            && ! empty($identity->face_scan_paths)
-            && $identity->liveness_result === 'Passed';
-
-        if (! $complete) {
-            return;
-        }
-
-        $oldValues = $identity->only(['status']);
-
-        $identity = $this->ownerVerificationRepository->updateIdentity($user, [
+        $identity->fill([
             'status' => VerificationStatus::Pending->value,
             'rejection_reason' => null,
             'rejected_field' => null,
             'verified_by' => null,
             'verified_at' => null,
         ]);
+    }
 
-        $this->auditLogRepository->record(
-            $user->id,
-            'owner_identity_verifications',
-            $identity->id,
-            'Replace',
-            $oldValues,
-            $identity->only(['status']),
-            $request
-        );
-
-        // A rejection can only happen after a full submit() (which requires
-        // a business to exist by then), so $business should always be
-        // found here in practice — the null check is just defensive.
-        $business = $this->spaBusinessRepository->findForUser($user);
-        if ($business) {
-            $this->notificationService->ownerIdentityResubmitted($business, $this->adminUsersRepository->allAdministrators());
+    private function deleteIdentityFiles(array $paths): void
+    {
+        foreach (array_filter($paths) as $path) {
+            try {
+                $this->documentUploadService->delete($path);
+            } catch (Throwable $error) {
+                report($error);
+            }
         }
     }
 
@@ -384,7 +342,7 @@ class OwnerVerificationService
             ], 422);
         }
 
-        if (! $identity->hasIdDocuments() || empty($identity->face_scan_paths) || $identity->liveness_result !== 'Passed') {
+        if (! $identity->hasIdDocuments() || ! $identity->hasPassedFaceScan()) {
             return response()->json([
                 'message' => 'Please complete your government ID upload and live face scan before submitting.',
             ], 422);

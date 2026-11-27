@@ -275,7 +275,7 @@ class NotificationService
             $this->notificationRepository->create(
                 $admin->id,
                 'Owner Identity Resubmitted',
-                "\"{$business->business_name}\" resubmitted a corrected owner identity document for review.",
+                "\"{$business->business_name}\" sent updated identity information for review.",
                 'Verification',
                 $business->uuid,
             );
@@ -299,18 +299,18 @@ class NotificationService
     {
         $this->notificationRepository->create(
             $owner->id,
-            'Owner Identity Verified',
-            'Your government ID and live face scan have been verified.',
+            'Owner Identity Approved',
+            'Your government ID and live face scan were approved.',
             'Verification'
         );
     }
 
-    public function ownerIdentityRejected(User $owner, string $reason): void
+    public function ownerIdentityRejected(User $owner, string $reason, string $nextStep): void
     {
         $this->notificationRepository->create(
             $owner->id,
-            'Owner Identity Verification Rejected',
-            "Your identity verification requires attention: {$reason}",
+            'Owner Identity Rejected',
+            trim("{$nextStep} {$reason}"),
             'Verification'
         );
     }
@@ -319,8 +319,8 @@ class NotificationService
     {
         $this->notificationRepository->create(
             $owner->id,
-            'Business Verification Approved',
-            "\"{$business->business_name}\" has been verified.",
+            'Business Registration Approved',
+            "Your business registration for \"{$business->business_name}\" was approved.",
             'Verification'
         );
     }
@@ -329,8 +329,8 @@ class NotificationService
     {
         $this->notificationRepository->create(
             $owner->id,
-            'Business Verification Rejected',
-            "\"{$business->business_name}\" verification requires attention: {$reason}",
+            'Business Registration Rejected',
+            trim("Update the registration for \"{$business->business_name}\" and send it again. {$reason}"),
             'Verification'
         );
     }

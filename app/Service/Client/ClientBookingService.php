@@ -7,6 +7,7 @@ use App\Enums\AssignmentStatus;
 use App\Enums\QueueStatus;
 use App\Enums\ReviewStatus;
 use App\Enums\StaffStatus;
+use App\Exceptions\ChangedElsewhere;
 use App\Http\Resources\Client\ClientAppointmentResource;
 use App\Http\Resources\Client\ClientReviewResource;
 use App\Models\Appointment;
@@ -377,7 +378,8 @@ class ClientBookingService
         // A spa is rated once (Review::ratedBranch). The client's row is locked
         // so two quick taps can't both get through.
         $review = DB::transaction(function () use ($appointment, $payload) {
-            Client::whereKey($appointment->client_id)->lockForUpdate()->first();
+            throw_unless(Client::whereKey($appointment->client_id)->lockForUpdate()->first(), ChangedElsewhere::class,
+                'Your client profile changed. Refresh the appointment and try again.');
             if (Review::ratedBranch($appointment->client_id, $appointment->spa_branch_id)) {
                 return null;
             }

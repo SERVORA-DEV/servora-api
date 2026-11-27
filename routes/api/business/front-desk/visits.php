@@ -15,6 +15,11 @@ Route::controller(ClientController::class)->prefix('client')->group(function () 
     Route::get('summary', 'summary')->middleware('permission:client_view');
     Route::get('{uuid}', 'show')->middleware('permission:client_view');
     Route::patch('{uuid}', 'update')->middleware('permission:client_update');
+    Route::middleware(['permission:client_view', 'permission:client_update'])->group(function () {
+        Route::get('{uuid}/duplicates', 'duplicateSuggestions')->whereUuid('uuid');
+        Route::post('{uuid}/duplicates/{otherUuid}/merge', 'mergeDuplicate')->whereUuid(['uuid', 'otherUuid']);
+        Route::post('{uuid}/duplicates/{otherUuid}/dismiss', 'dismissDuplicate')->whereUuid(['uuid', 'otherUuid']);
+    });
     // Takes the client's picture down at this spa (their account keeps it).
     Route::delete('{uuid}/photo', 'dismissPhoto')->middleware('permission:client_update');
 });

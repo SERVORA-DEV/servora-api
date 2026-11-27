@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Business;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Business\ClientListRequest;
 use App\Http\Requests\Business\ClientRequest;
+use App\Service\Business\ClientDuplicateService;
 use App\Service\Business\ClientService;
 use App\Support\PerPage;
 use Illuminate\Http\Request;
@@ -13,6 +14,7 @@ class ClientController extends Controller
 {
     public function __construct(
         private ClientService $clientService,
+        private ClientDuplicateService $duplicates,
     ) {}
 
     // Client search (name, phone, email: `q`), and the owner's Clients list with its segment,
@@ -33,6 +35,23 @@ class ClientController extends Controller
     public function show(Request $request, string $uuid)
     {
         return $this->clientService->show($request->user(), $uuid);
+    }
+
+    public function duplicateSuggestions(Request $request, string $uuid)
+    {
+        return response()->json(['data' => $this->duplicates->suggestions($request->user(), $uuid)]);
+    }
+
+    public function mergeDuplicate(Request $request, string $uuid, string $otherUuid)
+    {
+        $validated = $request->validate(['keep_uuid' => ['required', 'uuid']]);
+
+        return response()->json(['data' => $this->duplicates->resolve($request->user(), $uuid, $otherUuid, 'merge', $validated['keep_uuid'])]);
+    }
+
+    public function dismissDuplicate(Request $request, string $uuid, string $otherUuid)
+    {
+        return response()->json(['data' => $this->duplicates->resolve($request->user(), $uuid, $otherUuid, 'different', null)]);
     }
 
     public function store(ClientRequest $request)

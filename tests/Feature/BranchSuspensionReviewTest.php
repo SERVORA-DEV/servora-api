@@ -112,7 +112,7 @@ class BranchSuspensionReviewTest extends TestCase
         $this->assertNull(Suspension::refusal($this->branch->fresh()));
         Mail::assertSentCount(2);
         Mail::assertSent(AccountNoticeMail::class, fn ($mail) => $mail->hasTo($this->owner->email)
-            && $mail->heading === 'Branch Registration Declined');
+            && $mail->heading === 'Branch Registration Rejected');
         Mail::assertSent(AccountNoticeMail::class, fn ($mail) => $mail->hasTo($this->owner->email)
             && $mail->heading === 'Branch Registration Approved'
             && str_ends_with($mail->actionUrl, '/business/branches/'.$this->branch->uuid));

@@ -92,6 +92,8 @@ final class BusinessActivityDescriber
         // ── Clients and programs ─────────────────────────────────────────
         'ClientController@store' => ['client.create', 'clients', 'Create', Client::class, 'Added client[ {subject}]'],
         'ClientController@update' => ['client.update', 'clients', 'Update', Client::class, 'Edited client[ {subject}]'],
+        'ClientController@mergeDuplicate' => ['client.merge', 'clients', 'Update', Client::class, 'Merged duplicate profiles[ for {subject}]'],
+        'ClientController@dismissDuplicate' => ['client.dismiss_duplicate', 'clients', 'Update', Client::class, 'Marked a possible client duplicate[ for {subject}] as a different person'],
         'CustomerProgramController@redeem' => ['client.redeem', 'clients', 'Redeem', Client::class, 'Redeemed a reward[ for {subject}]'],
         'CustomerProgramController@sellMembership' => ['membership.sell', 'clients', 'Create', ClientMembership::class, 'Sold[ {subject}]'],
         'CustomerProgramController@renewMembership' => ['membership.renew', 'clients', 'Update', ClientMembership::class, 'Renewed[ {subject}]'],

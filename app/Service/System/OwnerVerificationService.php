@@ -137,6 +137,12 @@ class OwnerVerificationService
         }
 
         $review = $this->checklists->authorizeDecision($business, 'identity', false, $request);
+        $field ??= 'both';
+        $nextStep = match ($field) {
+            'face_scan' => 'Retake your live face scan.',
+            'id_document' => 'Upload your government ID again.',
+            default => 'Upload your government ID again and retake your live face scan.',
+        };
 
         $oldValues = $identity->only(['status', 'verified_by', 'verified_at', 'rejection_reason']);
 
@@ -145,7 +151,7 @@ class OwnerVerificationService
             'verified_by' => $admin->id,
             'verified_at' => now(),
             'rejection_reason' => $reason,
-            'rejected_field' => $field ?? 'both',
+            'rejected_field' => $field,
         ]);
 
         $reviewValues = $this->checklists->recordDecision($review, $admin, $resubmission ? 'resubmission_requested' : 'rejected');
@@ -160,17 +166,17 @@ class OwnerVerificationService
             $request
         );
 
-        DB::afterCommit(function () use ($business, $reason) {
+        DB::afterCommit(function () use ($business, $reason, $nextStep) {
             try {
                 if ($business->owner) {
-                    $this->notificationService->ownerIdentityRejected($business->owner, $reason);
+                    $this->notificationService->ownerIdentityRejected($business->owner, $reason, $nextStep);
                 }
             } catch (\Throwable $e) {
                 report($e);
             }
         });
 
-        $this->decisionEmail->afterCommit($business->owner, 'Owner Identity Verification', '/business/verification', approved: false, resubmission: $resubmission);
+        $this->decisionEmail->afterCommit($business->owner, 'Owner Identity Verification', '/business/verification', approved: false, nextStep: $nextStep);
 
         return $this->getReview($uuid);
     }
@@ -267,7 +273,8 @@ class OwnerVerificationService
             }
         });
 
-        $this->decisionEmail->afterCommit($business->owner, 'Business Registration', '/business/verification', approved: false, recordName: $business->business_name, resubmission: $resubmission);
+        $this->decisionEmail->afterCommit($business->owner, 'Business Registration', '/business/verification', approved: false,
+            recordName: $business->business_name, nextStep: 'Update your business registration and send it again.');
 
         return $this->getReview($uuid);
     }

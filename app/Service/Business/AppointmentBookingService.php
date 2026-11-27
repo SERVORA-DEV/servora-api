@@ -206,6 +206,11 @@ class AppointmentBookingService
                 ? $this->clientRepository->findByUuidForBusiness($payload['client_uuid'], $business->id, $this->clientService->branchScope($user))
                 : $this->clientService->findOrCreate($business->id, $payload['client'] ?? [], $branch->id);
 
+            // A profile being merged cannot receive a new visit after its history has moved.
+            $client = Client::whereKey($client->id)->lockForUpdate()->first();
+            throw_unless($client, ActionRefused::class,
+                'This client profile was merged. Refresh the client list and select the profile to continue.');
+
             // A client already on file: what their record was missing, sent
             // with the booking.
             if (! empty($payload['client_uuid']) && ! empty($payload['client_update'])) {

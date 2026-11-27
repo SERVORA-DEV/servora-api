@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Models\UserPermission;
 use App\Repository\AuditLogRepository;
 use App\Repository\SpaBusinessRepository;
+use App\Repository\System\AdminUsersRepository;
 use App\Repository\System\OwnerVerificationRepository;
 use App\Service\Notifications\NotificationService;
 use App\Service\Notifications\RegistrationDecisionEmail;
@@ -21,10 +22,12 @@ use App\Service\Uploads\DocumentUploadService;
 use App\Support\Platform\OwnerVerificationChecklist as Checklist;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
+use Laravel\Sanctum\Sanctum;
 use Mockery;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Tests\TestCase;
@@ -49,7 +52,7 @@ class OwnerVerificationReviewTest extends TestCase
         DB::purge('sqlite');
         Schema::create('users', function (Blueprint $t) {
             $t->id(); $t->string('uuid')->unique();
-            foreach (['first_name', 'middle_name', 'last_name', 'suffix', 'email', 'role', 'audience'] as $key) $t->string($key)->nullable();
+            foreach (['first_name', 'middle_name', 'last_name', 'suffix', 'email', 'role', 'audience', 'gender', 'birth_date'] as $key) $t->string($key)->nullable();
             $t->timestamp('email_verified_at')->nullable();
             $t->timestamps();
         });
@@ -91,6 +94,10 @@ class OwnerVerificationReviewTest extends TestCase
         $this->reviews = new OwnerVerificationChecklistService($repo, $audit);
         $this->notifications = Mockery::mock(NotificationService::class);
         $this->notifications->shouldReceive('ownerIdentityApproved', 'ownerBusinessApproved', 'ownerVerificationFullyApproved', 'ownerIdentityRejected', 'ownerBusinessRejected')->byDefault()->andReturnNull();
+        $this->app->instance(NotificationService::class, $this->notifications);
+        $admins = Mockery::mock(AdminUsersRepository::class);
+        $admins->shouldReceive('allAdministrators')->andReturn(collect([$this->admin]));
+        $this->app->instance(AdminUsersRepository::class, $admins);
         $this->decisions = new OwnerVerificationService($repo, new SpaBusinessRepository, $audit, $this->notifications, $this->reviews, new RegistrationDecisionEmail);
         $documents = Mockery::mock(DocumentUploadService::class);
         $documents->shouldReceive('signedUrl')->andReturnUsing(fn ($path) => $path ? 'https://evidence.example.test/'.$path : null);
@@ -256,12 +263,164 @@ class OwnerVerificationReviewTest extends TestCase
         $this->assertSame('rejected', $this->snapshot()['business']['decision']);
         $this->assertSame(2, AuditLog::where('action', 'Reject')->count());
         Mail::assertSent(AccountNoticeMail::class, fn ($mail) => $mail->hasTo($this->owner->email)
-            && $mail->heading === 'Owner Identity Verification Changes Requested');
+            && $mail->heading === 'Owner Identity Verification Rejected'
+            && str_contains($mail->body, 'Upload your government ID again.'));
         Mail::assertSent(AccountNoticeMail::class, fn ($mail) => $mail->hasTo($this->owner->email)
-            && $mail->heading === 'Business Registration Declined');
+            && $mail->heading === 'Business Registration Rejected');
         $this->identity->refresh()->update(['status' => 'Pending']); // Owner resubmits even identical evidence.
         $this->assertSame(Checklist::empty('identity'), $this->snapshot()['identity']['checks']);
         $this->blocked(409, fn () => $this->decisions->approveIdentity($this->admin, $this->business->uuid, $this->token($failed)));
+    }
+
+    public function test_live_scan_only_can_be_resubmitted_with_the_existing_id(): void
+    {
+        $reason = 'Your face was hard to see. Try again in a brighter room.';
+        $section = $this->save('identity', 'fail', $reason);
+        $this->notifications->shouldReceive('ownerIdentityRejected')->once()->withArgs(
+            fn (User $owner, string $message, string $nextStep) => $owner->is($this->owner)
+                && $message === $reason && $nextStep === 'Retake your live face scan.'
+        );
+        $this->decisions->rejectIdentity($this->admin, $this->business->uuid, $reason, 'face_scan', $this->token($section), true);
+        Mail::assertSent(AccountNoticeMail::class, fn ($mail) => $mail->hasTo($this->owner->email)
+            && $mail->heading === 'Owner Identity Verification Rejected'
+            && str_contains($mail->body, 'Retake your live face scan.'));
+
+        $uploads = app(DocumentUploadService::class);
+        $uploads->shouldReceive('store')->twice()->withArgs(fn ($file, $path) => str_ends_with($path, '/face'))->andReturn('new/center', 'new/left');
+        $uploads->shouldReceive('delete')->once()->with('test/face');
+        $this->notifications->shouldReceive('ownerIdentityResubmitted')->once();
+        Sanctum::actingAs($this->owner);
+
+        $this->uploadIdentity()->assertUnprocessable()->assertJsonPath('message', 'Please retake your live face scan.');
+        $this->uploadFace()->assertOk()->assertJsonPath('data.identity.status', 'Pending')
+            ->assertJsonPath('data.identity.rejected_field', null);
+        $this->assertSame(['test/front', 'test/back'], [$this->identity->fresh()->id_document_front_path, $this->identity->fresh()->id_document_back_path]);
+        $this->assertSame(['new/center', 'new/left'], $this->identity->fresh()->face_scan_paths);
+        $this->assertSame('Pending', $this->business->fresh()->verification_status);
+        $this->assertSame(Checklist::empty('identity'), $this->snapshot()['identity']['checks']);
+        $this->uploadFace()->assertUnprocessable();
+    }
+
+    public function test_id_only_goes_back_to_review_with_the_existing_face_scan(): void
+    {
+        $this->identity->update(['status' => 'Rejected', 'rejected_field' => 'id_document']);
+        $uploads = app(DocumentUploadService::class);
+        $uploads->shouldReceive('store')->once()->withArgs(fn ($file, $path) => str_ends_with($path, '/id/front'))->andReturn('new/passport');
+        $uploads->shouldReceive('delete')->once()->with('test/front');
+        $uploads->shouldReceive('delete')->once()->with('test/back');
+        $this->notifications->shouldReceive('ownerIdentityResubmitted')->once();
+        Sanctum::actingAs($this->owner);
+
+        $this->uploadFace()->assertUnprocessable();
+        $this->uploadIdentity()->assertOk()->assertJsonPath('data.identity.status', 'Pending');
+        $this->assertSame('new/passport', $this->identity->fresh()->id_document_front_path);
+        $this->assertNull($this->identity->fresh()->id_document_back_path);
+        $this->assertSame(['test/face'], $this->identity->fresh()->face_scan_paths);
+    }
+
+    public function test_both_replacements_are_required_even_when_old_evidence_exists(): void
+    {
+        $reason = 'Send clearer photos and a new face scan.';
+        $this->identity->update(['status' => 'Rejected', 'rejected_field' => 'both', 'rejection_reason' => $reason]);
+        $uploads = app(DocumentUploadService::class);
+        $uploads->shouldReceive('store')->times(3)->andReturn('new/passport', 'new/center', 'new/left');
+        $uploads->shouldReceive('delete')->once()->with('test/front');
+        $uploads->shouldReceive('delete')->once()->with('test/back');
+        $uploads->shouldReceive('delete')->once()->with('test/face');
+        $this->notifications->shouldReceive('ownerIdentityResubmitted')->once();
+        Sanctum::actingAs($this->owner);
+
+        $this->uploadIdentity()->assertOk()->assertJsonPath('data.identity.status', 'Rejected')
+            ->assertJsonPath('data.identity.rejected_field', 'face_scan');
+        $this->getJson('/api/business/owner/verification')->assertOk()
+            ->assertJsonPath('data.identity.rejected_field', 'face_scan')
+            ->assertJsonPath('data.identity.rejection_reason', $reason);
+        $this->assertSame(['test/face'], $this->identity->fresh()->face_scan_paths);
+        $this->uploadFace()->assertOk()->assertJsonPath('data.identity.status', 'Pending')
+            ->assertJsonPath('data.identity.rejection_reason', null);
+        $this->assertSame('new/passport', $this->identity->fresh()->id_document_front_path);
+    }
+
+    public function test_an_upload_failure_leaves_the_previous_scan_available_and_the_request_open(): void
+    {
+        $this->identity->update(['status' => 'Rejected', 'rejected_field' => 'face_scan']);
+        $uploads = app(DocumentUploadService::class);
+        $uploads->shouldReceive('store')->once()->andReturn('new/center');
+        $uploads->shouldReceive('store')->once()->andThrow(new \RuntimeException('Upload failed'));
+        $uploads->shouldReceive('delete')->once()->with('new/center');
+        $this->notifications->shouldNotReceive('ownerIdentityResubmitted');
+        Sanctum::actingAs($this->owner);
+        $this->withoutExceptionHandling();
+
+        try {
+            $this->uploadFace();
+            $this->fail('Expected the upload failure');
+        } catch (\RuntimeException $error) {
+            $this->assertSame('Upload failed', $error->getMessage());
+        }
+        $this->identity->refresh();
+        $this->assertSame('Rejected', $this->identity->status);
+        $this->assertSame('face_scan', $this->identity->rejected_field);
+        $this->assertSame(['test/face'], $this->identity->face_scan_paths);
+    }
+
+    public function test_business_only_resubmission_keeps_the_approved_identity(): void
+    {
+        $this->identity->update(['status' => 'Verified']);
+        $this->business->update(['verification_status' => 'Rejected', 'rejection_reason' => 'The certificate was unreadable.']);
+        app(DocumentUploadService::class)->shouldReceive('replace')->once()->andReturn('new/certificate');
+        $this->notifications->shouldReceive('ownerBusinessResubmitted')->once();
+        Sanctum::actingAs($this->owner);
+
+        $this->post('/api/business/owner/verification/business', [
+            'business_type' => 'Sole Proprietorship',
+            'registered_business_name' => 'Review test spa',
+            'registration_number' => '123456789',
+            'registered_owner_name' => 'Alex Owner',
+            'registration_document' => UploadedFile::fake()->create('certificate.pdf', 12, 'application/pdf'),
+        ], ['Accept' => 'application/json'])->assertOk()
+            ->assertJsonPath('data.business.verification_status', 'Pending')
+            ->assertJsonPath('data.identity.status', 'Verified');
+        $this->assertSame('new/certificate', $this->business->fresh()->registration_document_path);
+        $this->assertSame(['test/face'], $this->identity->fresh()->face_scan_paths);
+    }
+
+    public function test_first_time_uploads_stay_in_draft_until_the_owner_submits(): void
+    {
+        $this->owner->forceFill(['gender' => 'Female', 'birth_date' => '1991-01-01'])->save();
+        $this->identity->update([
+            'status' => 'Unregistered', 'face_scan_paths' => null, 'liveness_result' => 'Pending',
+            'id_type' => null, 'id_document_front_path' => null, 'id_document_back_path' => null,
+        ]);
+        $this->business->update(['verification_status' => 'Unregistered']);
+        app(DocumentUploadService::class)->shouldReceive('store')->times(3)->andReturn('new/passport', 'new/center', 'new/left');
+        $this->notifications->shouldReceive('ownerVerificationSubmitted')->once();
+        Sanctum::actingAs($this->owner);
+
+        $this->uploadIdentity()->assertOk()->assertJsonPath('data.identity.status', 'Unregistered');
+        $this->uploadFace()->assertOk()->assertJsonPath('data.identity.status', 'Unregistered');
+        $this->postJson('/api/business/owner/verification/submit')->assertOk()
+            ->assertJsonPath('data.identity.status', 'Pending')
+            ->assertJsonPath('data.business.verification_status', 'Pending');
+    }
+
+    private function uploadIdentity()
+    {
+        return $this->post('/api/business/owner/verification/identity', [
+            'id_type' => 'Passport',
+            'id_document_front' => UploadedFile::fake()->create('passport.jpg', 12, 'image/jpeg'),
+        ], ['Accept' => 'application/json']);
+    }
+
+    private function uploadFace()
+    {
+        return $this->post('/api/business/owner/verification/identity/face-scan', [
+            'liveness_sequence' => ['center', 'look_left'],
+            'frames' => [
+                UploadedFile::fake()->create('center.jpg', 12, 'image/jpeg'),
+                UploadedFile::fake()->create('left.jpg', 12, 'image/jpeg'),
+            ],
+        ], ['Accept' => 'application/json']);
     }
 
     public function test_audit_failure_rolls_back_both_status_and_review_decision(): void

@@ -59,6 +59,11 @@ class OwnerIdentityVerification extends Model
             && (! self::backRequired($this->id_type) || (bool) $this->id_document_back_path);
     }
 
+    public function hasPassedFaceScan(): bool
+    {
+        return ! empty($this->face_scan_paths) && $this->liveness_result === 'Passed';
+    }
+
     public function uniqueIds()
     {
         return ['uuid'];

@@ -170,15 +170,21 @@ class ClientRepository
     // clients — anyone else 404s, same as a client of another business.
     public function findByUuidForBusiness(string $uuid, int $spaBusinessId, ?array $branchIds = null)
     {
-        return Client::with(['user', 'activeMembership.program'])
+        return $this->forBusiness($spaBusinessId, $branchIds)
+            ->with(['user', 'activeMembership.program'])
             ->withCount(['vouchers as vouchers_available_count' => fn ($q) => $q->where('status', VoucherStatus::Available->value)
                 ->where(fn ($e) => $e->whereNull('expires_at')->orWhere('expires_at', '>', now())),
                 // Missed bookings — the no-show policy counts these.
                 'appointments as no_show_count' => fn ($q) => $q->missedSinceLastVisit()])
             ->where('uuid', $uuid)
-            ->where('spa_business_id', $spaBusinessId)
-            ->when($branchIds !== null, fn ($q) => $this->scopeToBranches($q, $branchIds))
             ->firstOrFail();
+    }
+
+    public function forBusiness(int $spaBusinessId, ?array $branchIds = null): \Illuminate\Database\Eloquent\Builder
+    {
+        return Client::query()
+            ->where('spa_business_id', $spaBusinessId)
+            ->when($branchIds !== null, fn ($q) => $this->scopeToBranches($q, $branchIds));
     }
 
     // A branch's clients: created there, or booked there at least once. The

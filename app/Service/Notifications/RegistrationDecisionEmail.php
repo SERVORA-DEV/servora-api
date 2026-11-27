@@ -16,18 +16,16 @@ class RegistrationDecisionEmail
         string $actionPath,
         bool $approved,
         ?string $recordName = null,
-        bool $resubmission = false,
+        ?string $nextStep = null,
     ): void {
         if (! $owner?->hasVerifiedEmail() || blank($owner->email)) {
             return;
         }
 
-        $decision = $approved ? 'Approved' : ($resubmission ? 'Changes Requested' : 'Declined');
-        $body = match ($decision) {
-            'Approved' => 'A SERVORA administrator approved your submission. Sign in to see the updated status and your next steps.',
-            'Changes Requested' => 'A SERVORA administrator asked you to make changes to your submission. Sign in to read the review notes and resubmit.',
-            'Declined' => 'A SERVORA administrator declined your submission. Sign in to read the review notes and see how to resubmit.',
-        };
+        $decision = $approved ? 'Approved' : 'Rejected';
+        $body = $approved
+            ? 'Your submission was approved. Open Servora to see what comes next.'
+            : trim(($nextStep ?? '').' Open Servora to see why your submission was rejected and send it again.');
 
         DB::afterCommit(function () use ($owner, $registration, $decision, $body, $actionPath, $recordName) {
             try {

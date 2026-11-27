@@ -254,7 +254,7 @@ class CustomerProgramService
         return DB::transaction(function () use ($user, $business, $data) {
             $branch = SpaBranch::where('uuid', $data['branch_uuid'])->where('spa_business_id', $business->id)->firstOrFail();
             Gate::forUser($user)->authorize('sellMemberships', $branch);
-            $client = $this->client($user, $business, $data['client_uuid']);
+            $client = Client::whereKey($this->client($user, $business, $data['client_uuid'])->id)->lockForUpdate()->firstOrFail();
             $program = CustomerProgram::where('uuid', $data['program_uuid'])->where('spa_business_id', $business->id)
                 ->where('type', 'membership')->where('is_active', true)->first();
             if (! $program || ! $program->offeredAt($branch->id)) {
