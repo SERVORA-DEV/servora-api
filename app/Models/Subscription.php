@@ -39,9 +39,9 @@ class Subscription extends Model
 
         'starts_at',
         'expires_at',
-        // LAST renewal reminder sent (reminders can repeat — see
-        // NotifyAlmostDueSubscriptions).
+        // Last web reminder and the email from it still waiting to be sent.
         'expiry_reminder_sent_at',
+        'expiry_reminder_email_moment',
 
         'auto_renew',
         // The saved method auto-renewal charges, and how the last attempts
@@ -56,6 +56,8 @@ class Subscription extends Model
         'cancelled_at',
         'cancellation_reason',
     ];
+
+    protected $hidden = ['expiry_reminder_email_moment'];
 
     protected function casts(): array
     {

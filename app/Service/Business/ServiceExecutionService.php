@@ -13,14 +13,13 @@ use App\Http\Resources\AppointmentResource;
 use App\Models\Addon;
 use App\Models\Appointment;
 use App\Models\AppointmentServiceItem;
-use App\Models\Attendance;
-use App\Models\SpaBusinessSetting;
 use App\Models\Staff;
 use App\Models\TherapistAssignment;
 use App\Models\User;
 use App\Repository\BillingRepository;
 use App\Repository\Business\AppointmentRepository;
 use App\Repository\Business\AppointmentServiceRepository;
+use App\Repository\Business\AttendanceRepository;
 use App\Repository\Business\QueueRepository;
 use App\Repository\Business\TherapistAssignmentRepository;
 use App\Repository\SpaBusinessRepository;
@@ -57,6 +56,7 @@ class ServiceExecutionService
         private AppointmentAvailabilityService $availabilityService,
         private BillingRepository $billingRepository,
         private BillingService $billingService,
+        private AttendanceRepository $attendanceRepository,
     ) {}
 
     // A visit still in service when its day has ended, with nobody having done
@@ -237,10 +237,7 @@ class ServiceExecutionService
         });
     }
 
-    // Settings → Staff & Permissions → Digital check-in: with attendance
-    // tracking on, a therapist has to be timed in (and not yet out) today
-    // before a service of theirs can start. Assigning ahead of time is
-    // unaffected — this only gates the moment the service begins.
+    // Assigned staff must be timed in when a service starts.
     private function checkInProblem(Appointment $appointment, array $staffIds): ?string
     {
         if (! $staffIds) {
@@ -257,21 +254,10 @@ class ServiceExecutionService
             return "{$names} ".($gone->count() === 1 ? 'is' : 'are').' no longer on the staff. Choose someone else for this service.';
         }
 
-        $appointment->loadMissing('branch.business.settings');
-        $policy = $appointment->branch?->business?->settings?->section('staff_policy')
-            ?? SpaBusinessSetting::DEFAULTS['staff_policy'];
-        if (! ($policy['attendance_tracking'] ?? true) || ! ($policy['require_check_in'] ?? true)) {
-            return null;
-        }
+        $branchId = $appointment->spa_branch_id;
+        $present = $this->attendanceRepository->openAtBranches([$branchId], $staffIds, BusinessDay::forBranch($branchId));
 
-        $present = Attendance::whereIn('staff_id', $staffIds)
-            ->where('attendance_date', BusinessDay::forBranch($appointment->spa_branch_id))
-            ->whereNotNull('check_in_at')
-            ->whereNull('check_out_at')
-            ->pluck('staff_id')
-            ->all();
-
-        $missing = Staff::whereIn('id', array_diff($staffIds, $present))->get(['first_name', 'last_name']);
+        $missing = Staff::whereIn('id', array_diff($staffIds, $present->keys()->all()))->get(['first_name', 'last_name']);
         if ($missing->isEmpty()) {
             return null;
         }

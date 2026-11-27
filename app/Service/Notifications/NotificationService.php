@@ -415,17 +415,12 @@ class NotificationService
     }
 
     // Fired from NotifyAlmostDueSubscriptions (the daily scheduled command)
-    // with the moment SubscriptionReminderSchedule says is due. Writes the
-    // bell notification and hands back its title and message, so the email
-    // that goes with it says exactly the same thing.
-    /** @return array{0: string, 1: string} */
-    public function subscriptionReminder(Subscription $subscription, string $moment, int $graceDays): array
+    // with the moment SubscriptionReminderSchedule says is due.
+    public function subscriptionReminder(Subscription $subscription, string $moment, int $graceDays, \Carbon\Carbon $now): void
     {
-        [$title, $message] = $this->subscriptionReminderText($subscription, $moment, $graceDays);
+        [$title, $message] = $this->subscriptionReminderText($subscription, $moment, $graceDays, $now);
 
         $this->notificationRepository->create($subscription->business->owner->id, $title, $message, 'Subscription');
-
-        return [$title, $message];
     }
 
     // What each moment says. One sentence the owner can act on: what is

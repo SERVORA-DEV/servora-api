@@ -7,7 +7,6 @@ use App\Enums\BillingStatus;
 // What one therapist earns for one completed service, under the owner's
 // Staff Policies as they stand at that moment:
 //   - commission off                     → nothing;
-//   - "applies to" services / packages   → a line of the other sort earns nothing;
 //   - a fixed amount per service, or a percentage of the service's price;
 //   - at the STANDARD rate (Staff Policies), unless this person has a custom
 //     one of their own (staff.commission_rate) — the same kind as the
@@ -50,7 +49,6 @@ class CommissionShare
      * @param  ?array  $policy  Staff Policies, or null when commission is off
      * @param  float  $price  the service line's price (its subtotal)
      * @param  float  $listPrice  its list price × quantity, used when the line carries no price of its own (a package line)
-     * @param  bool  $fromPackage  the line came out of a package
      * @param  int  $sharedBy  how many completed it
      * @param  ?float  $ownRate  the rate of this person's commission plan; null: the standard
      * @param  bool  $home  the service was done on a home visit: the home service commission replaces the plan's rate when the owner turned it on
@@ -58,14 +56,9 @@ class CommissionShare
      *                                (percent; the parts total 100). It replaces the equal split by $sharedBy:
      *                                at ₱500 and 50%, a 60/40 split pays ₱150 and ₱100.
      */
-    public static function amount(?array $policy, float $price, float $listPrice, bool $fromPackage, int $sharedBy = 1, ?float $ownRate = null, bool $home = false, ?float $sharePercent = null): float
+    public static function amount(?array $policy, float $price, float $listPrice, int $sharedBy = 1, ?float $ownRate = null, bool $home = false, ?float $sharePercent = null): float
     {
         if ($policy === null || ! ($policy['commission_enabled'] ?? true)) {
-            return 0.0;
-        }
-
-        $appliesTo = $policy['commission_applies_to'] ?? 'service';
-        if (($fromPackage && $appliesTo === 'service') || (! $fromPackage && $appliesTo === 'package')) {
             return 0.0;
         }
 

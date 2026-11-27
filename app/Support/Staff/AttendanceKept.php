@@ -9,7 +9,7 @@ use App\Enums\AttendanceStatus;
 // Two moments fix it:
 //   - the check-in fixes the shift the person was on and how late they were;
 //   - the check-out fixes the hours worked, the overtime and the day's result.
-// Changing the late threshold, the overtime switch or a closing time later
+// Changing the late threshold or a closing time later
 // applies to days still to come.
 //
 // Pure: results in, results out — tested in tests/Unit/AttendanceKeptTest.

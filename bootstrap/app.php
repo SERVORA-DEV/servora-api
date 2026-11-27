@@ -65,7 +65,8 @@ return Application::configure(basePath: dirname(__DIR__))
     // deployments need schedule:work or schedule:run once a minute.
     ->withSchedule(function (Schedule $schedule): void {
         $schedule->command('accounts:send-web-inactivity-reminders')->dailyAt('09:00')->withoutOverlapping();
-        $schedule->command('subscriptions:notify-almost-due')->daily();
+        $schedule->command('subscriptions:notify-almost-due')->daily()->withoutOverlapping();
+        $schedule->command('subscriptions:notify-almost-due --retry-email')->hourlyAt(15)->withoutOverlapping();
         $schedule->command('subscriptions:auto-renew')->hourly()->withoutOverlapping();
         $schedule->command('appointments:send-reminders')->everyFiveMinutes();
         $schedule->command('staff:send-front-desk-alerts')->everyFiveMinutes();

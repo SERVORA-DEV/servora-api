@@ -24,7 +24,7 @@ use Illuminate\Support\Collection;
 // and how late the person was are kept on the attendance row when they check
 // in, the hours worked and overtime when they check out — keep(), called as
 // the row is saved. resolve() gives those back, so changing the late
-// threshold, the overtime switch or a branch's closing time afterwards only
+// threshold or a branch's closing time afterwards only
 // applies to days still to come. A manager's correction of the times is a new
 // save, so it is worked out again under the settings in force then.
 class AttendanceStatusCalculator
@@ -52,26 +52,7 @@ class AttendanceStatusCalculator
     }
 
     /**
-     * The owner's Overtime policy (Settings → Staff Policies). Off: worked
-     * hours stop counting at the end of the person's shift. On: time past the
-     * shift end counts, and is reported separately as overtime. Only applies
-     * while attendance tracking is on — with tracking off nobody is held to
-     * shift times, so every minute simply counts.
-     */
-    public static function overtimeAllowedFor(?SpaBusiness $business): bool
-    {
-        $policy = $business?->settings?->section('staff_policy') ?? [];
-
-        if (! ($policy['attendance_tracking'] ?? true)) {
-            return true;
-        }
-
-        return (bool) ($policy['allow_overtime'] ?? false);
-    }
-
-    /**
      * @param  Collection<int, StaffSchedule>  $staffSchedules  all of this staff member's schedule rows (any day/version) — matched internally by day_of_week + effective_from/until for $date.
-     * @param  bool  $allowOvertime  see overtimeAllowedFor(); defaults to counting everything, for callers that only want the status.
      */
     public function resolve(
         Staff $staff,
@@ -81,9 +62,9 @@ class AttendanceStatusCalculator
         ?BranchSchedule $branchSchedule = null,
         ?Carbon $now = null,
         ?int $graceMinutes = null,
-        bool $allowOvertime = true,
+        bool $onFloor = false,
     ): array {
-        $live = $this->compute($staff, $attendance, $date, $staffSchedules, $branchSchedule, $now, $graceMinutes, $allowOvertime);
+        $live = $this->compute($staff, $attendance, $date, $staffSchedules, $branchSchedule, $now, $graceMinutes, $onFloor);
 
         return $attendance ? AttendanceKept::apply($live, self::keptOf($attendance)) : $live;
     }
@@ -149,7 +130,7 @@ class AttendanceStatusCalculator
 
         $live = $this->compute(
             $staff, $attendance, $date, $staff->schedules, $branchSchedule, null,
-            self::graceMinutesFor($business), self::overtimeAllowedFor($business),
+            self::graceMinutesFor($business),
         );
 
         // The shift and the lateness belong to the check-in: taken again only
@@ -181,7 +162,7 @@ class AttendanceStatusCalculator
         ?BranchSchedule $branchSchedule = null,
         ?Carbon $now = null,
         ?int $graceMinutes = null,
-        bool $allowOvertime = true,
+        bool $onFloor = false,
     ): array {
         $now = $now ?: Carbon::now();
         $graceMinutes ??= self::LATE_GRACE_MINUTES;
@@ -240,7 +221,7 @@ class AttendanceStatusCalculator
         // with no shift end on record (no schedule, a day off, a fill-in)
         // has no line to cross, so all of their time counts as worked.
         $shiftEnd = $endsWithBranch ? null : $scheduledEnd;
-        [$workMinutes, $overtimeMinutes] = $this->workAndOvertime($checkIn, $checkOut, $schedule, $shiftEnd, $allowOvertime);
+        [$workMinutes, $overtimeMinutes] = $this->workAndOvertime($checkIn, $checkOut, $shiftEnd);
 
         // Explicit human decisions pass through untouched — never
         // second-guessed by the calculator.
@@ -288,7 +269,7 @@ class AttendanceStatusCalculator
                 // after-hours fill-in) is only Incomplete once the calendar
                 // day is over — not the instant they check in.
                 $cutoff = ($scheduledEnd && $checkIn->lt($scheduledEnd)) ? $scheduledEnd : null;
-                if ($this->dayHasEnded($date, $cutoff, $now)) {
+                if (! $onFloor && $this->dayHasEnded($date, $cutoff, $now)) {
                     return $this->result('Incomplete', $lateMinutes, null, $scheduledStart, $scheduledEnd, $isDayOff, false, true);
                 }
 
@@ -425,14 +406,12 @@ class AttendanceStatusCalculator
 
     /**
      * [worked minutes, overtime minutes] — both null until there is a check-in
-     * and a check-out. Overtime is the time worked after $shiftEnd. With
-     * overtime not allowed it is dropped: worked minutes stop at the shift
-     * end and overtime is 0. With it allowed, worked minutes are the whole
-     * stretch and overtime says how much of that was past the shift.
+     * and a check-out. Worked minutes cover the full stretch. Overtime is
+     * the portion of those minutes worked after the scheduled shift ends.
      */
-    private function workAndOvertime(?Carbon $checkIn, ?Carbon $checkOut, ?StaffSchedule $schedule, ?Carbon $shiftEnd, bool $allowOvertime): array
+    private function workAndOvertime(?Carbon $checkIn, ?Carbon $checkOut, ?Carbon $shiftEnd): array
     {
-        $total = $this->workMinutes($checkIn, $checkOut, $schedule);
+        $total = $this->workMinutes($checkIn, $checkOut);
 
         if ($total === null) {
             return [null, null];
@@ -445,10 +424,10 @@ class AttendanceStatusCalculator
             $overtime = min($total, intdiv($checkOut->getTimestamp() - $from->getTimestamp(), 60));
         }
 
-        return $allowOvertime ? [$total, $overtime] : [$total - $overtime, 0];
+        return [$total, $overtime];
     }
 
-    private function workMinutes(?Carbon $checkIn, ?Carbon $checkOut, ?StaffSchedule $schedule): ?int
+    private function workMinutes(?Carbon $checkIn, ?Carbon $checkOut): ?int
     {
         if (! $checkIn || ! $checkOut) {
             return null;
@@ -490,8 +469,7 @@ class AttendanceStatusCalculator
             'status' => $status,
             'late_minutes' => $lateMinutes,
             'work_minutes' => $workMinutes,
-            // Part of work_minutes that was past the shift end (0 when the
-            // Overtime policy is off, null until checked out).
+            // Portion of the worked time that was past the scheduled shift end.
             'overtime_minutes' => $workMinutes === null ? null : (int) $overtimeMinutes,
             'scheduled_start' => $scheduledStart?->format('H:i'),
             'scheduled_end' => $scheduledEnd?->format('H:i'),

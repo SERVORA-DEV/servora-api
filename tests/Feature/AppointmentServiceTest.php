@@ -6,6 +6,7 @@ use App\Enums\AppointmentStatus;
 use App\Http\Resources\AppointmentResource;
 use App\Models\Appointment;
 use App\Models\AppointmentServiceItem;
+use App\Models\Attendance;
 use App\Models\BranchPackage;
 use App\Models\BranchService;
 use App\Models\Client;
@@ -211,6 +212,50 @@ class AppointmentServiceTest extends TestCase
         $therapistResult = $this->service->assignTherapist($this->owner, $service->uuid, ['staff_uuid' => $this->therapistA->uuid]);
         $this->assertNotInstanceOf(JsonResponse::class, $therapistResult, $this->msg($therapistResult));
         $this->assertSame(AppointmentStatus::CheckedIn->value, $appointment->fresh()->status, 'assigning a therapist must never itself start service');
+    }
+
+    public function test_standalone_and_package_services_both_earn_commission_when_completed(): void
+    {
+        $this->business->settings()->firstOrFail()->update(['staff_policy' => [
+            'commission_enabled' => true,
+            'commission_type' => 'fixed',
+            'default_commission_rate' => 150,
+            'commission_applies_to' => 'service',
+        ]]);
+
+        $appointment = $this->createAppointment();
+        $standalone = $this->addService($appointment);
+        $package = Package::factory()->create(['spa_business_id' => $this->business->id]);
+        PackageServiceItem::create([
+            'package_id' => $package->id,
+            'service_variant_id' => $this->variant->id,
+            'quantity' => 1,
+            'sort_order' => 1,
+        ]);
+        BranchPackage::factory()->create(['spa_branch_id' => $this->branch->id, 'package_id' => $package->id]);
+        $added = $this->service->addPackage($this->owner, $appointment->uuid, ['package_uuid' => $package->uuid]);
+        $this->assertNotInstanceOf(JsonResponse::class, $added, $this->msg($added));
+        $packageLine = $appointment->services()->whereNotNull('source_appointment_package_id')->sole();
+
+        $checkIn = $this->checkInOnTheDay($appointment);
+        $this->assertNotInstanceOf(JsonResponse::class, $checkIn, $this->msg($checkIn));
+        foreach ([$standalone, $packageLine] as $line) {
+            $assigned = $this->service->assignTherapist($this->owner, $line->uuid, [
+                'staff_uuid' => $this->therapistA->uuid,
+                'facility_uuid' => $this->facilityA->uuid,
+            ]);
+            $this->assertNotInstanceOf(JsonResponse::class, $assigned, $this->msg($assigned));
+        }
+
+        $started = $this->service->startService($this->owner, $standalone->uuid);
+        $this->assertNotInstanceOf(JsonResponse::class, $started, $this->msg($started));
+        $completed = $this->service->completeService($this->owner, $standalone->uuid);
+        $this->assertNotInstanceOf(JsonResponse::class, $completed, $this->msg($completed));
+
+        foreach ([$standalone, $packageLine] as $line) {
+            $this->assertSame('Completed', $line->fresh()->status);
+            $this->assertSame(150.0, (float) $line->therapistAssignments()->sole()->commission_amount);
+        }
     }
 
     public function test_same_appointment_can_reuse_the_same_therapist_and_room_across_services(): void
@@ -527,6 +572,31 @@ class AppointmentServiceTest extends TestCase
         $this->checkInOnTheDay($appointment);
         $started = $this->service->startService($this->owner, $line->uuid);
         $this->assertNotInstanceOf(JsonResponse::class, $started, $this->msg($started));
+    }
+
+    public function test_staff_must_be_timed_in_even_when_saved_settings_disabled_the_requirement(): void
+    {
+        $this->business->settings()->update(['staff_policy' => json_encode([
+            'attendance_tracking' => false,
+            'require_check_in' => false,
+        ])]);
+
+        $appointment = $this->createAppointment();
+        $line = $this->addService($appointment);
+        $this->service->assignTherapist($this->owner, $line->uuid, ['staff_uuid' => $this->therapistA->uuid]);
+        $this->checkInOnTheDay($appointment);
+        $attendance = Attendance::where('staff_id', $this->therapistA->id)->firstOrFail();
+
+        $attendance->update(['check_out_at' => now()]);
+        $refused = $this->service->startService($this->owner, $line->uuid);
+        $this->assertSame(422, $refused->getStatusCode());
+        $this->assertStringContainsString("hasn't timed in", $this->msg($refused));
+        $this->assertSame('Pending', $line->fresh()->status);
+
+        $attendance->update(['check_out_at' => null]);
+        $started = $this->service->startService($this->owner, $line->uuid);
+        $this->assertNotInstanceOf(JsonResponse::class, $started, $this->msg($started));
+        $this->assertSame('In Progress', $line->fresh()->status);
     }
 
     public function test_a_client_with_a_started_service_cannot_be_skipped(): void

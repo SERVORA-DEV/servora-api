@@ -24,7 +24,6 @@ class StaffPolicySettingsRequest extends FormRequest
             'commission_enabled' => 'sometimes|boolean',
             'commission_type' => 'sometimes|required|in:percentage,fixed',
             'default_commission_rate' => 'sometimes|required|numeric|min:0|max:'.($isPercentage ? 100 : 1000000),
-            'commission_applies_to' => 'sometimes|required|in:service,package,both',
             'commission_release_cycle' => 'sometimes|required|in:daily,weekly,semimonthly,monthly',
             'commission_includes_extension' => 'sometimes|boolean',
             'commission_includes_tips' => 'sometimes|boolean',
@@ -34,10 +33,8 @@ class StaffPolicySettingsRequest extends FormRequest
             'home_commission_rate' => 'sometimes|required|numeric|min:0|max:'.($homeIsPercentage ? 100 : 1000000),
 
             'attendance_tracking' => 'sometimes|boolean',
-            'require_check_in' => 'sometimes|boolean',
             'late_threshold_minutes' => 'sometimes|required|integer|min:1|max:240',
             'require_manager_approval' => 'sometimes|boolean',
-            'allow_overtime' => 'sometimes|boolean',
             // Penalties taken off the pay period's earnings.
             'late_penalty_enabled' => 'sometimes|boolean',
             'late_penalty_mode' => 'sometimes|required|in:day,hour',

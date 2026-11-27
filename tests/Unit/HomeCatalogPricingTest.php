@@ -191,12 +191,12 @@ class HomeCatalogPricingTest extends TestCase
 
     public function test_home_commission_uses_the_new_home_price(): void
     {
-        $policy = ['commission_enabled' => true, 'commission_applies_to' => 'both',
+        $policy = ['commission_enabled' => true,
             'home_commission_enabled' => true, 'home_commission_type' => 'percentage', 'home_commission_rate' => 30,
             'default_commission_rate' => 10];
-        $this->assertSame(285.0, CommissionShare::amount($policy, 950, 450, false, home: true));
-        $this->assertSame(142.5, CommissionShare::amount($policy, 950, 450, false, sharedBy: 2, home: true));
-        $this->assertSame(45.0, CommissionShare::amount($policy, 450, 450, false));
+        $this->assertSame(285.0, CommissionShare::amount($policy, 950, 450, home: true));
+        $this->assertSame(142.5, CommissionShare::amount($policy, 950, 450, sharedBy: 2, home: true));
+        $this->assertSame(45.0, CommissionShare::amount($policy, 450, 450));
     }
 
     public function test_new_home_visit_ignores_a_legacy_fee_setting(): void

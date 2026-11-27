@@ -158,7 +158,7 @@ class ClientBookingService
         $branch = SpaBranch::with('business')->where('uuid', $branchUuid)->firstOrFail();
         $policy = BookingPolicy::for($branch);
         $client = Client::where('spa_business_id', $branch->spa_business_id)->where('user_id', $user->id)->first();
-        $missed = $client ? $this->booking->noShowCount($client->id) : 0;
+        $missed = $client ? $this->booking->noShowCount($client->id, $branch->id) : 0;
 
         $dayLimit = $policy['max_bookings_per_client_per_day'];
         $busy = $client

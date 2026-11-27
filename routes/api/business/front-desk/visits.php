@@ -14,6 +14,9 @@ Route::controller(ClientController::class)->prefix('client')->group(function () 
     // The Clients page's figures. Before {uuid}, which would take "summary" for a uuid.
     Route::get('summary', 'summary')->middleware('permission:client_view');
     Route::get('{uuid}', 'show')->middleware('permission:client_view');
+    Route::get('{uuid}/booking-pauses', 'bookingPauses')->whereUuid('uuid')->middleware('permission:client_view');
+    Route::post('{uuid}/booking-pauses/{branchUuid}/unpause', 'unpauseAppBooking')
+        ->whereUuid(['uuid', 'branchUuid'])->middleware('permission:client_view');
     Route::patch('{uuid}', 'update')->middleware('permission:client_update');
     Route::middleware(['permission:client_view', 'permission:client_update'])->group(function () {
         Route::get('{uuid}/duplicates', 'duplicateSuggestions')->whereUuid('uuid');

@@ -10,12 +10,12 @@ class CommissionShareTest extends TestCase
 {
     private function policy(array $over = []): array
     {
-        return $over + ['commission_enabled' => true, 'commission_type' => 'percentage', 'default_commission_rate' => 40, 'commission_applies_to' => 'both'];
+        return $over + ['commission_enabled' => true, 'commission_type' => 'percentage', 'default_commission_rate' => 40];
     }
 
     public function test_a_percentage_of_the_services_price(): void
     {
-        $this->assertSame(320.0, CommissionShare::amount($this->policy(), 800.0, 800.0, false));
+        $this->assertSame(320.0, CommissionShare::amount($this->policy(), 800.0, 800.0));
     }
 
     public function test_a_free_or_discounted_bill_does_not_lower_the_commission(): void
@@ -25,44 +25,33 @@ class CommissionShareTest extends TestCase
         // therapist earns on the full ₱800 (the owner pays the difference).
         $line = 800.0;
 
-        $this->assertSame(320.0, CommissionShare::amount($this->policy(), $line, $line, false), 'a free service');
-        $this->assertSame(320.0, CommissionShare::amount($this->policy(), $line, $line, false), 'a 20% discount');
+        $this->assertSame(320.0, CommissionShare::amount($this->policy(), $line, $line), 'a free service');
+        $this->assertSame(320.0, CommissionShare::amount($this->policy(), $line, $line), 'a 20% discount');
     }
 
     public function test_a_fixed_amount_per_service_ignores_the_price(): void
     {
         $policy = $this->policy(['commission_type' => 'fixed', 'default_commission_rate' => 150]);
 
-        $this->assertSame(150.0, CommissionShare::amount($policy, 800.0, 800.0, false));
-        $this->assertSame(150.0, CommissionShare::amount($policy, 2400.0, 2400.0, false));
+        $this->assertSame(150.0, CommissionShare::amount($policy, 800.0, 800.0));
+        $this->assertSame(150.0, CommissionShare::amount($policy, 2400.0, 2400.0));
     }
 
     public function test_it_is_shared_equally_by_everyone_who_completed_it(): void
     {
-        $this->assertSame(160.0, CommissionShare::amount($this->policy(), 800.0, 800.0, false, 2));
-        $this->assertSame(75.0, CommissionShare::amount($this->policy(['commission_type' => 'fixed', 'default_commission_rate' => 150]), 800.0, 800.0, false, 2));
+        $this->assertSame(160.0, CommissionShare::amount($this->policy(), 800.0, 800.0, 2));
+        $this->assertSame(75.0, CommissionShare::amount($this->policy(['commission_type' => 'fixed', 'default_commission_rate' => 150]), 800.0, 800.0, 2));
     }
 
     public function test_commission_switched_off_earns_nothing(): void
     {
-        $this->assertSame(0.0, CommissionShare::amount(null, 800.0, 800.0, false));
-        $this->assertSame(0.0, CommissionShare::amount($this->policy(['commission_enabled' => false]), 800.0, 800.0, false));
-    }
-
-    public function test_applies_to_decides_whether_services_or_package_lines_earn(): void
-    {
-        $services = $this->policy(['commission_applies_to' => 'service']);
-        $packages = $this->policy(['commission_applies_to' => 'package']);
-
-        $this->assertSame(320.0, CommissionShare::amount($services, 800.0, 800.0, false));
-        $this->assertSame(0.0, CommissionShare::amount($services, 800.0, 800.0, true));
-        $this->assertSame(0.0, CommissionShare::amount($packages, 800.0, 800.0, false));
-        $this->assertSame(320.0, CommissionShare::amount($packages, 800.0, 800.0, true));
+        $this->assertSame(0.0, CommissionShare::amount(null, 800.0, 800.0));
+        $this->assertSame(0.0, CommissionShare::amount($this->policy(['commission_enabled' => false]), 800.0, 800.0));
     }
 
     public function test_a_line_with_no_price_of_its_own_uses_its_list_price(): void
     {
-        $this->assertSame(100.0, CommissionShare::amount($this->policy(), 0.0, 250.0, true));
+        $this->assertSame(100.0, CommissionShare::amount($this->policy(), 0.0, 250.0));
     }
 
     public function test_what_was_earned_counts_only_once_the_visit_is_paid_in_full(): void
@@ -89,11 +78,11 @@ class CommissionShareTest extends TestCase
 
     public function test_a_custom_rate_replaces_the_standard_one(): void
     {
-        $this->assertSame(160.0, CommissionShare::amount($this->policy(), 800.0, 800.0, false, 1, 20.0));
+        $this->assertSame(160.0, CommissionShare::amount($this->policy(), 800.0, 800.0, 1, 20.0));
         // None of their own: the standard.
-        $this->assertSame(320.0, CommissionShare::amount($this->policy(), 800.0, 800.0, false, 1, null));
+        $this->assertSame(320.0, CommissionShare::amount($this->policy(), 800.0, 800.0, 1, null));
         // A custom rate of nothing is still a custom rate.
-        $this->assertSame(0.0, CommissionShare::amount($this->policy(), 800.0, 800.0, false, 1, 0.0));
+        $this->assertSame(0.0, CommissionShare::amount($this->policy(), 800.0, 800.0, 1, 0.0));
     }
 
     public function test_a_custom_rate_is_the_same_kind_as_the_standard(): void
@@ -101,26 +90,24 @@ class CommissionShareTest extends TestCase
         $fixed = $this->policy(['commission_type' => 'fixed', 'default_commission_rate' => 150]);
 
         // Pesos per service while the standard is fixed…
-        $this->assertSame(200.0, CommissionShare::amount($fixed, 800.0, 800.0, false, 1, 200.0));
+        $this->assertSame(200.0, CommissionShare::amount($fixed, 800.0, 800.0, 1, 200.0));
         // …a percentage while it is a percentage.
-        $this->assertSame(200.0, CommissionShare::amount($this->policy(), 800.0, 800.0, false, 1, 25.0));
+        $this->assertSame(200.0, CommissionShare::amount($this->policy(), 800.0, 800.0, 1, 25.0));
     }
 
     public function test_a_shared_service_pays_each_at_their_own_rate(): void
     {
         // Two did it: the senior at 50%, the other at the standard 40%.
-        $this->assertSame(200.0, CommissionShare::amount($this->policy(), 800.0, 800.0, false, 2, 50.0));
-        $this->assertSame(160.0, CommissionShare::amount($this->policy(), 800.0, 800.0, false, 2));
+        $this->assertSame(200.0, CommissionShare::amount($this->policy(), 800.0, 800.0, 2, 50.0));
+        $this->assertSame(160.0, CommissionShare::amount($this->policy(), 800.0, 800.0, 2));
     }
 
     public function test_a_custom_rate_changes_nothing_else(): void
     {
         // Commission off pays nobody, custom rate or not.
-        $this->assertSame(0.0, CommissionShare::amount(null, 800.0, 800.0, false, 1, 50.0));
-        // Neither does a line the policy doesn't apply to.
-        $this->assertSame(0.0, CommissionShare::amount($this->policy(['commission_applies_to' => 'service']), 800.0, 800.0, true, 1, 50.0));
+        $this->assertSame(0.0, CommissionShare::amount(null, 800.0, 800.0, 1, 50.0));
         // A line with no price of its own still uses its list price.
-        $this->assertSame(125.0, CommissionShare::amount($this->policy(), 0.0, 250.0, true, 1, 50.0));
+        $this->assertSame(125.0, CommissionShare::amount($this->policy(), 0.0, 250.0, 1, 50.0));
     }
 
     public function test_a_custom_rate_being_saved(): void
@@ -158,32 +145,32 @@ class CommissionShareTest extends TestCase
         $home = ['home_commission_enabled' => true, 'home_commission_type' => 'percentage', 'home_commission_rate' => 25];
 
         // A 20% plan: at home it is the home rate, whatever the plan.
-        $this->assertSame(250.0, CommissionShare::amount($this->policy($home), 1000.0, 1000.0, false, 1, 20.0, true));
-        $this->assertSame(250.0, CommissionShare::amount($this->policy($home), 1000.0, 1000.0, false, 1, null, true));
+        $this->assertSame(250.0, CommissionShare::amount($this->policy($home), 1000.0, 1000.0, 1, 20.0, true));
+        $this->assertSame(250.0, CommissionShare::amount($this->policy($home), 1000.0, 1000.0, 1, null, true));
         // In the spa nothing changes.
-        $this->assertSame(200.0, CommissionShare::amount($this->policy($home), 1000.0, 1000.0, false, 1, 20.0, false));
+        $this->assertSame(200.0, CommissionShare::amount($this->policy($home), 1000.0, 1000.0, 1, 20.0, false));
         // Switched off, a home visit earns the plan's rate like any other.
-        $this->assertSame(200.0, CommissionShare::amount($this->policy(['home_commission_enabled' => false, 'home_commission_rate' => 25]), 1000.0, 1000.0, false, 1, 20.0, true));
+        $this->assertSame(200.0, CommissionShare::amount($this->policy(['home_commission_enabled' => false, 'home_commission_rate' => 25]), 1000.0, 1000.0, 1, 20.0, true));
     }
 
     public function test_the_home_commission_can_be_pesos_while_the_rest_is_a_percentage(): void
     {
         $policy = $this->policy(['home_commission_enabled' => true, 'home_commission_type' => 'fixed', 'home_commission_rate' => 300]);
 
-        $this->assertSame(300.0, CommissionShare::amount($policy, 1000.0, 1000.0, false, 1, 20.0, true));
-        $this->assertSame(150.0, CommissionShare::amount($policy, 1000.0, 1000.0, false, 2, 20.0, true));
+        $this->assertSame(300.0, CommissionShare::amount($policy, 1000.0, 1000.0, 1, 20.0, true));
+        $this->assertSame(150.0, CommissionShare::amount($policy, 1000.0, 1000.0, 2, 20.0, true));
         $this->assertSame('fixed', CommissionShare::type($policy, true));
         $this->assertSame('percentage', CommissionShare::type($policy, false));
         $this->assertSame(300.0, CommissionShare::rate($policy, 20.0, true));
         $this->assertSame(20.0, CommissionShare::rate($policy, 20.0, false));
     }
 
-    public function test_the_home_commission_still_respects_what_the_policy_applies_to(): void
+    public function test_home_package_services_earn_the_home_rate_when_commission_is_enabled(): void
     {
-        $policy = $this->policy(['commission_applies_to' => 'service', 'home_commission_enabled' => true, 'home_commission_rate' => 25]);
+        $policy = $this->policy(['home_commission_enabled' => true, 'home_commission_rate' => 25]);
 
-        $this->assertSame(0.0, CommissionShare::amount($policy, 1000.0, 1000.0, true, 1, null, true));
-        $this->assertSame(0.0, CommissionShare::amount(null, 1000.0, 1000.0, false, 1, null, true));
+        $this->assertSame(250.0, CommissionShare::amount($policy, 0.0, 1000.0, home: true));
+        $this->assertSame(0.0, CommissionShare::amount(null, 1000.0, 1000.0, 1, null, true));
     }
 
     public function test_how_a_plan_reads(): void

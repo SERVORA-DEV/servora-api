@@ -15,6 +15,7 @@ use App\Models\Staff;
 use App\Models\TherapistAssignment;
 use App\Models\User;
 use App\Repository\Business\AppointmentRepository;
+use App\Repository\Business\AttendanceRepository;
 use App\Repository\Business\TherapistAssignmentRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Support\Visits\AutoAssignment;
@@ -44,6 +45,7 @@ class VisitAssignmentService
         private AppointmentAvailabilityService $availabilityService,
         private AttendanceStatusCalculator $attendanceStatusCalculator,
         private TherapistQueueCalculator $therapistQueueCalculator,
+        private AttendanceRepository $attendanceRepository,
     ) {}
 
     // ── Therapist / room assignment ─────────────────────────────────────
@@ -104,6 +106,12 @@ class VisitAssignmentService
             ->where('attendance_date', BusinessDay::attendanceDate($appointment->spa_branch_id, $date))
             ->get()
             ->keyBy('staff_id');
+        if ($date === now()->toDateString()) {
+            $branchId = $appointment->spa_branch_id;
+            $attendanceByStaffId = $attendanceByStaffId->replace(
+                $this->attendanceRepository->openAtBranches([$branchId], $therapists->pluck('id')->all(), BusinessDay::forBranch($branchId)),
+            );
+        }
 
         $branchSchedule = BranchSchedule::where('spa_branch_id', $appointment->spa_branch_id)
             ->where('day_of_week', $dayOfWeek)
@@ -1005,11 +1013,8 @@ class VisitAssignmentService
         if ($away = $this->availabilityService->leaveOn($staff->id, $today)) {
             return "{$name} is off today ({$away}). Pick someone else.";
         }
-        $timedIn = Attendance::where('staff_id', $staff->id)
-            ->where('attendance_date', BusinessDay::attendanceDate($appointment->spa_branch_id, $today))
-            ->whereNotNull('check_in_at')
-            ->whereNull('check_out_at')
-            ->exists();
+        $branchId = $appointment->spa_branch_id;
+        $timedIn = $this->attendanceRepository->openAtBranches([$branchId], [$staff->id], BusinessDay::attendanceDate($branchId, $today))->has($staff->id);
         if (! $timedIn) {
             return "{$name} isn't timed in right now. Pick someone who is here.";
         }
@@ -1181,6 +1186,10 @@ class VisitAssignmentService
             ->where('attendance_date', BusinessDay::attendanceDate($appointment->spa_branch_id, $date))
             ->whereNotNull('check_in_at')
             ->exists();
+        if (! $isCheckedIn && $date === now()->toDateString()) {
+            $branchId = $appointment->spa_branch_id;
+            $isCheckedIn = $this->attendanceRepository->openAtBranches([$branchId], [$staff->id], BusinessDay::forBranch($branchId))->has($staff->id);
+        }
 
         if (! $isCheckedIn) {
             $checks[] = $this->availabilityService->staffMatchesSchedule($staff->id, $date, $appointment->appointment_time, $duration);

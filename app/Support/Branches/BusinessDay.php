@@ -9,8 +9,7 @@ use Carbon\CarbonInterface;
 // A branch's working day runs from when it opens to when it opens next, not
 // from midnight to midnight: staff on the floor at 1 AM after a late night are
 // still on the day they came in for, and the roster shows that day until the
-// branch opens again. (Anyone nobody timed out is timed out at closing time, or
-// at the end of their shift at a 24-hour branch: AttendanceRollover.)
+// branch opens again. AttendanceRollover handles automatic time-outs at closing.
 //
 // The hours are the branch's weekly schedule (Branch Settings → Operations). A
 // day it is closed is skipped: the day before runs on until it next opens. A

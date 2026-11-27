@@ -19,27 +19,26 @@ class ServicePartsTest extends TestCase
             'commission_enabled' => true,
             'commission_type' => 'percentage',
             'default_commission_rate' => 50,
-            'commission_applies_to' => 'service',
         ];
     }
 
     public function test_each_part_earns_its_share_of_the_commission(): void
     {
         // ₱500 at 50%: ₱250 to share. 60/40 pays ₱150 and ₱100; 50/50 pays ₱125 each.
-        $this->assertSame(150.0, CommissionShare::amount($this->policy(), 500.0, 500.0, false, 2, null, false, 60.0));
-        $this->assertSame(100.0, CommissionShare::amount($this->policy(), 500.0, 500.0, false, 2, null, false, 40.0));
-        $this->assertSame(125.0, CommissionShare::amount($this->policy(), 500.0, 500.0, false, 2, null, false, 50.0));
+        $this->assertSame(150.0, CommissionShare::amount($this->policy(), 500.0, 500.0, 2, null, false, 60.0));
+        $this->assertSame(100.0, CommissionShare::amount($this->policy(), 500.0, 500.0, 2, null, false, 40.0));
+        $this->assertSame(125.0, CommissionShare::amount($this->policy(), 500.0, 500.0, 2, null, false, 50.0));
         // Each at their own rate: a 40% plan on a 60% part of ₱500.
-        $this->assertSame(120.0, CommissionShare::amount($this->policy(), 500.0, 500.0, false, 2, 40.0, false, 60.0));
+        $this->assertSame(120.0, CommissionShare::amount($this->policy(), 500.0, 500.0, 2, 40.0, false, 60.0));
         // A fixed amount per service is split by share too.
         $fixed = $this->policy(['commission_type' => 'fixed', 'default_commission_rate' => 200]);
-        $this->assertSame(120.0, CommissionShare::amount($fixed, 500.0, 500.0, false, 2, null, false, 60.0));
+        $this->assertSame(120.0, CommissionShare::amount($fixed, 500.0, 500.0, 2, null, false, 60.0));
     }
 
     public function test_without_parts_the_split_stays_equal(): void
     {
-        $this->assertSame(125.0, CommissionShare::amount($this->policy(), 500.0, 500.0, false, 2));
-        $this->assertSame(250.0, CommissionShare::amount($this->policy(), 500.0, 500.0, false, 1));
+        $this->assertSame(125.0, CommissionShare::amount($this->policy(), 500.0, 500.0, 2));
+        $this->assertSame(250.0, CommissionShare::amount($this->policy(), 500.0, 500.0, 1));
     }
 
     private function partsErrors(array $parts, string $type = 'time'): array

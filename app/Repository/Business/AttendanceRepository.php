@@ -6,6 +6,7 @@ use App\Enums\StaffStatus;
 use App\Models\Attendance;
 use App\Models\Staff;
 use App\Models\StaffTransferRequest;
+use Illuminate\Support\Collection;
 
 class AttendanceRepository
 {
@@ -77,6 +78,32 @@ class AttendanceRepository
             ->where('status', StaffStatus::Active->value)
             ->orderBy('first_name')
             ->get();
+    }
+
+    // A time-in can still be open on a later working day. A newer attendance
+    // row supersedes it, so an old missing time-out cannot override today's record.
+    public function openAtBranches(array $spaBranchIds, array $staffIds, string $date): Collection
+    {
+        if (! $staffIds) {
+            return collect();
+        }
+
+        $keepsBranch = StaffTransferRequest::ready();
+
+        return Attendance::whereIn('staff_id', $staffIds)
+            ->whereHas('staff', fn ($staff) => $staff->whereIn('staff.spa_branch_id', $spaBranchIds)
+                ->when($keepsBranch, fn ($staff) => $staff->where(fn ($branch) => $branch->whereNull('attendances.spa_branch_id')
+                    ->orWhereColumn('attendances.spa_branch_id', 'staff.spa_branch_id'))))
+            ->where('attendance_date', '<=', $date)
+            ->whereNotNull('check_in_at')
+            ->where('check_in_at', '<=', now())
+            ->whereNull('check_out_at')
+            ->whereNotExists(fn ($newer) => $newer->selectRaw('1')->from('attendances as newer')
+                ->whereColumn('newer.staff_id', 'attendances.staff_id')
+                ->whereColumn('newer.attendance_date', '>', 'attendances.attendance_date')
+                ->where('newer.attendance_date', '<=', $date))
+            ->get()
+            ->keyBy('staff_id');
     }
 
     // Records at these branches: by the branch each was recorded at, so a

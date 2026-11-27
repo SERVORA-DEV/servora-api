@@ -5,6 +5,8 @@ namespace App\Repository;
 use App\Enums\PlanChangeStatus;
 use App\Enums\SubscriptionStatus;
 use App\Models\Subscription;
+use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 
 class SubscriptionRepository
 {
@@ -121,30 +123,30 @@ class SubscriptionRepository
     private const ENDED_LOOKBACK_DAYS = 7;
 
     // The subscriptions the daily reminder job looks at: each business's
-    // most recent one only (same reasoning as countOverdue — a stale
-    // superseded row shouldn't generate a reminder), still Active, not
+    // most recent non-pending one (a checkout that has not been paid does
+    // not replace the current plan). A stale
+    // superseded row shouldn't generate a reminder. It must be Active, not
     // ending by the owner's own choice, and due somewhere between the first
     // reminder ($firstDays ahead) and shortly after the grace period ran
     // out. Free trials included. Whether one is actually reminded today is
     // SubscriptionReminderSchedule's decision, from expiry_reminder_sent_at
     // (the LAST reminder sent; a payment creates a new subscription row,
     // which starts that over).
-    public function findInReminderWindow(int $firstDays, int $graceDays)
+    public function inReminderWindow(int $firstDays, int $graceDays, Carbon $now): Builder
     {
         $latestIdsPerBusiness = Subscription::selectRaw('MAX(id) as id')
-            ->groupBy('spa_business_id')
-            ->pluck('id');
+            ->where('status', '!=', SubscriptionStatus::Pending->value)
+            ->groupBy('spa_business_id');
 
-        return Subscription::with(['business.owner', 'business.settings', 'plan', 'pendingPlan', 'scheduledPlan', 'paymentMethod'])
+        return Subscription::query()
             ->whereIn('id', $latestIdsPerBusiness)
             ->where('status', SubscriptionStatus::Active->value)
             ->where(fn ($q) => $this->notDeclined($q))
             ->whereNotNull('expires_at')
             ->whereBetween('expires_at', [
-                now()->subDays($graceDays + self::ENDED_LOOKBACK_DAYS),
-                now()->addDays($firstDays + 1),
-            ])
-            ->get();
+                $now->copy()->subDays($graceDays + self::ENDED_LOOKBACK_DAYS),
+                $now->copy()->addDays($firstDays + 1),
+            ]);
     }
 
     // Each business's latest subscription still on (or already moved to a

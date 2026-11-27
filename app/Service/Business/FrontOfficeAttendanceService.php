@@ -25,7 +25,7 @@ use Illuminate\Support\Facades\DB;
 // Front Desk's narrow attendance surface — check-in/check-out, sending
 // someone home early or marking them on leave for today, and checking in a
 // fill-in who covers for them. No arbitrary status and no backdating: every
-// WRITE here uses now() and only ever touches today's row. Deliberately
+// WRITE here uses now(). A time-out closes the time-in's own row. Deliberately
 // separate from AttendanceService (the Manager/Owner surface, which accepts
 // an arbitrary status and any date) rather than loosening its role gate.
 // Reading is wider than writing: today() also shows a past day or tomorrow
@@ -51,8 +51,7 @@ class FrontOfficeAttendanceService
     ) {
     }
 
-    // The working day it is at the branch the desk works (BusinessDay: from opening to the
-    // next opening), after carrying anyone still on the floor from a day that has ended.
+    // The working day after applying branch closing and continuous shifts.
     private function workingDay(array $branchIds, ?Staff $staff = null): string
     {
         $this->rollover->forBranches($branchIds);
@@ -113,13 +112,8 @@ class FrontOfficeAttendanceService
             'opens_label' => $opens ? ($opens->isToday() ? $opens->format('g:i A') : $opens->format('D g:i A')) : null,
             'data' => $this->rows($business, $staffMembers, $date, $branchIds, live: $date === $todayDate),
             'commission' => $this->commissionMeta($business),
-            // Whether a service can start only with its staff timed in
-            // (AppointmentService::checkInProblem), so the desk is warned first.
-            'requires_check_in' => (function () use ($business) {
-                $policy = $business->settings?->section('staff_policy') ?? \App\Models\SpaBusinessSetting::DEFAULTS['staff_policy'];
-
-                return (bool) ($policy['attendance_tracking'] ?? true) && (bool) ($policy['require_check_in'] ?? true);
-            })(),
+            // Kept in the response for clients that use it to warn the desk.
+            'requires_check_in' => true,
         ];
     }
 
@@ -135,7 +129,7 @@ class FrontOfficeAttendanceService
         $date = $this->workingDay($branchIds, $staff);
 
         $existing = Attendance::where('staff_id', $staff->id)->where('attendance_date', $date)->first();
-        if ($existing?->check_in_at && ! $existing->check_out_at) {
+        if ($this->attendanceRepository->openAtBranches([$staff->spa_branch_id], [$staff->id], $date)->has($staff->id)) {
             return response()->json(['message' => $this->nameOf($staff) . ' is already timed in.'], 422);
         }
 
@@ -215,13 +209,12 @@ class FrontOfficeAttendanceService
         $staff = $this->staffRepository->findByUuidForBranches($staffUuid, $branchIds);
         $date = $this->workingDay($branchIds, $staff);
 
-        $existing = Attendance::where('staff_id', $staff->id)->where('attendance_date', $date)->first();
+        $existing = $this->attendanceRepository->openAtBranches([$staff->spa_branch_id], [$staff->id], $date)->get($staff->id);
+        if (! $existing) {
+            $timedOut = Attendance::where('staff_id', $staff->id)->where('attendance_date', $date)->whereNotNull('check_out_at')->exists();
+            $message = $timedOut ? ' is already timed out.' : " hasn't timed in yet today.";
 
-        if (! $existing || ! $existing->check_in_at) {
-            return response()->json(['message' => $this->nameOf($staff) . " hasn't timed in yet today."], 422);
-        }
-        if ($existing->check_out_at) {
-            return response()->json(['message' => $this->nameOf($staff) . ' is already timed out.'], 422);
+            return response()->json(['message' => $this->nameOf($staff) . $message], 422);
         }
         // Not while they are performing a service (CheckOutRules).
         if ($serving = CheckOutRules::problem($this->nameOf($staff), $this->servingNow->for($staff->id))) {
@@ -230,7 +223,7 @@ class FrontOfficeAttendanceService
 
         $oldValues = $existing->only(self::AUDIT_FIELDS);
 
-        $model = $this->attendanceRepository->upsert($staff->id, $date, [
+        $model = $this->attendanceRepository->upsert($staff->id, $existing->attendance_date->toDateString(), [
             'check_out_at' => now(),
             'updated_by' => $user->id,
         ]);
@@ -257,7 +250,8 @@ class FrontOfficeAttendanceService
         $date = $this->workingDay($branchIds, $staff);
         $name = $this->nameOf($staff);
 
-        $existing = Attendance::where('staff_id', $staff->id)->where('attendance_date', $date)->first();
+        $active = $this->attendanceRepository->openAtBranches([$staff->spa_branch_id], [$staff->id], $date)->get($staff->id);
+        $existing = $active ?? Attendance::where('staff_id', $staff->id)->where('attendance_date', $date)->first();
         $oldValues = $existing?->only(self::AUDIT_FIELDS);
         $remarks = trim(($type === 'early' ? 'Left early' : 'On leave') . ($reason ? ": {$reason}" : ''));
 
@@ -289,7 +283,7 @@ class FrontOfficeAttendanceService
             $payload = ['status' => AttendanceStatus::OnLeave->value];
         }
 
-        $model = $this->attendanceRepository->upsert($staff->id, $date, $payload + [
+        $model = $this->attendanceRepository->upsert($staff->id, $existing?->attendance_date->toDateString() ?? $date, $payload + [
             'remarks' => $remarks,
             'created_by' => $existing?->created_by ?? $user->id,
             'updated_by' => $user->id,
@@ -359,7 +353,6 @@ class FrontOfficeAttendanceService
             ->keyBy(fn ($a) => $a->attendance_date->format('Y-m-d'));
         $branchSchedules = BranchSchedule::where('spa_branch_id', $staff->spa_branch_id)->get();
         $grace = AttendanceStatusCalculator::graceMinutesFor($business);
-        $overtime = AttendanceStatusCalculator::overtimeAllowedFor($business);
         $dailyEarnings = $this->commissionCalculator->dailyEarnings($business, $staff->id, $from, $to);
 
         // Shifts from before they were added to Servora aren't absences:
@@ -377,7 +370,6 @@ class FrontOfficeAttendanceService
                 $staff->schedules,
                 $branchSchedules->firstWhere('day_of_week', $day->format('l')),
                 graceMinutes: $grace,
-                allowOvertime: $overtime,
             );
 
             $rows[] = [
@@ -433,7 +425,6 @@ class FrontOfficeAttendanceService
         $branchSchedules = BranchSchedule::whereIn('spa_branch_id', $branchIds)->get()->groupBy('spa_branch_id');
         $dayOfWeek = Carbon::parse($date)->format('l');
         $grace = AttendanceStatusCalculator::graceMinutesFor($business);
-        $overtime = AttendanceStatusCalculator::overtimeAllowedFor($business);
         $week = BusinessDay::week((int) \App\Support\Access\AccountScope::workingBranchId($branchIds));
         $past = ! $live && $date < BusinessDay::forBranch((int) \App\Support\Access\AccountScope::workingBranchId($branchIds));
         $dayStart = BusinessDay::opensAt($week, $date) ?? Carbon::parse($date)->startOfDay();
@@ -444,6 +435,7 @@ class FrontOfficeAttendanceService
         // Who is performing a service right now — they can't be checked out,
         // so the page greys that out. Only the live roster can be "right now".
         $serving = $live ? $this->servingNow->forStaff($staffMembers->pluck('id')->all()) : [];
+        $onFloor = $live ? $this->attendanceRepository->openAtBranches($branchIds, $staffMembers->pluck('id')->all(), $date) : collect();
 
         // Who is covering for whom on this date, both directions — read off
         // the attendance rows the roster already loaded (no extra queries;
@@ -451,16 +443,18 @@ class FrontOfficeAttendanceService
         $byId = $staffMembers->keyBy('id');
         $coveredBy = [];
         foreach ($staffMembers as $member) {
-            $coveringId = $member->attendance->first()?->covering_for_staff_id;
+            $coveringId = ($onFloor->get($member->id) ?? $member->attendance->first())?->covering_for_staff_id;
             if ($coveringId) {
                 $coveredBy[$coveringId] = $this->nameOf($member);
             }
         }
 
-        return $staffMembers->map(function (Staff $staff) use ($date, $branchSchedules, $dayOfWeek, $grace, $overtime, $earnings, $byId, $coveredBy, $serving) {
-            $attendance = $staff->attendance->first();
-            $branchSchedule = $branchSchedules->get($staff->spa_branch_id, collect())->firstWhere('day_of_week', $dayOfWeek);
-            $resolved = $this->statusCalculator->resolve($staff, $attendance, $date, $staff->schedules, $branchSchedule, graceMinutes: $grace, allowOvertime: $overtime);
+        return $staffMembers->map(function (Staff $staff) use ($date, $branchSchedules, $dayOfWeek, $grace, $earnings, $byId, $coveredBy, $serving, $onFloor) {
+            $attendance = $onFloor->get($staff->id) ?? $staff->attendance->first();
+            $attendanceDate = $attendance?->attendance_date->toDateString() ?? $date;
+            $attendanceDay = $attendanceDate === $date ? $dayOfWeek : Carbon::parse($attendanceDate)->format('l');
+            $branchSchedule = $branchSchedules->get($staff->spa_branch_id, collect())->firstWhere('day_of_week', $attendanceDay);
+            $resolved = $this->statusCalculator->resolve($staff, $attendance, $attendanceDate, $staff->schedules, $branchSchedule, graceMinutes: $grace, onFloor: $onFloor->has($staff->id));
             $off = $this->statusCalculator->timeOffOn($staff->id, $date);
             $coveringId = $attendance?->covering_for_staff_id;
             // A single-row roster (after a write) won't hold the covered person.
@@ -510,6 +504,7 @@ class FrontOfficeAttendanceService
     {
         $date = BusinessDay::forBranch(\App\Support\Access\AccountScope::workingBranchId($branchIds));
         $roster = $this->attendanceRepository->rosterForRange($branchIds, $date, $date);
+        $onFloor = $this->attendanceRepository->openAtBranches($branchIds, $roster->pluck('id')->all(), $date);
         // The shift being covered (when someone is): a therapist with their own shift that day
         // can cover it only if the two don't overlap — otherwise the gap just moves to theirs.
         $coveredStaff = $excludeStaffId ? $roster->firstWhere('id', $excludeStaffId) : null;
@@ -518,10 +513,9 @@ class FrontOfficeAttendanceService
         $therapists = $roster
             ->where('role', 'therapist')
             ->reject(fn (Staff $s) => $s->id === $excludeStaffId)
-            ->filter(function (Staff $s) use ($date, $coveredShift) {
+            ->filter(function (Staff $s) use ($date, $coveredShift, $onFloor) {
                 $a = $s->attendance->first();
-                $onFloor = $a?->check_in_at && ! $a->check_out_at;
-                if ($onFloor || $a?->status === AttendanceStatus::OnLeave->value || $a?->left_early) {
+                if ($onFloor->has($s->id) || $a?->status === AttendanceStatus::OnLeave->value || $a?->left_early) {
                     return false;
                 }
                 // On leave dates set in Employees: not asked to cover.

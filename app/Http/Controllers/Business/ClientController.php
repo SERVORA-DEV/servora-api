@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Business;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Business\ClientListRequest;
 use App\Http\Requests\Business\ClientRequest;
+use App\Service\Business\ClientBookingPauseService;
 use App\Service\Business\ClientDuplicateService;
 use App\Service\Business\ClientService;
 use App\Support\PerPage;
@@ -35,6 +36,19 @@ class ClientController extends Controller
     public function show(Request $request, string $uuid)
     {
         return $this->clientService->show($request->user(), $uuid);
+    }
+
+    public function bookingPauses(Request $request, string $uuid, ClientBookingPauseService $booking)
+    {
+        return response()->json(['data' => $booking->pauses($request, $uuid)]);
+    }
+
+    public function unpauseAppBooking(Request $request, string $uuid, string $branchUuid, ClientBookingPauseService $booking)
+    {
+        $data = $request->validate(['reason' => ['required', 'string', 'max:500']]);
+        $booking->unpause($request, $uuid, $branchUuid, $data['reason']);
+
+        return response()->noContent();
     }
 
     public function duplicateSuggestions(Request $request, string $uuid)

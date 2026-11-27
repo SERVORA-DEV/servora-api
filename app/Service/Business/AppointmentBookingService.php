@@ -147,7 +147,7 @@ class AppointmentBookingService
             } else {
                 if (! empty($payload['client_uuid']) && $policy['no_show_policy'] === 'suspend') {
                     $known = $this->clientRepository->findByUuidForBusiness($payload['client_uuid'], $business->id, $this->clientService->branchScope($user));
-                    $policyClient = ['name' => trim("{$known->first_name} {$known->last_name}") ?: 'This client', 'no_shows' => $this->noShowCount($known->id)];
+                    $policyClient = ['name' => trim("{$known->first_name} {$known->last_name}") ?: 'This client', 'no_shows' => $this->noShowCount($known->id, $branch->id)];
                 }
                 $problems = FrontDeskPolicy::reservation(
                     $policy,
@@ -388,8 +388,9 @@ class AppointmentBookingService
         // still book for them (with an override).
         if ($policy['no_show_policy'] === 'suspend') {
             $mine = Client::where('spa_business_id', $branch->spa_business_id)->where('user_id', $user->id)->value('id');
-            if ($mine && FrontDeskPolicy::clientSuspended($policy, $this->noShowCount($mine))) {
-                return response()->json(['message' => BookingPolicy::missedBookingsNotice($policy, $this->noShowCount($mine), (string) $branch->business?->business_name)['message']], 422);
+            $missed = $mine ? $this->noShowCount($mine, $branch->id) : 0;
+            if (FrontDeskPolicy::clientSuspended($policy, $missed)) {
+                return response()->json(['message' => BookingPolicy::missedBookingsNotice($policy, $missed, (string) $branch->business?->business_name)['message']], 422);
             }
         }
 
@@ -817,7 +818,7 @@ class AppointmentBookingService
         // app (enforced in createClientAppointment; the desk needs an
         // override to reserve for them).
         $policy = $appointment->branch ? BookingPolicy::for($appointment->branch) : SpaBusinessSetting::DEFAULTS['booking_defaults'];
-        $missed = $this->noShowCount($appointment->client_id);
+        $missed = $this->noShowCount($appointment->client_id, $appointment->spa_branch_id);
         $action = FrontDeskPolicy::noShowAction($policy, $missed);
         if ($automatic && $action === 'none') {
             $this->clientNotifier->appointment(
@@ -849,9 +850,9 @@ class AppointmentBookingService
 
     /** How many bookings this client has missed (no-shows). */
     // The bookings this client has missed since their last visit.
-    public function noShowCount(int $clientId): int
+    public function noShowCount(int $clientId, ?int $bookingBranchId = null): int
     {
-        return Appointment::where('client_id', $clientId)->missedSinceLastVisit()->count();
+        return Appointment::where('client_id', $clientId)->missedSinceLastVisit($bookingBranchId)->count();
     }
 
     // How many bookings this signed-in client already has at the business on

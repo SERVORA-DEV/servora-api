@@ -118,7 +118,7 @@ class DayCloser
         $released = 0;
         $vouchers = $this->returnUnbilledVouchers($branchIds);
 
-        // Staff nobody timed out: out at closing, or at their shift's end at a 24-hour branch (AttendanceRollover).
+        // Staff nobody timed out: check branch closing and continuous shifts.
         try {
             app(AttendanceRollover::class)->forBranches($branchIds ?? \App\Models\SpaBranch::pluck('id')->all());
         } catch (\Throwable $e) {

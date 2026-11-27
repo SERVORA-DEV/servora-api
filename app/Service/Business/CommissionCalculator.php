@@ -25,8 +25,7 @@ use Illuminate\Support\Facades\DB;
 //   - default_commission_rate: the STANDARD rate — what everyone earns unless
 //     they have a custom one of their own (staff.commission_rate, the same
 //     kind as the standard; set on the employee by the owner or a manager).
-//   - commission_applies_to: 'service', 'package' or 'both' — a line that
-//     came out of a package (source_appointment_package_id) counts as package.
+//   Both standalone services and services in packages earn commission.
 //   - commission_release_cycle: daily / weekly (Monday start) / semimonthly
 //     (the 1st to the 15th, the 16th to the last day) / monthly — the "pay
 //     period" the running total is shown for.
@@ -119,7 +118,6 @@ class CommissionCalculator
                 $policy,
                 (float) $line->subtotal,
                 (float) $line->unit_price * max(1, (int) $line->quantity),
-                $line->source_appointment_package_id !== null,
                 $people->count(),
                 $own,
                 $home,
@@ -422,7 +420,7 @@ class CommissionCalculator
             'plan' => $policy ? $staff?->commissionPlanName() : null,
             'home_rate' => $policy && ! empty($policy['home_commission_enabled']) ? CommissionShare::rate($policy, null, true) : null,
             'home_type' => $policy && ! empty($policy['home_commission_enabled']) ? CommissionShare::type($policy, true) : null,
-            'applies_to' => $policy['commission_applies_to'] ?? null,
+            'applies_to' => $policy === null ? null : 'both',
             'period_label' => $this->periodLabel($policy),
         ];
     }
@@ -553,7 +551,6 @@ class CommissionCalculator
             $policy,
             (float) $line->subtotal,
             (float) $line->unit_price * max(1, (int) $line->quantity),
-            $line->source_appointment_package_id !== null,
             (int) $line->split,
             ($line->own_rate ?? null) !== null ? (float) $line->own_rate : null,
             (bool) ($line->is_home ?? false),

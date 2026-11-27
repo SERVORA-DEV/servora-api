@@ -238,10 +238,13 @@ class Appointment extends Model
      * count again, so a client who misses one and then comes is not on the
      * way to being paused for good.
      */
-    public function scopeMissedSinceLastVisit($query)
+    public function scopeMissedSinceLastVisit($query, ?int $bookingBranchId = null)
     {
         return $query->where('appointments.status', AppointmentStatus::NoShow->value)
-            ->whereRaw("appointments.appointment_date > COALESCE((select max(visit.appointment_date) from appointments visit where visit.client_id = appointments.client_id and visit.status = ?), '1900-01-01')", [AppointmentStatus::Completed->value]);
+            ->whereRaw("appointments.appointment_date > COALESCE((select max(visit.appointment_date) from appointments visit where visit.client_id = appointments.client_id and visit.status = ?), '1900-01-01')", [AppointmentStatus::Completed->value])
+            ->when($bookingBranchId !== null, fn ($missed) => $missed->whereNotExists(fn ($waivers) => $waivers
+                ->selectRaw('1')->from('booking_no_show_waivers')->where('spa_branch_id', $bookingBranchId)
+                ->whereColumn('booking_no_show_waivers.appointment_id', 'appointments.id')));
     }
 
     // The voucher the client booked with (Appointment::holdsVouchers).

@@ -32,7 +32,6 @@ class SpaBusinessSetting extends Model
             'commission_enabled' => true,
             'commission_type' => 'percentage',
             'default_commission_rate' => 15,
-            'commission_applies_to' => 'service',
             'commission_release_cycle' => 'monthly',
             'commission_includes_extension' => true,
             'commission_includes_tips' => false,
@@ -44,14 +43,10 @@ class SpaBusinessSetting extends Model
             'home_commission_rate' => 0,
 
             'attendance_tracking' => true,
-            'require_check_in' => true,
             'late_threshold_minutes' => 10,
             // A manager's change to a staff schedule waits for the owner
             // (StaffScheduleService). Off unless the owner asks for it.
             'require_manager_approval' => false,
-            // Count time worked past the shift end, reported as overtime
-            // (AttendanceStatusCalculator). Off: hours stop at the shift end.
-            'allow_overtime' => false,
 
             // What lateness and absences take off a staff member's earnings
             // for the pay period (App\Support\Staff\AttendancePenalty): a fixed

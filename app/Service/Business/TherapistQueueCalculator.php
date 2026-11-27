@@ -10,6 +10,8 @@ use App\Models\SpaBranch;
 use App\Models\Staff;
 use App\Models\StaffTimeOff;
 use App\Models\TherapistAssignment;
+use App\Repository\Business\AttendanceRepository;
+use App\Support\Branches\BusinessDay;
 use App\Support\Visits\RotationTurn;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -32,7 +34,10 @@ use Illuminate\Support\Collection;
 // is next.
 class TherapistQueueCalculator
 {
-    public function __construct(private CommissionCalculator $commissionCalculator)
+    public function __construct(
+        private CommissionCalculator $commissionCalculator,
+        private AttendanceRepository $attendanceRepository,
+    )
     {
     }
 
@@ -62,10 +67,16 @@ class TherapistQueueCalculator
 
         $staffIds = $therapists->pluck('id')->all();
 
+        $attendanceDate = BusinessDay::attendanceDate($branchId, $date);
         $attendanceByStaffId = Attendance::whereIn('staff_id', $staffIds)
-            ->where('attendance_date', \App\Support\Branches\BusinessDay::attendanceDate($branchId, $date))
+            ->where('attendance_date', $attendanceDate)
             ->get()
             ->keyBy('staff_id');
+        if ($date === now()->toDateString()) {
+            $attendanceByStaffId = $attendanceByStaffId->replace(
+                $this->attendanceRepository->openAtBranches([$branchId], $staffIds, $attendanceDate),
+            );
+        }
 
         $timeOffByStaffId = $this->timeOffOn($staffIds, $date);
         $lastCompletedByStaffId = $this->lastCompletedAt($staffIds, $date);
@@ -78,11 +89,7 @@ class TherapistQueueCalculator
             ->map(function (Staff $staff) use ($attendanceByStaffId, $timeOffByStaffId, $lastCompletedByStaffId, $activeStatusByStaffId, $earnings) {
                 $attendance = $attendanceByStaffId->get($staff->id);
 
-                // On the floor = timed in and not yet timed out. Timing out is
-                // how a therapist leaves the rotation for the day; note nothing
-                // else in the codebase reads check_out_at this way yet (the
-                // assignment guards only look at check_in_at), so this is the
-                // first place it carries that meaning.
+                // Timing out takes the therapist out of the rotation.
                 // Off that day in Employees (leave, sick, absent) is never in the line, even
                 // when timed in (a time in made before the leave was set).
                 $timeOff = $timeOffByStaffId[$staff->id] ?? null;

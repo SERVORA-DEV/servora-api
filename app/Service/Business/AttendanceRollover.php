@@ -4,7 +4,6 @@ namespace App\Service\Business;
 
 use App\Enums\AttendanceStatus;
 use App\Models\Attendance;
-use App\Models\SpaBranch;
 use App\Models\Staff;
 use App\Support\Branches\BusinessDay;
 use Carbon\Carbon;
@@ -13,16 +12,11 @@ use Illuminate\Support\Facades\DB;
 
 // Ends a shift nobody timed out of:
 //
-//  - A branch with opening hours: at closing time (the next morning for a branch open past
-//    midnight). Where the business allows overtime and the person's own shift ends later,
-//    at the end of their shift instead. They are not timed in again: the next day they time
-//    in themselves.
-//  - A branch open 24 hours (equal opening and closing times), closed that day, or with no
-//    hours entered: at the end of their own shift that day. When their next shift starts
-//    right then (a 24-hour shift every day, a night shift straight into a day shift), they
-//    are timed in for it at that same moment, so there is no gap on the floor.
-//  - No shift that day (their day off, or no schedule: a fill-in), or they came in after the
-//    time it would end: left as it is, for the manager to correct.
+//  - At branch closing (the next morning for a branch open past midnight),
+//    unless the person's shift runs past that closing or they came in after it.
+//  - Without a closing time or when a shift runs past it, the time-in stays
+//    open for a manual time-out. Back-to-back shifts on different dates still
+//    split across those dates with no gap in the person's time on the floor.
 //
 // Runs where the day's attendance is read (the front desk's roster and its time in/out) and
 // with DayCloser (the scheduler every ten minutes, and the bell's checks), so it works where
@@ -35,9 +29,6 @@ class AttendanceRollover
     public const CLOSED_NOTE = 'Timed out automatically when the branch closed';
     public const SHIFT_END_NOTE = 'Timed out automatically at the end of their shift';
     public const NEXT_SHIFT_NOTE = 'Timed in automatically for their next shift (still on the floor)';
-
-    /** @var array<int, ?SpaBranch> */
-    private array $branches = [];
 
     public function __construct(private AttendanceStatusCalculator $statusCalculator)
     {
@@ -79,7 +70,7 @@ class AttendanceRollover
 
         while ($ended < self::MAX_DAYS) {
             $date = $attendance->attendance_date->toDateString();
-            [$endAt, $note, $continues] = $this->endOf($attendance, $staff, $week, $branchId, $date);
+            [$endAt, $note, $continues] = $this->endOf($staff, $week, $date);
 
             // Nothing to end it by (no shift that day), it hasn't come yet, or they came in after it.
             if (! $endAt || $endAt->gt($now) || ! $attendance->check_in_at || $endAt->lte($attendance->check_in_at)) {
@@ -87,9 +78,14 @@ class AttendanceRollover
             }
 
             $next = DB::transaction(function () use ($attendance, $staff, $endAt, $note, $continues) {
-                $attendance->update([
+                $record = Attendance::whereKey($attendance->id)->lockForUpdate()->first();
+                if (! $record || $record->check_out_at || ! $record->check_in_at?->equalTo($attendance->check_in_at)) {
+                    return false;
+                }
+
+                $record->update([
                     'check_out_at' => $endAt,
-                    'remarks' => self::note($attendance->remarks, $note),
+                    'remarks' => self::note($record->remarks, $note),
                 ]);
                 if (! $continues) {
                     return null;
@@ -116,6 +112,9 @@ class AttendanceRollover
                 );
             });
 
+            if ($next === false) {
+                break;
+            }
             $ended++;
             if (! $next) {
                 break;
@@ -131,7 +130,7 @@ class AttendanceRollover
      *
      * @return array{0: ?Carbon, 1: string, 2: bool}
      */
-    private function endOf(Attendance $attendance, Staff $staff, array $week, int $branchId, string $date): array
+    private function endOf(Staff $staff, array $week, string $date): array
     {
         $day = $week[Carbon::parse($date)->format('l')] ?? null;
         $shift = $this->statusCalculator->shiftWindow($staff->schedules, $date);
@@ -144,19 +143,16 @@ class AttendanceRollover
         // A branch with opening hours that day: closing time ends it.
         if ($open !== null && $close !== null && $open !== $close) {
             $closesAt = $midnight->copy()->addMinutes($close <= $open ? $close + 1440 : $close);
-            if ($shiftEnd && $shiftEnd->gt($closesAt) && AttendanceStatusCalculator::overtimeAllowedFor($this->branch($branchId)?->business)) {
-                return [$shiftEnd, self::SHIFT_END_NOTE, false];
+            if (! $shiftEnd || $shiftEnd->lte($closesAt)) {
+                return [$closesAt, self::CLOSED_NOTE, false];
             }
-
-            return [$closesAt, self::CLOSED_NOTE, false];
         }
 
-        // Open 24 hours, closed that day, or no hours: their own shift ends it; none, it is left.
-        if (! $shiftEnd) {
-            return [null, '', false];
+        if ($shiftEnd && $shiftEnd->toDateString() !== $date && $this->nextShiftStartsAt($staff, $shiftEnd)) {
+            return [$shiftEnd, self::SHIFT_END_NOTE, true];
         }
 
-        return [$shiftEnd, self::SHIFT_END_NOTE, $this->nextShiftStartsAt($staff, $shiftEnd)];
+        return [null, '', false];
     }
 
     // Whether they have a working shift starting exactly at $at (the day $at falls on).
@@ -165,11 +161,6 @@ class AttendanceRollover
         $next = $this->statusCalculator->shiftWindow($staff->schedules, $at->toDateString());
 
         return $next !== null && $next[0] === $at->hour * 60 + $at->minute;
-    }
-
-    private function branch(int $branchId): ?SpaBranch
-    {
-        return $this->branches[$branchId] ??= SpaBranch::with('business.settings')->find($branchId);
     }
 
     private function minutes(string $time): int
