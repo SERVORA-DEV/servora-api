@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Http\Middleware\RequireAdminTwoFactor;
 use App\Http\Middleware\RestrictAdminIp;
+use App\Mail\AccountNoticeMail;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
 use App\Models\User;
@@ -11,6 +12,7 @@ use App\Service\Uploads\DocumentUploadService;
 use App\Support\Platform\Suspension;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Mail;
 use Laravel\Sanctum\Sanctum;
 use Mockery;
 use Tests\TestCase;
@@ -57,6 +59,7 @@ class BranchSuspensionReviewTest extends TestCase
 
     public function test_only_branch_review_can_lift_a_suspension_after_owner_resubmits(): void
     {
+        Mail::fake();
         $uploads = Mockery::mock(DocumentUploadService::class);
         $uploads->shouldReceive('signedUrl')->andReturn(null);
         $this->app->instance(DocumentUploadService::class, $uploads);
@@ -107,6 +110,12 @@ class BranchSuspensionReviewTest extends TestCase
             ->assertJsonPath('data.verification_status', 'Verified')
             ->assertJsonPath('data.suspension_reason', null);
         $this->assertNull(Suspension::refusal($this->branch->fresh()));
+        Mail::assertSentCount(2);
+        Mail::assertSent(AccountNoticeMail::class, fn ($mail) => $mail->hasTo($this->owner->email)
+            && $mail->heading === 'Branch Registration Declined');
+        Mail::assertSent(AccountNoticeMail::class, fn ($mail) => $mail->hasTo($this->owner->email)
+            && $mail->heading === 'Branch Registration Approved'
+            && str_ends_with($mail->actionUrl, '/business/branches/'.$this->branch->uuid));
     }
 
     public function test_migration_restores_only_legacy_business_suspensions(): void

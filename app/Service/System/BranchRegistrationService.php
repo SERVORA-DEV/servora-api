@@ -8,6 +8,7 @@ use App\Repository\System\BranchRegistrationRepository;
 use App\Repository\AuditLogRepository;
 use App\Http\Resources\SpaBranchResource;
 use App\Service\Notifications\NotificationService;
+use App\Service\Notifications\RegistrationDecisionEmail;
 use App\Support\Platform\Suspension;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,6 +19,7 @@ class BranchRegistrationService
         private BranchRegistrationRepository $branchRegistrationRepository,
         private AuditLogRepository $auditLogRepository,
         private NotificationService $notificationService,
+        private RegistrationDecisionEmail $decisionEmail,
     ) {}
 
     public function listPending(int $perPage = 15)
@@ -68,6 +70,8 @@ class BranchRegistrationService
                 $this->notificationService->branchRegistrationApproved($branch, $owner);
             }
 
+            $this->decisionEmail->afterCommit($branch->business?->owner, 'Branch Registration', '/business/branches/'.$branch->uuid, approved: true, recordName: $branch->branch_name);
+
             return new SpaBranchResource($branch->load('verifier'));
         });
     }
@@ -93,6 +97,7 @@ class BranchRegistrationService
 
             if ($owner = $branch->business?->owner) {
                 $this->notificationService->branchRegistrationRejected($branch, $owner, $reason);
+                $this->decisionEmail->afterCommit($owner, 'Branch Registration', '/business/branches/'.$branch->uuid, approved: false, recordName: $branch->branch_name);
             }
 
             return new SpaBranchResource($branch->load('verifier'));

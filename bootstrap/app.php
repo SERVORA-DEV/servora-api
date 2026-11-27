@@ -61,11 +61,10 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin.2fa' => RequireAdminTwoFactor::class,
         ]);
     })
-    // Requires a real OS cron / Windows Task Scheduler entry running
-    // `php artisan schedule:run` every minute in the actual deployment — an
-    // ops step outside this codebase. Nothing else in this app runs
-    // scheduled tasks yet, so this is the app's first.
+    // The container starts schedule:work in docker/entrypoint.sh. Other
+    // deployments need schedule:work or schedule:run once a minute.
     ->withSchedule(function (Schedule $schedule): void {
+        $schedule->command('accounts:send-web-inactivity-reminders')->dailyAt('09:00')->withoutOverlapping();
         $schedule->command('subscriptions:notify-almost-due')->daily();
         $schedule->command('subscriptions:auto-renew')->hourly()->withoutOverlapping();
         $schedule->command('appointments:send-reminders')->everyFiveMinutes();

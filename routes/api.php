@@ -1,7 +1,9 @@
 <?php
 
 use App\Http\Controllers\Auth\AuthController;
+use App\Http\Controllers\Auth\WebActivityController;
 use App\Http\Controllers\PushSubscriptionController;
+use App\Models\User;
 use Illuminate\Support\Facades\Route;
 
 // The API, by who may call it. This file is only the gates (sign-in, role, a usable business,
@@ -28,6 +30,8 @@ $routes('auth');
 Route::middleware('auth:sanctum')->group(function () use ($routes) {
     Route::get('/auth/me', [AuthController::class, 'getUser']);
     Route::delete('/auth/logout', [AuthController::class, 'logout']);
+    Route::post('/auth/web-activity', WebActivityController::class)
+        ->middleware('role:'.implode(',', User::BUSINESS_WEB_ROLES));
 
     // Pop-ups for new notifications while Servora isn't open (any role).
     Route::controller(PushSubscriptionController::class)->prefix('push')->group(function () {

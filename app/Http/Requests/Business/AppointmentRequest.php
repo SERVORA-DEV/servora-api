@@ -13,7 +13,7 @@ use Illuminate\Validation\Rule;
 
 // Validates POST /business/appointment. Minimum required data is
 // spa_branch_uuid + appointment_date + appointment_time + a resolvable
-// client (rule 1) — services and requested_therapist_uuid are optional.
+// client. Home bookings also need a service or package (HomeServiceRules).
 // client_uuid xor a nested client{} payload: exactly one must be present,
 // enforced via required_without_all/prohibits below rather than a custom
 // rule, matching this codebase's preference for declarative rules.

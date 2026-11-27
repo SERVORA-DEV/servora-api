@@ -289,6 +289,7 @@ class BranchDetailResource extends JsonResource
                 'first_name' => $staff->first_name,
                 'last_name' => $staff->last_name,
                 'role' => $staff->role,
+                'gender' => $staff->bookingGender(),
                 // What they do, main one first (App\Support\Staff\StaffSpecialty) —
                 // sent for the app to show; it doesn't yet.
                 'specialties' => $staff->specialtyList(),

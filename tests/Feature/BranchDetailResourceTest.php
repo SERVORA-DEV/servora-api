@@ -7,6 +7,9 @@ use App\Models\Service;
 use App\Models\ServiceVariant;
 use App\Models\SpaBranch;
 use App\Models\SpaBusiness;
+use App\Models\Staff;
+use App\Models\User;
+use App\Service\Business\FrontOfficeLookupService;
 use App\Service\Business\SpaBranchService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -96,6 +99,26 @@ class BranchDetailResourceTest extends TestCase
     private function serviceNamed(string $name): array
     {
         return collect($this->services())->firstWhere('name', $name);
+    }
+
+    public function test_booking_rosters_supply_male_and_female_without_disclosing_a_legacy_answer(): void
+    {
+        $owner = User::factory()->create(['role' => 'business_owner']);
+        $this->business->update(['owner_id' => $owner->id]);
+        $this->branch->update(['display_settings' => ['show_therapist_profiles' => true]]);
+        $genders = [];
+        foreach (['Male', 'Female', 'Other'] as $gender) {
+            $staff = Staff::factory()->create(['spa_branch_id' => $this->branch->id, 'gender' => $gender]);
+            $genders[$staff->uuid] = $gender === 'Other' ? null : $gender;
+        }
+
+        $public = fn () => app(SpaBranchService::class)->publicShow($this->branch->uuid)->getData(true)['data']['therapists'];
+        $frontDesk = app(FrontOfficeLookupService::class)->therapists($owner)->resolve();
+        $this->assertEquals($genders, array_column($public(), 'gender', 'uuid'));
+        $this->assertEquals($genders, array_column($frontDesk, 'gender', 'uuid'));
+
+        $this->branch->update(['display_settings' => ['show_therapist_profiles' => false]]);
+        $this->assertSame([], $public());
     }
 
     public function test_an_unconfirmed_branch_email_is_not_shown_to_clients(): void

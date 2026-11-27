@@ -200,15 +200,19 @@ class HomeServiceRules
     }
 
     /**
-     * Checks the place of a home booking against the branch's rules.
+     * Checks the selection and location of a home booking.
      *
      * @return array{ok: bool, reason: ?string, distance_km: ?float, fee: float}
      */
     public static function check(SpaBranch $branch, array $payload): array
     {
-        $offer = self::offer($branch);
         $fail = fn (string $reason) => ['ok' => false, 'reason' => $reason, 'distance_km' => null, 'fee' => 0.0];
 
+        if (empty($payload['services']) && empty($payload['package_uuid']) && empty($payload['join_package_uuid'])) {
+            return $fail('Choose a service or package for the home visit.');
+        }
+
+        $offer = self::offer($branch);
         if (! $offer['enabled']) {
             return $fail($offer['staff_available']
                 ? "{$branch->branch_name} doesn't offer home service."

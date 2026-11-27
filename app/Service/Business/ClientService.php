@@ -197,7 +197,7 @@ class ClientService
         return $client;
     }
 
-    public function findOrCreate(int $spaBusinessId, array $payload, ?int $spaBranchId = null)
+    public function findOrCreate(int $spaBusinessId, array $payload, ?int $spaBranchId = null, bool $createdAsParticipant = false)
     {
         $existing = $this->clientRepository->findByContact(
             $spaBusinessId,
@@ -215,6 +215,7 @@ class ClientService
         $payload['spa_business_id'] = $spaBusinessId;
         $payload['spa_branch_id'] = $spaBranchId;
         $payload['is_active'] = $payload['is_active'] ?? true;
+        $payload['created_as_participant'] = $createdAsParticipant;
 
         return $this->clientRepository->create($payload);
     }

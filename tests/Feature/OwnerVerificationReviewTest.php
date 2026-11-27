@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Http\Controllers\System\OwnerVerificationController;
+use App\Mail\AccountNoticeMail;
 use App\Models\AuditLog;
 use App\Models\OwnerIdentityVerification;
 use App\Models\OwnerVerificationReview;
@@ -13,6 +14,7 @@ use App\Repository\AuditLogRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Repository\System\OwnerVerificationRepository;
 use App\Service\Notifications\NotificationService;
+use App\Service\Notifications\RegistrationDecisionEmail;
 use App\Service\System\OwnerVerificationChecklistService;
 use App\Service\System\OwnerVerificationService;
 use App\Service\Uploads\DocumentUploadService;
@@ -20,6 +22,7 @@ use App\Support\Platform\OwnerVerificationChecklist as Checklist;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use Mockery;
@@ -39,6 +42,7 @@ class OwnerVerificationReviewTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        Mail::fake();
         // Only this workflow's schema, in a fresh in-memory database. Never
         // migrate, truncate, or connect to the application's configured DB.
         config(['database.default' => 'sqlite', 'database.connections.sqlite.database' => ':memory:', 'database.connections.sqlite.url' => null]);
@@ -46,6 +50,7 @@ class OwnerVerificationReviewTest extends TestCase
         Schema::create('users', function (Blueprint $t) {
             $t->id(); $t->string('uuid')->unique();
             foreach (['first_name', 'middle_name', 'last_name', 'suffix', 'email', 'role', 'audience'] as $key) $t->string($key)->nullable();
+            $t->timestamp('email_verified_at')->nullable();
             $t->timestamps();
         });
         Schema::create('spa_businesses', function (Blueprint $t) {
@@ -68,7 +73,7 @@ class OwnerVerificationReviewTest extends TestCase
         (require database_path('migrations/2026_01_01_000260_create_owner_verification_reviews_table.php'))->up();
 
         $this->admin = User::create(['role' => 'system_administrator', 'first_name' => 'Review', 'last_name' => 'Admin']);
-        $this->owner = User::create(['role' => 'business_owner', 'first_name' => 'Alex', 'last_name' => 'Owner', 'email' => 'owner@example.test']);
+        $this->owner = User::create(['role' => 'business_owner', 'first_name' => 'Alex', 'last_name' => 'Owner', 'email' => 'owner@example.test', 'email_verified_at' => now()]);
         $this->business = SpaBusiness::create([
             'owner_id' => $this->owner->id, 'business_name' => 'Review test spa', 'business_type' => 'Sole Proprietorship',
             'registration_document_type' => 'DTI', 'registration_document_path' => 'test/certificate',
@@ -86,7 +91,7 @@ class OwnerVerificationReviewTest extends TestCase
         $this->reviews = new OwnerVerificationChecklistService($repo, $audit);
         $this->notifications = Mockery::mock(NotificationService::class);
         $this->notifications->shouldReceive('ownerIdentityApproved', 'ownerBusinessApproved', 'ownerVerificationFullyApproved', 'ownerIdentityRejected', 'ownerBusinessRejected')->byDefault()->andReturnNull();
-        $this->decisions = new OwnerVerificationService($repo, new SpaBusinessRepository, $audit, $this->notifications, $this->reviews);
+        $this->decisions = new OwnerVerificationService($repo, new SpaBusinessRepository, $audit, $this->notifications, $this->reviews, new RegistrationDecisionEmail);
         $documents = Mockery::mock(DocumentUploadService::class);
         $documents->shouldReceive('signedUrl')->andReturnUsing(fn ($path) => $path ? 'https://evidence.example.test/'.$path : null);
         app()->instance(DocumentUploadService::class, $documents);
@@ -218,6 +223,10 @@ class OwnerVerificationReviewTest extends TestCase
         $duplicate = $this->decisions->approveIdentity($this->admin, $this->business->uuid, $this->token($section));
         $this->assertSame(422, $duplicate->getStatusCode());
         $this->assertSame(1, AuditLog::where('action', 'Approve')->count());
+        Mail::assertSentCount(1);
+        Mail::assertSent(AccountNoticeMail::class, fn ($mail) => $mail->hasTo($this->owner->email)
+            && $mail->heading === 'Owner Identity Verification Approved'
+            && str_ends_with($mail->actionUrl, '/business/verification'));
     }
 
     public function test_business_can_still_be_approved_independently_of_identity(): void
@@ -228,6 +237,8 @@ class OwnerVerificationReviewTest extends TestCase
         $this->assertSame('Verified', $this->business->fresh()->verification_status);
         $this->assertSame('Rejected', $this->identity->fresh()->status);
         $this->assertSame('spa_businesses', AuditLog::where('action', 'Approve')->sole()->table_name);
+        Mail::assertSent(AccountNoticeMail::class, fn ($mail) => $mail->hasTo($this->owner->email)
+            && $mail->heading === 'Business Registration Approved');
     }
 
     public function test_rejection_and_resubmission_require_explained_failures_and_keep_existing_statuses(): void
@@ -244,6 +255,10 @@ class OwnerVerificationReviewTest extends TestCase
         $this->assertSame('Rejected', $this->business->fresh()->verification_status);
         $this->assertSame('rejected', $this->snapshot()['business']['decision']);
         $this->assertSame(2, AuditLog::where('action', 'Reject')->count());
+        Mail::assertSent(AccountNoticeMail::class, fn ($mail) => $mail->hasTo($this->owner->email)
+            && $mail->heading === 'Owner Identity Verification Changes Requested');
+        Mail::assertSent(AccountNoticeMail::class, fn ($mail) => $mail->hasTo($this->owner->email)
+            && $mail->heading === 'Business Registration Declined');
         $this->identity->refresh()->update(['status' => 'Pending']); // Owner resubmits even identical evidence.
         $this->assertSame(Checklist::empty('identity'), $this->snapshot()['identity']['checks']);
         $this->blocked(409, fn () => $this->decisions->approveIdentity($this->admin, $this->business->uuid, $this->token($failed)));
@@ -254,12 +269,13 @@ class OwnerVerificationReviewTest extends TestCase
         $section = $this->save('identity');
         $audit = Mockery::mock(AuditLogRepository::class);
         $audit->shouldReceive('record')->once()->andThrow(new \RuntimeException('Audit write unavailable'));
-        $service = new OwnerVerificationService(new OwnerVerificationRepository, new SpaBusinessRepository, $audit, $this->notifications, $this->reviews);
+        $service = new OwnerVerificationService(new OwnerVerificationRepository, new SpaBusinessRepository, $audit, $this->notifications, $this->reviews, new RegistrationDecisionEmail);
         try { $service->approveIdentity($this->admin, $this->business->uuid, $this->token($section)); $this->fail('Expected audit failure'); }
         catch (\RuntimeException $e) { $this->assertSame('Audit write unavailable', $e->getMessage()); }
         $this->assertSame('Pending', $this->identity->fresh()->status);
         $this->assertSame($section['revision'], $this->snapshot()['identity']['revision']);
         $this->assertNull($this->snapshot()['identity']['decision']);
+        Mail::assertNothingSent();
     }
 
     public function test_review_routes_preserve_authentication_and_distinct_permissions(): void

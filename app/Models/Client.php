@@ -31,6 +31,7 @@ class Client extends Model
         'spa_business_id',
         'spa_branch_id',
         'user_id',
+        'created_as_participant',
         'preferred_staff_id',
         'first_name',
         'last_name',
@@ -51,6 +52,7 @@ class Client extends Model
         return [
             'photo_dismissed_at' => 'datetime',
             'is_active' => 'boolean',
+            'created_as_participant' => 'boolean',
             'current_points' => 'integer',
             'lifetime_points' => 'integer',
             'birth_year' => 'integer',

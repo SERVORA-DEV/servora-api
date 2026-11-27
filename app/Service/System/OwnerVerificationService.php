@@ -11,6 +11,7 @@ use App\Repository\AuditLogRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Repository\System\OwnerVerificationRepository;
 use App\Service\Notifications\NotificationService;
+use App\Service\Notifications\RegistrationDecisionEmail;
 use App\Support\Platform\OwnerVerificationStatus;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -23,6 +24,7 @@ class OwnerVerificationService
         private AuditLogRepository $auditLogRepository,
         private NotificationService $notificationService,
         private OwnerVerificationChecklistService $checklists,
+        private RegistrationDecisionEmail $decisionEmail,
     ) {}
 
     public function listPending(int $perPage = 15)
@@ -120,6 +122,8 @@ class OwnerVerificationService
             }
         });
 
+        $this->decisionEmail->afterCommit($business->owner, 'Owner Identity Verification', '/business/verification', approved: true);
+
         return $this->getReview($uuid);
     }
 
@@ -156,7 +160,7 @@ class OwnerVerificationService
             $request
         );
 
-        DB::afterCommit(function () use ($business, $identity, $reason) {
+        DB::afterCommit(function () use ($business, $reason) {
             try {
                 if ($business->owner) {
                     $this->notificationService->ownerIdentityRejected($business->owner, $reason);
@@ -165,6 +169,8 @@ class OwnerVerificationService
                 report($e);
             }
         });
+
+        $this->decisionEmail->afterCommit($business->owner, 'Owner Identity Verification', '/business/verification', approved: false, resubmission: $resubmission);
 
         return $this->getReview($uuid);
     }
@@ -215,6 +221,8 @@ class OwnerVerificationService
             }
         });
 
+        $this->decisionEmail->afterCommit($business->owner, 'Business Registration', '/business/verification', approved: true, recordName: $business->business_name);
+
         return $this->getReview($uuid);
     }
 
@@ -258,6 +266,8 @@ class OwnerVerificationService
                 report($e);
             }
         });
+
+        $this->decisionEmail->afterCommit($business->owner, 'Business Registration', '/business/verification', approved: false, recordName: $business->business_name, resubmission: $resubmission);
 
         return $this->getReview($uuid);
     }

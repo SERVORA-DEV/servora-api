@@ -17,6 +17,7 @@ class User extends Authenticatable implements MustVerifyEmail
 
     public const AUDIENCE_WEB = 'web';
     public const AUDIENCE_MOBILE = 'mobile';
+    public const BUSINESS_WEB_ROLES = ['business_owner', 'manager', 'front_officer'];
 
     public function uniqueIds()
     {
@@ -133,6 +134,8 @@ class User extends Authenticatable implements MustVerifyEmail
         'two_factor_secret',
         'two_factor_recovery_codes',
         'personal_email_otp_hash',
+        'last_web_activity_at',
+        'inactivity_reminder_sent_at',
     ];
 
     protected function casts(): array

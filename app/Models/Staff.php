@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\Gender;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -71,6 +72,13 @@ class Staff extends Model
         'specialties' => 'array',
         'home_service_available' => 'boolean',
     ];
+
+    public function bookingGender(): ?string
+    {
+        $gender = Gender::clean($this->gender);
+
+        return in_array($gender, Gender::CHOICES, true) ? $gender : null;
+    }
 
     /**
      * Whether staff have specialties yet (the migration has been run). Until

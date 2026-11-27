@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Models\SpaBranch;
 use App\Service\Business\HomeServiceRules;
 use Tests\TestCase;
 
@@ -86,6 +87,15 @@ class HomeServiceRulesTest extends TestCase
         $this->assertTrue(HomeServiceRules::isHome(['service_location' => 'Home Service']));
         $this->assertFalse(HomeServiceRules::isHome(['service_location' => 'In Spa']));
         $this->assertFalse(HomeServiceRules::isHome([]));
+    }
+
+    public function test_a_home_booking_needs_a_service_or_package(): void
+    {
+        $branch = new SpaBranch;
+        $expected = ['ok' => false, 'reason' => 'Choose a service or package for the home visit.', 'distance_km' => null, 'fee' => 0.0];
+
+        $this->assertSame($expected, HomeServiceRules::check($branch, []));
+        $this->assertSame($expected, HomeServiceRules::check($branch, ['services' => [], 'package_uuid' => null, 'join_package_uuid' => null]));
     }
 
     // A home visit as the booking board and the overlap checks see it (no database).

@@ -19,6 +19,7 @@ class ClientResource extends JsonResource
             // Linked to a Servora app account (Client::usesApp): the "App
             // user" label, and who earns loyalty points.
             'uses_app' => $this->resource->usesApp(),
+            'created_as_participant' => (bool) $this->created_as_participant,
             // What the spa recorded, or else what the client's own account
             // says (Client::genderShown / ageValue). Null when not known.
             'gender' => $this->resource->genderShown(),

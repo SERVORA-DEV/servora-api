@@ -155,8 +155,7 @@ class SpaBranchRepository
             ->whereHas('package', fn ($q) => $q->where('is_active', true));
     }
 
-    // Name + role only — Staff has no public resource yet and profile_photo
-    // isn't exposed anywhere in the app, so a browse card can't show one.
+    // Only the fields needed by the public booking roster and availability lookup.
     //
     // `id` rides along unemitted: it never reaches a response (both consuming
     // resources list their keys explicitly), but
@@ -169,7 +168,7 @@ class SpaBranchRepository
             ->where('role', 'therapist')
             ->where('status', StaffStatus::Active->value)
             ->get(array_merge(
-                ['id', 'uuid', 'first_name', 'last_name', 'role'],
+                ['id', 'uuid', 'first_name', 'last_name', 'role', 'gender'],
                 Staff::hasSpecialties() ? ['specialties'] : [],
                 Staff::hasHomeService() ? ['home_service_available'] : [],
             ));

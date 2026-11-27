@@ -197,17 +197,25 @@ class HomeServiceBookingTest extends TestCase
         $this->offerHomeService(travelMinutes: 30);
 
         Sanctum::actingAs($this->owner);
-        $this->postJson('/api/business/appointment', [
+        $booking = [
             'spa_branch_uuid' => $this->branch->uuid,
             'appointment_date' => self::DATE,
             'appointment_time' => '10:00',
             'appointment_type' => 'Reservation',
             'client' => ['first_name' => 'Mia', 'last_name' => 'Reyes', 'phone_number' => '09171234567', 'gender' => 'Female'],
-            'services' => [['service_variant_uuid' => $this->variant->uuid]],
             'service_location' => 'Home Service',
             'home_address' => '12 Acacia St, Davao City',
             'home_latitude' => self::NEAR[0],
             'home_longitude' => self::NEAR[1],
+        ];
+
+        $this->postJson('/api/business/appointment', $booking)
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Choose a service or package for the home visit.');
+        $this->assertSame(0, Appointment::count());
+
+        $this->postJson('/api/business/appointment', $booking + [
+            'services' => [['service_variant_uuid' => $this->variant->uuid]],
         ])->assertSuccessful();
 
         $this->assertSame(1, Appointment::count());

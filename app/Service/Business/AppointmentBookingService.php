@@ -659,7 +659,7 @@ class AppointmentBookingService
                 'last_name' => $companion['last_name'],
                 'phone_number' => $companion['phone_number'] ?? null,
                 'gender' => $companion['gender'] ?? null,
-            ], fn ($v) => $v !== null && $v !== ''), $branch->id);
+            ], fn ($v) => $v !== null && $v !== ''), $branch->id, createdAsParticipant: true);
             throw_if($client->id === $appointment->client_id, ActionRefused::class, 'Your companion\'s details match yours. Please enter theirs.');
 
             $theirs = $this->appointmentRepository->create([

@@ -209,7 +209,10 @@ class HomeCatalogPricingTest extends TestCase
         $this->assertTrue($offer['enabled']);
         $this->assertSame(0.0, $offer['fee']);
         $this->assertSame(0, BookingPolicy::for($branch)['home_service_fee']);
-        $check = HomeServiceRules::check($branch, ['home_address' => 'Test address', 'home_latitude' => 7.0, 'home_longitude' => 125.0]);
+        $check = HomeServiceRules::check($branch, [
+            'services' => [['service_variant_uuid' => 'chosen-home-variant']],
+            'home_address' => 'Test address', 'home_latitude' => 7.0, 'home_longitude' => 125.0,
+        ]);
         $this->assertTrue($check['ok']);
         $this->assertSame(0.0, $check['fee']);
     }

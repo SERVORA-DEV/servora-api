@@ -16,6 +16,8 @@ return [
 
     'default' => env('MAIL_MAILER', 'log'),
 
+    'web_inactivity_reminder_days' => (int) env('WEB_INACTIVITY_REMINDER_DAYS', 30),
+
     /*
     |--------------------------------------------------------------------------
     | Mailer Configurations
