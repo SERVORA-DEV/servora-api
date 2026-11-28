@@ -92,6 +92,9 @@ class ClientRepository
                         ->orWhereLike(DB::raw("concat(first_name, ' ', last_name)"), "%{$query}%");
                 });
             })
+            ->when(isset($filters['first_name'], $filters['last_name']), fn ($q) => $q
+                ->whereRaw('lower(trim(clients.first_name)) = lower(?)', [$filters['first_name']])
+                ->whereRaw('lower(trim(clients.last_name)) = lower(?)', [$filters['last_name']]))
             ->when($filters['segment'] ?? null, fn ($q, $segment) => match ($segment) {
                 'new' => $q->where('clients.created_at', '>=', now()->startOfMonth()),
                 'regular' => $q->whereHas('appointments', $done, '>=', 3),

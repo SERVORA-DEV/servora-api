@@ -63,5 +63,18 @@ class BookingClientSearchTest extends TestCase
             ->assertJsonPath('meta.total', 3)
             ->assertJsonPath('data.0.uuid', $app->uuid)
             ->assertJsonPath('data.0.uses_app', true);
+
+        $sameNameParticipant = Client::create(['first_name' => 'BELLA', 'created_as_participant' => true] + $defaults);
+        $app->update(['first_name' => 'Bella']);
+        Client::create(['first_name' => 'Bella', 'spa_branch_id' => $otherBranch->id] + $defaults);
+        Client::create(['first_name' => 'Bella', 'last_name' => 'Santos'] + $defaults);
+        Client::create(['first_name' => 'Bellamy'] + $defaults);
+
+        $this->getJson('/api/business/client?first_name=bella&last_name=cRuZ&segment=spa')->assertOk()
+            ->assertJsonPath('meta.total', 2)
+            ->assertJsonFragment(['uuid' => $sameNameParticipant->uuid])
+            ->assertJsonFragment(['uuid' => $spa->uuid]);
+        $this->getJson('/api/business/client?first_name=bella&segment=spa')->assertUnprocessable()
+            ->assertJsonValidationErrors('last_name');
     }
 }

@@ -22,7 +22,7 @@ class ClientController extends Controller
     // branch and sort (ClientRepository::search).
     public function index(ClientListRequest $request)
     {
-        $filters = $request->only(['segment', 'branch_uuid', 'sort']);
+        $filters = $request->safe()->only(['segment', 'branch_uuid', 'sort', 'first_name', 'last_name']);
 
         return $this->clientService->search($request->user(), $request->input('q'), PerPage::from($request), $filters);
     }
