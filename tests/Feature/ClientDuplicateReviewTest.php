@@ -142,21 +142,48 @@ class ClientDuplicateReviewTest extends TestCase
         $frontDesk->setRelation('permission', null);
         Sanctum::actingAs($frontDesk);
         $otherBranch = DB::table('spa_branches')->insertGetId(['uuid' => Str::uuid()->toString(), 'spa_business_id' => $this->business]);
-        $nicole = $this->profile('Nicole');
-        $local = $this->profile('Nicole');
-        $shared = $this->profile('Nicole', ['spa_branch_id' => $otherBranch]);
-        $outside = $this->profile('Nicole', ['spa_branch_id' => $otherBranch]);
+        $nicole = $this->profile('Nicole', ['created_as_participant' => false, 'phone_number' => '09170000001']);
+        $local = $this->profile('Nicole', ['created_as_participant' => false, 'phone_number' => '09170000002']);
+        $shared = $this->profile('Nicole', ['spa_branch_id' => $otherBranch, 'created_as_participant' => false]);
+        $outside = $this->profile('Nicole', ['spa_branch_id' => $otherBranch, 'created_as_participant' => false]);
+        $this->profile('Nicole', ['user_id' => User::factory()->create()->id, 'created_as_participant' => false]);
+        $localVisit = $this->appointment($local);
         $this->appointment($shared);
 
         $this->getJson($this->url($nicole))->assertOk()
             ->assertJsonCount(2, 'data.candidates')
             ->assertJsonPath('data.candidates.0.profile.uuid', $local->uuid)
+            ->assertJsonPath('data.candidates.0.reason', 'Matching name')
             ->assertJsonPath('data.candidates.0.merge_block', null)
             ->assertJsonPath('data.candidates.1.profile.uuid', $shared->uuid)
             ->assertJsonPath('data.candidates.1.merge_block', 'An owner needs to review this merge because the profiles include records from another branch.');
         $this->postJson($this->url($nicole)."/{$outside->uuid}/merge", ['keep_uuid' => $nicole->uuid])->assertNotFound();
         $this->postJson($this->url($nicole)."/{$shared->uuid}/merge", ['keep_uuid' => $nicole->uuid])->assertUnprocessable();
-        $this->postJson($this->url($nicole)."/{$local->uuid}/merge", ['keep_uuid' => $nicole->uuid])->assertOk();
+        $this->postJson($this->url($nicole)."/{$local->uuid}/merge", ['keep_uuid' => $nicole->uuid])
+            ->assertOk()->assertJsonPath('data.kept_uuid', $nicole->uuid);
+        $this->assertSoftDeleted('clients', ['id' => $local->id]);
+        $this->assertDatabaseHas('clients', ['id' => $nicole->id, 'phone_number' => '09170000001', 'created_as_participant' => false]);
+        $this->assertDatabaseHas('appointments', ['id' => $localVisit, 'client_id' => $nicole->id]);
+    }
+
+    public function test_a_spa_profile_and_participant_can_be_suggested_from_either_profile_and_merged(): void
+    {
+        $spa = $this->profile('Nicole', ['created_as_participant' => false]);
+        $participant = $this->profile('Nicole');
+        $visit = $this->appointment($participant);
+
+        $this->getJson($this->url($spa))->assertOk()
+            ->assertJsonPath('data.candidates.0.profile.uuid', $participant->uuid)
+            ->assertJsonPath('data.candidates.0.profile.created_as_participant', true);
+        $this->getJson($this->url($participant))->assertOk()
+            ->assertJsonPath('data.candidates.0.profile.uuid', $spa->uuid)
+            ->assertJsonPath('data.candidates.0.profile.created_as_participant', false);
+
+        $this->postJson($this->url($participant)."/{$spa->uuid}/merge", ['keep_uuid' => $spa->uuid])
+            ->assertOk()->assertJsonPath('data.kept_uuid', $spa->uuid);
+        $this->assertSoftDeleted('clients', ['id' => $participant->id]);
+        $this->assertDatabaseHas('appointments', ['id' => $visit, 'client_id' => $spa->id]);
+        $this->assertTrue($spa->fresh()->created_as_participant);
     }
 
     private function profile(string $name, array $overrides = []): Client

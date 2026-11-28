@@ -29,7 +29,7 @@ class ClientDuplicateService
         $client = (clone $profiles)->where('uuid', $uuid)->firstOrFail();
 
         // Compare the business's eligible profiles in chunks, keeping only the best matches.
-        // A companion can match a spa profile created at the desk or linked to the app.
+        // Spa clients can match each other. Participant profiles can also match mobile profiles.
         $matches = [];
         $identity = $this->identity($client);
         $reviewed = DB::table('client_duplicate_resolutions')
@@ -37,10 +37,12 @@ class ClientDuplicateService
             ->where(fn ($query) => $query->where('first_client_id', $client->id)->orWhere('second_client_id', $client->id));
         $profiles->where('clients.id', '<>', $client->id)
             ->whereNotIn('clients.id', $reviewed)
-            ->when(! $client->created_as_participant, fn ($query) => $query->where('created_as_participant', true))
-            ->select(['id', 'uuid', 'first_name', 'last_name', 'phone_number', 'email', 'user_id'])
-            ->chunkById(250, function ($rows) use ($identity, &$matches) {
+            ->select(['id', 'first_name', 'last_name', 'phone_number', 'email', 'user_id', 'created_as_participant'])
+            ->chunkById(250, function ($rows) use ($client, $identity, &$matches) {
                 foreach ($rows as $row) {
+                    if (! $this->canReviewPair($client, $row)) {
+                        continue;
+                    }
                     $score = $this->matchScore($identity, $this->identity($row));
                     if ($score) {
                         $matches[] = ['id' => $row->id, 'score' => $score];
@@ -94,7 +96,7 @@ class ClientDuplicateService
             if (DB::table('client_duplicate_resolutions')->where($key)->exists()) {
                 throw new ChangedElsewhere('This suggestion has already been reviewed. Refresh the profile to see the latest suggestions.');
             }
-            if ((! $first->created_as_participant && ! $second->created_as_participant)
+            if (! $this->canReviewPair($first, $second)
                 || ! $this->matchScore($this->identity($first), $this->identity($second))) {
                 throw new ChangedElsewhere('These profiles have changed. Refresh the profile to review the latest suggestions.');
             }
@@ -126,6 +128,12 @@ class ClientDuplicateService
     {
         return $this->businesses->findForUser($actor)
             ?? throw new ActionRefused('No spa business found for this account.');
+    }
+
+    private function canReviewPair(Client $first, Client $second): bool
+    {
+        return $first->created_as_participant || $second->created_as_participant
+            || (! $first->usesApp() && ! $second->usesApp());
     }
 
     private function identity(Client $client): array
