@@ -90,7 +90,7 @@ class ServiceRequest extends FormRequest
             // on update gets soft-deleted — see ServiceVariantRepository.
             'variants' => [$isCreate ? 'required' : 'sometimes', 'array', 'min:1'],
             'variants.*.uuid' => 'nullable|uuid',
-            'variants.*.duration_minutes' => 'required_with:variants|integer|min:1|max:720',
+            'variants.*.duration_minutes' => 'required_with:variants|integer|min:1|max:'.ServiceKind::MAX_DURATION_MINUTES,
             'variants.*.service_location' => ['sometimes', Rule::in(['In Spa', 'Home Service'])],
             'variants.*.price' => 'required_with:variants|numeric|min:0|max:1000000|decimal:0,2',
 
@@ -216,6 +216,7 @@ class ServiceRequest extends FormRequest
     {
         return [
             'name.unique' => 'You already have a service with this name.',
+            'variants.*.duration_minutes.max' => 'A service option can be up to 6 hours (360 minutes).',
             'parts.*.name.required' => 'Give each part a name, e.g. Upper body.',
             'parts.*.name.distinct' => 'Two parts cannot have the same name.',
             'parts.*.share_percent.required' => 'Give each part its share of the commission.',

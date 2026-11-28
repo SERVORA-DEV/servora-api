@@ -7,6 +7,7 @@ use App\Models\Service;
 use App\Models\SpaBusiness;
 use App\Rules\NoEmoji;
 use App\Support\Access\AccountScope;
+use App\Support\Catalog\ServiceKind;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -34,11 +35,11 @@ class PackageRequest extends FormRequest
             ],
             // The code (PKG-0001…) is given automatically, so none is taken here.
             'description' => 'nullable|string',
-            'duration_minutes' => 'nullable|integer|min:1|max:720',
+            'duration_minutes' => 'nullable|integer|min:1|max:'.ServiceKind::MAX_DURATION_MINUTES,
             'default_price' => [$isCreate ? 'required' : 'sometimes', 'numeric', 'min:0', 'max:1000000', 'decimal:0,2'],
             'home_service_available' => 'sometimes|boolean',
             'home_price' => 'nullable|required_if:home_service_available,true|numeric|min:0|max:1000000|decimal:0,2',
-            'services.*.home_duration_minutes' => 'nullable|required_if:home_service_available,true|integer|min:1|max:600',
+            'services.*.home_duration_minutes' => 'nullable|required_if:home_service_available,true|integer|min:1|max:'.ServiceKind::MAX_DURATION_MINUTES,
             'services.*.home_price' => 'nullable|numeric|min:0|max:1000000|decimal:0,2',
             'is_active' => 'sometimes|boolean',
 
@@ -54,7 +55,7 @@ class PackageRequest extends FormRequest
             'services' => 'sometimes|array',
             'services.*.service_uuid' => 'required_without:services.*.service_variant_uuid|nullable|uuid|distinct',
             'services.*.service_variant_uuid' => 'nullable|uuid',
-            'services.*.duration_minutes' => 'nullable|integer|min:1|max:600',
+            'services.*.duration_minutes' => 'nullable|integer|min:1|max:'.ServiceKind::MAX_DURATION_MINUTES,
             'services.*.quantity' => 'nullable|integer|min:1|max:20',
             // What this service is worth in the package, per one (blank: its menu price).
             'services.*.price' => 'nullable|numeric|min:0|max:10000000',
@@ -130,6 +131,9 @@ class PackageRequest extends FormRequest
     public function messages(): array
     {
         return [
+            'duration_minutes.max' => 'A package can take up to 6 hours (360 minutes).',
+            'services.*.duration_minutes.max' => 'A service in a package can be up to 6 hours (360 minutes).',
+            'services.*.home_duration_minutes.max' => 'A home service in a package can be up to 6 hours (360 minutes).',
             'services.*.service_uuid.distinct' => 'A package can hold a service once — use the quantity for more of the same.',
             'services.*.service_uuid.required_without' => 'Each line of a package needs a service.',
             'name.unique' => 'You already have a package with this name.',

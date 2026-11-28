@@ -2,6 +2,7 @@
 
 namespace App\Service\Business;
 
+use App\Exceptions\ActionRefused;
 use App\Http\Resources\PackageResource;
 use App\Models\Addon;
 use App\Models\BranchPackage;
@@ -17,6 +18,7 @@ use App\Repository\Business\SpaBranchRepository;
 use App\Repository\SpaBusinessRepository;
 use App\Support\Catalog\PackagePlan;
 use App\Support\Catalog\ServiceAddon;
+use App\Support\Catalog\ServiceKind;
 use Illuminate\Support\Facades\DB;
 
 class PackageService
@@ -75,6 +77,8 @@ class PackageService
             return $rows;
         }
 
+        $this->checkDurations($rows, (int) ($payload['client_count'] ?? 1), (bool) ($payload['home_service_available'] ?? false));
+
         $payload['spa_business_id'] = $business->id;
         $payload['created_by'] = $user->id;
         $payload['is_active'] = $payload['is_active'] ?? true;
@@ -125,6 +129,19 @@ class PackageService
         $rows = $items !== null ? $this->plan($business->id, $items) : null;
         if ($rows !== null && ! is_array($rows)) {
             return $rows;
+        }
+        if ($rows !== null) {
+            $this->checkDurations($rows, (int) ($payload['client_count'] ?? $existing->clients()), (bool) ($payload['home_service_available'] ?? $existing->home_service_available));
+        } elseif (isset($payload['client_count']) || ! empty($payload['home_service_available'])) {
+            // A partial update can change who receives the existing services or enable home service.
+            $proposed = clone $existing;
+            $proposed->fill($payload)->loadMissing(Package::contents());
+            if (isset($payload['client_count'])) {
+                $this->enforceDuration($proposed->totalMinutes(), false);
+            }
+            if ($proposed->home_service_available) {
+                $this->enforceDuration($proposed->totalMinutes(true), true);
+            }
         }
 
         $model = $this->packageRepository->update($uuid, $payload);
@@ -350,17 +367,44 @@ class PackageService
         }
 
         if ($byService) {
-            // For several clients each is there at the same time: the longest any one of them stays.
-            $clients = $package->fresh()->clients();
-            $longest = 0;
-            foreach (range(1, $clients) as $slot) {
-                $mine = array_values(array_filter($rows, fn ($row) => $row['slots'] === null || in_array($slot, $row['slots'], true)));
-                $longest = max($longest, PackagePlan::totalMinutes(
-                    array_map(fn ($row) => ['minutes' => $row['minutes'], 'quantity' => $row['quantity']], $mine),
-                    array_merge(...array_map(fn ($row) => array_map(fn ($addon) => $addon->duration_minutes, $row['addons']), $mine ?: [['addons' => []]])),
-                ));
-            }
-            $package->update(['duration_minutes' => $longest ?: null]);
+            $package->update(['duration_minutes' => $this->plannedMinutes($rows, $package->clients()) ?: null]);
         }
+    }
+
+    private function checkDurations(array $rows, int $clients, bool $home): void
+    {
+        $this->enforceDuration($this->plannedMinutes($rows, $clients), false);
+        if ($home) {
+            $this->enforceDuration($this->plannedMinutes($rows, $clients, true), true);
+        }
+    }
+
+    private function enforceDuration(int $minutes, bool $home): void
+    {
+        if ($minutes > ServiceKind::MAX_DURATION_MINUTES) {
+            throw new ActionRefused($home
+                ? 'A home-service package can take up to 6 hours per client, including add-ons.'
+                : 'A package can take up to 6 hours per client, including add-ons.');
+        }
+    }
+
+    private function plannedMinutes(array $rows, int $clients, bool $home = false): int
+    {
+        $longest = 0;
+        $byService = Package::byService();
+        $sharing = Package::hasSharing();
+        // Group clients visit at the same time, so use the longest individual plan.
+        foreach (range(1, max(1, $clients)) as $slot) {
+            $mine = array_values(array_filter($rows, fn ($row) => ! $sharing || $row['slots'] === null || in_array($slot, $row['slots'], true)));
+            $longest = max($longest, PackagePlan::totalMinutes(
+                array_map(fn ($row) => [
+                    'minutes' => $home ? $row['home_duration_minutes'] : ($byService ? $row['minutes'] : $row['variant']?->duration_minutes),
+                    'quantity' => $row['quantity'],
+                ], $mine),
+                array_merge(...array_map(fn ($row) => array_map(fn ($addon) => $addon->duration_minutes, $row['addons']), $mine)),
+            ));
+        }
+
+        return $longest;
     }
 }

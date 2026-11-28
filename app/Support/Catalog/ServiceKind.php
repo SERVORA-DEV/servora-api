@@ -25,6 +25,8 @@ namespace App\Support\Catalog;
 // app/utils/serviceKind.ts.
 class ServiceKind
 {
+    public const MAX_DURATION_MINUTES = 360;
+
     public const TIME = 'time';
     public const PROCEDURE = 'procedure';
     public const FACILITY = 'facility';
